@@ -1,0 +1,113 @@
+# Llama Studio — Next 6 Months Development Plan
+
+> Horizon: 6 months from v2.0.0.
+> Goal: turn the working v2.0.0 into a polished, daily-driver product with a real user base.
+> Six focused monthly plans. One theme per month. Each month is shippable on its own.
+
+---
+
+## Month 1 — CI Distribution & Signed Installers
+
+**Theme**: the v2.0.0 release pipeline already fails-hard without installers and produces real bundles on each host — now harden distribution. Build every OS in CI on every tag, sign + notarize, ship auto-updates.
+
+### Deliverables
+- CI matrix building Linux (x86_64 + arm64), macOS (Intel + Apple Silicon), Windows (x64) installers on every tagged release. (Task #10, #20)
+- macOS notarization + Windows Authenticode signing wired into CI secrets. (Task #19)
+- Auto-update endpoint live: `releases.llama.studio/updates/{target}/{arch}/{version}` serving signed Tauri update manifests.
+- Crash reporting — opt-in Sentry (or self-hosted GlitchTip) for sidecar + Rust shell.
+- Public download page (static site) with checksums + GPG signatures.
+
+### Success criteria
+- One-click install on all three OSes from a non-technical user's perspective.
+- Auto-update works end-to-end on a real machine.
+- < 60 min from `git tag` to all installers being downloadable.
+
+---
+
+## Month 2 — Onboarding & First-Run Quality
+
+**Theme**: a first-time user with zero context is productive in under 5 minutes.
+
+### Deliverables
+- Guided onboarding tour: highlight the file tree, chat, terminal, command palette.
+- Provider auto-detect: detect a running llama.cpp server, list loaded models, offer to download a recommended one with a progress bar.
+- Embedding model picker in Settings (Task #14) + "Semantic search is on offline fallback" banner (Task #15).
+- Workspace import: detect git repos, `.gitignore` is respected by the indexer out of the box.
+- In-app splash + About screen with branding. (Task #18, currently cancelled — revive)
+- Sample workspace: "Try a demo project" button that clones a small repo to scratch.
+
+### Success criteria
+- New-user activation rate (chat → accepted diff) > 60% in the first session.
+- Time-to-first-meaningful-chat < 3 minutes from app open.
+
+---
+
+## Month 3 — Power-User Workflows
+
+**Theme**: features the people who use it 4 hours/day will ask for.
+
+### Deliverables
+- **Dedicated review panel** for `/review` and `/test` results (Task #11). Structured findings list, jump-to-line, "fix this finding" button.
+- **Persistent tool permissions** between sessions (Task #12). "Always allow `read_file` in this workspace" toggle.
+- **Multi-root workspaces**: open more than one folder; indexer + chat operate over the union.
+- **Diff history**: undo any agent-applied patch from a timeline view.
+- **Custom slash commands**: `.llama-studio/commands/*.md` files in the repo define team-shared prompts.
+- **MCP (Model Context Protocol) support**: connect external MCP servers as tools.
+
+### Success criteria
+- Power users report < 2 "fight the tool" moments per day.
+- Custom commands adopted by at least one team in real use.
+
+---
+
+## Month 4 — Performance & Scale
+
+**Theme**: feels fast on a 100k-LOC repo.
+
+### Deliverables
+- Incremental indexing: only re-embed changed files (already partial — finish + benchmark).
+- Hotpath crate carries more weight: file tree walk, glob, ripgrep-style search moved off Python.
+- Background indexing with progress UI + pause/resume.
+- Streaming-chat load tests as a CI check (Task #13). p95 token-to-screen < 50ms under simulated load.
+- Memory budget: agent sidecar < 250 MB resident for a 50k-LOC project; surface "indexer memory: N MB" in Settings.
+- Lazy-load Monaco workers; first paint < 800ms cold.
+
+### Success criteria
+- Cold open → first chat on a 100k-LOC repo < 5 s.
+- Indexing 100k LOC < 90 s on a mid-range laptop.
+
+---
+
+## Month 5 — Collaboration & Sharing
+
+**Theme**: you're not alone in a tool anymore.
+
+### Deliverables
+- **Session export**: share a chat + diff as a single signed file (or paste-able URL via opt-in cloud gist).
+- **Shared workspace profiles**: `.llama-studio/profile.toml` checked into a repo configures team defaults (model, allowed tools, slash commands, ignore patterns).
+- **Pair mode** (experimental): two Llama Studio instances on the same LAN sync chat + cursor over WebRTC. Local-only, end-to-end encrypted.
+- **GitHub / GitLab integration**: open a PR from an applied diff stack; pull a PR's diff into the review panel.
+- **VS Code / JetBrains adapter** (read-only): show Llama Studio chat inside another editor.
+
+### Success criteria
+- A team can hand off a debugging session via a single shareable file.
+- At least one open-source project ships a `.llama-studio/profile.toml`.
+
+---
+
+## Month 6 — Polish & Public Launch
+
+**Theme**: ready for ProductHunt / HN.
+
+### Deliverables
+- Full design pass: empty states, error states, loading skeletons everywhere.
+- Accessibility audit: keyboard-only navigation, screen-reader pass, color-contrast AA.
+- Localization scaffold: en + es + zh + ja + de + fr; community-driven for the rest.
+- Marketing site: <llama.studio> with feature pages, comparison table vs Cursor/Codex/Continue, 90-second demo video.
+- Public Discord / GitHub Discussions, weekly office hours for the first month.
+- v3.0.0 tag with everything above. Public launch.
+
+### Success criteria
+- 10k downloads in week 1.
+- < 5% week-1 crash-free-session-rate regression vs internal builds.
+- A community member ships their first PR within 30 days of launch.

@@ -1,0 +1,33 @@
+[package]
+name = "llama-studio-hotpath"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Hot-path Rust crate for Llama Studio: PTY, fs watch, search, and code indexer."
+
+[lib]
+name = "llama_studio_hotpath"
+path = "src/lib.rs"
+
+[[bin]]
+name = "llama-studio-hotpath"
+path = "src/bin/cli.rs"
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+anyhow = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+tokio = { workspace = true }
+clap = { version = "4.5", features = ["derive"] }
+notify = "6.1"
+portable-pty = "0.8"
+walkdir = "2.5"
+ignore = "0.4"
+regex = "1.10"
+
+[dev-dependencies]
+tempfile = "3.10"

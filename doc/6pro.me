@@ -1,0 +1,298 @@
+# Llama Studio — 6-Month Implementation Prompts
+
+> Companion to `doc/6plans.me`.
+> Each section is a **ready-to-paste prompt** you can hand to an AI coding agent (or a human engineer) to implement one month of the plan.
+> Prompts assume the current `main` branch of this repo. Each prompt is self-contained: context → goal → deliverables → constraints → acceptance criteria → out-of-scope.
+
+---
+
+## PROMPT 1 — Month 1: CI Distribution & Signed Installers
+
+**Context.**
+Llama Studio v2.0.0 already ships a release pipeline (`scripts/release.sh`, `scripts/make_zip.sh`, `scripts/verify_zip.py`) that fails-hard when installers are missing. `.github/workflows/release.yml` runs the matrix on Ubuntu/macOS/Windows and uploads installers + the combined zip on tagged pushes. Auto-update is scaffolded in `apps/desktop/tauri.conf.json` but disabled.
+
+**Goal.**
+Make every tagged release produce **signed, notarized, auto-updating** installers for Linux (x86_64 + arm64), macOS (Intel + Apple Silicon), and Windows (x64) — fully automated, zero manual steps.
+
+**Deliverables.**
+1. Extend the `release.yml` matrix:
+   - Add `ubuntu-22.04-arm` (or self-hosted arm64) for Linux arm64.
+   - Add `macos-13` (Intel) alongside the existing `macos-latest` (Apple Silicon) so both arches are built.
+2. Code signing wired through CI secrets:
+   - **macOS**: `APPLE_CERTIFICATE`, `APPLE_CERTIFICATE_PASSWORD`, `APPLE_SIGNING_IDENTITY`, `APPLE_ID`, `APPLE_PASSWORD`, `APPLE_TEAM_ID`. Tauri must sign and notarize the `.dmg` and `.app` automatically; CI must fail if notarization fails.
+   - **Windows**: `WINDOWS_CERTIFICATE` (base64 PFX) + `WINDOWS_CERTIFICATE_PASSWORD`. The `.msi` and NSIS `.exe` must be Authenticode-signed.
+   - **Linux**: AppImage signed with `--sign` using a project minisign key (`MINISIGN_PRIVATE_KEY` + password).
+3. Auto-update endpoint:
+   - Set `plugins.updater.active=true` in `tauri.conf.json` with endpoint `https://releases.llama.studio/updates/{{target}}/{{arch}}/{{current_version}}` and the project's minisign pubkey.
+   - Add `scripts/publish_update_manifest.py` that generates `latest.json` per target/arch and uploads it (S3 or Cloudflare R2 — pick one, document the env vars).
+   - Wire the upload into `release.yml` so each tag publishes manifests.
+4. Crash reporting (opt-in):
+   - Add Sentry (or self-hosted GlitchTip) SDK to the Rust shell and the Python sidecar.
+   - DSN comes from build-time env (`SENTRY_DSN_DESKTOP`, `SENTRY_DSN_AGENT`); empty DSN = disabled.
+   - Respect the existing `telemetry_opt_in` flag in `desktop.json` — never send if the user opted out.
+5. Public download page:
+   - Static site at `apps/website/` (Astro or plain HTML — keep dependencies minimal).
+   - Auto-generated page listing the latest installers + SHA256 checksums + GPG signatures, pulled from the GitHub Releases API.
+
+**Constraints.**
+- All secrets via GitHub Actions secrets — never commit any key material.
+- The local `make release` flow must keep working unsigned (developer machines without certs).
+- Existing fail-hard behavior of `release.sh` / `make_zip.sh` / `verify_zip.py` must remain intact.
+
+**Acceptance criteria.**
+- Tag `v2.1.0`, push, wait — within 60 minutes the GitHub Release page shows: AppImage (x86_64 + arm64), `.deb` (both arches), signed `.dmg` (Intel + AS), notarized `.app`, signed `.msi` + `.exe`, the combined `llama-studio-v2.1.0.zip`, and SHA256SUMS.
+- Installing the macOS `.dmg` shows no Gatekeeper warning.
+- Installing the Windows `.msi` shows the publisher as the signing org, not "Unknown".
+- A v2.1.1 release auto-updates a running v2.1.0 install on each OS.
+- A simulated crash in the sidecar is visible in Sentry (when DSN configured + opt-in granted).
+
+**Out of scope.**
+- Linux package repos (apt/yum mirrors).
+- Mobile builds.
+- Per-distro packaging beyond AppImage + deb.
+
+---
+
+## PROMPT 2 — Month 2: Onboarding & First-Run Quality
+
+**Context.**
+The current `OnboardingWizard.tsx` is a 4-step flow: welcome → workspace → legacy migration → telemetry. There's no provider detection, no model picker, no demo project. Embedding model picker (#14) and offline-fallback banner (#15) are pending.
+
+**Goal.**
+A first-time user with zero AI / coding-agent context is productive in under 5 minutes.
+
+**Deliverables.**
+1. Replace the wizard with a 6-step flow: welcome → workspace → **provider detection** → **model picker (with pull progress)** → telemetry → done.
+2. Provider auto-detect (`apps/frontend/src/features/onboarding/`):
+   - Probe `http://127.0.0.1:8080` for llama.cpp; if found, list loaded models via `/v1/models`.
+   - If no llama.cpp, offer (a) install instructions per OS, (b) OpenAI key entry (saved via Tauri keyring), (c) llama.cpp server URL.
+3. Model picker with pull progress:
+   - Recommend `qwen2.5-coder:7b` as default, with a one-click "Pull this model" button.
+   - Stream model download progress (parse the streaming response) into a progress bar.
+4. Embedding model picker in Settings (Task #14):
+   - Add `apps/frontend/src/features/settings/IndexerSettings.tsx` section: dropdown with detected embedding-capable models, "Pull `nomic-embed-text`" button, current dimension shown.
+   - Wire through new `/v1/settings/embedding` endpoint that updates `Settings.embedding_provider` / `_model` and triggers index rebuild.
+5. Offline-fallback banner (Task #15):
+   - When `IndexerService` signature is `hash:*`, the UI shows a dismissible top-bar banner: "Semantic search running on offline fallback. [Set up real embeddings →]".
+   - Wire it via the SSE event bus — agent emits `indexer.degraded` with the signature.
+6. Workspace import niceties:
+   - Detect git repo, parse `.gitignore`, respect it in the indexer and file tree.
+   - Show "X files, Y MB, Z file types" preview before indexing.
+7. Demo project:
+   - "Try a demo project" button on the welcome screen clones a curated small repo (e.g. https://github.com/llama-studio/demo) to `~/.llama-studio/demos/` and opens it as the workspace.
+8. Splash + About screen (revive Task #18):
+   - Add `apps/frontend/src/features/about/AboutDialog.tsx` showing logo, version, build hash, license, links.
+   - Splash on cold boot for ~800ms while sidecar starts.
+
+**Constraints.**
+- All network calls are local-loopback or to an enabled official cloud provider. No analytics ping during onboarding.
+- Telemetry stays opt-in and off by default.
+- Keep the wizard skippable for power users (`Skip` button on every step except workspace).
+
+**Acceptance criteria.**
+- New-user activation rate (open app → accept first agent diff) measurably > 60% in dogfood testing.
+- Time-to-first-meaningful-chat < 3 minutes from app open on a fresh install.
+- Pulling a model shows a real-time progress bar; cancellation works.
+- Switching embedding model in Settings clears the SQLite vector store and re-indexes without restart.
+- The fallback banner disappears once a real embedder is configured.
+
+**Out of scope.**
+- Self-hosted model marketplace.
+- Voice / image input (Year 2 territory).
+
+---
+
+## PROMPT 3 — Month 3: Power-User Workflows
+
+**Context.**
+Phase 4 wired the UI to the agent backend. Task #6 added slash commands, tool-call approvals, and basic sessions. Task #11 added a dedicated review/test panel. Tool permissions are still per-session and not persisted (#12).
+
+**Goal.**
+Give heavy daily users the workflows they keep asking for: persistent permissions, multi-root workspaces, diff history, custom commands, and MCP support.
+
+**Deliverables.**
+1. **Persistent tool permissions** (Task #12):
+   - New `services/agent/.../permissions_store.py` backed by SQLite. Per-workspace, per-tool, per-scope grant entries with timestamps.
+   - `apps/frontend/src/features/agent/ToolCallCard.tsx` Allow prompt gains a "Always allow in this workspace" checkbox.
+   - Settings → Permissions shows every grant with revoke button.
+2. **Multi-root workspaces**:
+   - Tauri `WorkspaceState` becomes `WorkspaceRoots: Vec<PathBuf>`. `ensure_within_workspace` checks containment in ANY root.
+   - Agent `AppState.indexer_for` keyed by sorted root tuple. Indexer operates over the union.
+   - File tree shows roots as top-level entries.
+3. **Diff history**:
+   - Every applied patch is journaled to `~/.llama-studio/diff-journal/<workspace-hash>.jsonl` (timestamp, files, hunks, message ID).
+   - New `apps/frontend/src/features/history/HistoryView.tsx`: scrollable timeline with "Revert this patch" button that generates an inverse patch and applies it.
+4. **Custom slash commands**:
+   - Convention: `.llama-studio/commands/*.md` in the workspace, with YAML frontmatter (`name`, `args`, `tools`).
+   - Loader in `services/agent/.../commands/recipes.py` registers them at workspace mount time and on fs-watch change.
+   - Commands appear in the slash autocomplete with their description.
+5. **MCP support** (Model Context Protocol):
+   - Add `services/agent/.../mcp/` client that connects to a list of MCP servers from `~/.llama-studio/mcp.json`.
+   - MCP tools merged into the agent's tool registry, prefixed `mcp.<server>.<tool>`. Permissions identical to native tools.
+   - Settings → MCP UI to add/remove servers, see exposed tools, test connection.
+
+**Constraints.**
+- Permissions for shell access remain prompt-every-time by default — opt-in to "always allow" must be explicit.
+- Custom commands cannot bypass tool permissions (still go through the registry).
+- MCP servers run as separate processes; sidecar must not crash if one dies.
+
+**Acceptance criteria.**
+- A user grants `read_file` once per workspace and is never prompted again for that workspace.
+- Opening a workspace with two roots indexes both; cross-root semantic search returns hits from either.
+- Reverting yesterday's patch from the history view restores the files exactly.
+- A community-shipped `.llama-studio/commands/migrate-to-typescript.md` works out of the box after `git pull`.
+- Connecting to a public MCP server (e.g. `mcp-server-git`) exposes its tools in chat.
+
+**Out of scope.**
+- Real-time collaborative editing.
+- Cloud-synced permissions.
+
+---
+
+## PROMPT 4 — Month 4: Performance & Scale
+
+**Context.**
+Indexer uses SQLite vectors with a degrade-to-hash fallback. Frontend lazy-loads Monaco. Hotpath crate exists but is underused. No formal load tests.
+
+**Goal.**
+The app feels instantaneous on a 100k-LOC repo.
+
+**Deliverables.**
+1. **Incremental indexing**:
+   - Indexer tracks `(path, mtime, size, content_hash)` per file. On fs-watch events, only re-chunk + re-embed files whose content_hash changed.
+   - Add chunk-level idempotency so deleting a file removes only its chunks.
+2. **Hotpath does more**:
+   - Move file-tree walking, glob, ripgrep-style content search out of Python into `crates/hotpath` (new `walk.rs`, `search.rs` modules + CLI subcommands).
+   - Python sidecar shells out via the existing `hotpath.py` bridge.
+3. **Background indexing UI**:
+   - New `apps/frontend/src/features/indexer/IndexerStatus.tsx` widget in the bottom dock: progress bar, files/sec, ETA, pause/resume button.
+   - Backend exposes `/v1/indexer/{root}/progress` SSE stream and `/v1/indexer/{root}/pause` + `/resume` endpoints.
+4. **Streaming load tests** (Task #13):
+   - New `services/agent/tests/load/test_chat_streaming.py` using `pytest-benchmark` + a stub LLM that emits N tokens/sec.
+   - CI job `load.yml` (manual trigger + nightly) asserts p95 token-to-screen < 50ms under 5 concurrent sessions.
+5. **Memory budget**:
+   - Add `/v1/system/stats` returning RSS for sidecar + indexer DB size + open sessions.
+   - Display in Settings → System.
+   - Set a soft cap of 250 MB; over the cap, indexer evicts oldest workspaces from RAM caches.
+6. **Cold-boot perf**:
+   - Lazy-load Monaco language workers (only load syntax for opened files).
+   - Defer non-critical feature mounts until after first paint.
+   - Target: time-to-first-paint < 800ms on a M1 / Ryzen 7.
+
+**Constraints.**
+- No regression in functionality for small repos (< 1k files).
+- Hotpath CLI changes must keep the JSON contract backwards-compatible with the existing sidecar bridge.
+
+**Acceptance criteria.**
+- Cold open → first chat on a 100k-LOC repo measured < 5s on a reference machine (document the spec).
+- Initial indexing of 100k LOC < 90s.
+- Streaming load test p95 < 50ms passes in CI.
+- Memory stat for sidecar < 250 MB during steady-state indexing of 50k LOC.
+- Re-indexing after a single file change touches only that file's chunks.
+
+**Out of scope.**
+- GPU acceleration for embeddings.
+- Distributed indexing across machines.
+
+---
+
+## PROMPT 5 — Month 5: Collaboration & Sharing
+
+**Context.**
+Sessions are persisted locally only. There's no way to share a debugging session, no team profile config, and no editor integrations.
+
+**Goal.**
+Make it natural to share context, with privacy-preserving primitives.
+
+**Deliverables.**
+1. **Session export / import**:
+   - New `/v1/sessions/{id}/export` returns a single signed `.llamasession` file (JSON + zstd, includes transcript, applied diffs, attached files inlined or hashed).
+   - Import via UI drag-drop or `llama-studio --import session.llamasession`.
+   - Optional cloud paste: if user is signed in (Year 3 introduces auth — until then, gist-only via GitHub token in keyring), one-click upload to a public/private gist and copy URL.
+2. **Workspace profiles**:
+   - Convention: `.llama-studio/profile.toml` checked into a repo.
+   - Schema: `model`, `provider`, `allowed_tools[]`, `slash_commands_dir`, `ignore_patterns[]`, `embedding_model`.
+   - Loader merges into the user's settings on workspace open with a "Use team defaults?" prompt.
+3. **Pair mode (experimental, flag-gated)**:
+   - WebRTC data channel between two Llama Studio instances on the same LAN (mDNS discovery).
+   - Sync: chat messages, agent tool calls (read-only on the receiver), cursor position in the editor.
+   - End-to-end encrypted with a shared 6-word passphrase exchanged out-of-band.
+   - Behind a `Settings → Experimental → Pair mode` toggle.
+4. **GitHub / GitLab integration**:
+   - "Open as PR" button on the diff review panel — uses `gh` / `glab` CLI if installed, else falls back to git CLI + a printed `gh pr create` command.
+   - "Import PR into review" command palette action: paste a PR URL, get the full diff loaded into the review panel.
+   - PAT stored in keyring; no OAuth flow yet.
+5. **Read-only editor adapter**:
+   - New `apps/vscode-extension/` (TypeScript, basic VSC extension): connects to a running Llama Studio sidecar via the loopback port, displays the agent chat in a side panel.
+   - Same for JetBrains via a minimal Kotlin plugin in `apps/jetbrains-plugin/`.
+   - Both are read-only (no tool execution from inside the host editor — for safety).
+
+**Constraints.**
+- Pair mode never touches a server we control; pure peer-to-peer with relay only when symmetric NAT prevents direct.
+- Session export must not include secrets — keyring entries replaced with placeholders.
+- Editor adapters never start their own sidecar; they only connect.
+
+**Acceptance criteria.**
+- Two users on a flight can share a debugging session via the exported file and see the same transcript + diffs.
+- A community repo with `.llama-studio/profile.toml` configures a new contributor's app on first open.
+- VS Code extension shows the live chat from the desktop app.
+- "Open as PR" produces a real GitHub PR with the applied diff.
+
+**Out of scope.**
+- Real-time multi-cursor editing (browser-level).
+- Hosted SaaS (Year 3).
+
+---
+
+## PROMPT 6 — Month 6: Polish & Public Launch
+
+**Context.**
+The product is feature-complete for v3.0.0. Now make it beautiful, accessible, localized, and well-documented enough to launch publicly.
+
+**Goal.**
+Ship v3.0.0 to ProductHunt and Hacker News with a marketing site, demo video, community channels, and no embarrassing rough edges.
+
+**Deliverables.**
+1. **Design pass**:
+   - Empty states for every panel (chat, files, sessions, terminal, history, problems).
+   - Loading skeletons replace spinners everywhere.
+   - Error states: every failed network/tool call shows a human-friendly message + a "Retry" button.
+   - Audit colors, spacings, typography against the design tokens in `globals.css` — fix off-token usages.
+2. **Accessibility**:
+   - Full keyboard-only navigation: every interactive element reachable via Tab; document the shortcuts.
+   - Screen-reader pass with VoiceOver + NVDA; add aria-labels where missing.
+   - Color contrast AA across light + dark themes; fix any failures.
+   - Reduced-motion mode respected.
+3. **Localization scaffold**:
+   - Add `i18next` to the frontend; extract all UI strings to `locales/<lang>.json`.
+   - Ship en, es, zh, ja, de, fr complete. Other languages stubbed, community-contributed.
+   - Locale picker in Settings; auto-detect from OS.
+4. **Marketing site** (extends `apps/website/`):
+   - Home, Features, Comparison (vs Cursor / Codex / Continue / Cody), Download, Docs, Blog, Community.
+   - 90-second demo video (record + edit; host on Cloudflare Stream or YouTube).
+   - SEO: meta, sitemap, OpenGraph cards, JSON-LD.
+5. **Community**:
+   - Discord server with channels: announcements, help, plugins, dev, contributors.
+   - GitHub Discussions enabled; templates for bug / feature / question.
+   - Weekly "office hours" Google Meet for the first 4 weeks post-launch.
+   - Contributor guide (`CONTRIBUTING.md`), code of conduct, governance doc.
+6. **v3.0.0 release**:
+   - Run the full Month 1 release pipeline.
+   - Coordinate Show HN + ProductHunt for the same day; have responders ready.
+   - Press kit at `llama.studio/press` (logos, screenshots, fact sheet, founder bios).
+
+**Constraints.**
+- No new features in this month — everything is polish + launch ops.
+- Marketing claims must be accurate (e.g. "100% local" only if both UI + agent + indexer can run with no internet).
+
+**Acceptance criteria.**
+- 10k downloads in launch week.
+- Crash-free-session-rate during launch week within 5% of internal builds.
+- A first community PR merged within 30 days of launch.
+- All UI strings successfully localized in the 6 ship languages.
+- Lighthouse 95+ on the marketing site (perf, a11y, SEO).
+
+**Out of scope.**
+- Mobile app (Year 5).
+- Paid tier (Year 3).
+- New core features.

@@ -1,0 +1,612 @@
+<!DOCTYPE html>
+<html><head>
+  <meta charset="utf-8">
+  <meta name="kombai-design-canvas" content="true">
+  <base href="http://localhost:19831/">
+  
+  
+  <script src="https://unpkg.com/@tailwindcss/browser@4"></script>
+  
+  <style>html, body { margin: 0; padding: 0; } #root { display: contents; }</style>
+</head><body>
+  <div id="root"><style data-kid="0">
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap');
+.ls-ui { font-family: 'Inter', system-ui, sans-serif; -webkit-font-smoothing: antialiased; }
+.ls-mono { font-family: 'JetBrains Mono', ui-monospace, monospace; }
+@keyframes ls-pulse { 0%,100% { box-shadow: 0 0 0 0 rgba(52,211,153,.4); } 50% { box-shadow: 0 0 0 3.5px rgba(52,211,153,0); } }
+.ls-dot { animation: ls-pulse 2.4s ease-in-out infinite; }
+@keyframes ls-orb { 0%,100% { box-shadow: 0 0 28px rgba(155,106,241,.35), 0 0 0 1px rgba(155,106,241,.25) inset; } 50% { box-shadow: 0 0 40px rgba(155,106,241,.5), 0 0 0 1px rgba(155,106,241,.35) inset; } }
+.ls-orb { animation: ls-orb 3.5s ease-in-out infinite; }
+@layer base { body { margin: 0; } }
+</style>
+
+<div class="ls-ui h-[1020px] w-full flex flex-col overflow-hidden bg-[#0E0E11] text-[#FAFAFA] cursor-default select-none text-[13px]" data-kid="1">
+
+  
+  <div class="h-[38px] shrink-0 relative flex items-center justify-between bg-[#101014] border-b border-[#1E1E23] px-3 z-10" data-kid="2">
+    <div class="flex items-center gap-2 min-w-0" data-kid="3">
+      <div class="flex items-center gap-1" data-kid="4">
+        <button class="w-6 h-6 rounded-md flex items-center justify-center text-[#52525B] hover:bg-[#1B1B21]" title="Minimize" data-kid="5"><i data-lucide="minus" class="w-3 h-3" data-kid="6"></i></button>
+        <button class="w-6 h-6 rounded-md flex items-center justify-center text-[#52525B] hover:bg-[#1B1B21]" title="Maximize" data-kid="7"><i data-lucide="square" class="w-2.5 h-2.5" data-kid="8"></i></button>
+        <button class="w-6 h-6 rounded-md flex items-center justify-center text-[#52525B] hover:bg-[#1B1B21]" title="Close" data-kid="9"><i data-lucide="x" class="w-3 h-3" data-kid="10"></i></button>
+      </div>
+      <div class="w-px h-4 bg-[#26262B]" data-kid="11"></div>
+      <div class="flex items-center gap-1.5" data-kid="12">
+        <div class="w-4 h-4 rounded-[5px] bg-gradient-to-br from-[#9B6AF1] to-[#7C3AED] flex items-center justify-center shrink-0" data-kid="13"><i data-lucide="terminal" class="w-2.5 h-2.5 text-white" data-kid="14"></i></div>
+        <span class="text-[12px] font-medium text-[#E4E4E7]" data-kid="15">Llama Studio</span>
+      </div>
+      <div class="w-px h-4 bg-[#26262B]" data-kid="16"></div>
+      <span class="ls-mono text-[10.5px] text-[#71717A] truncate" data-kid="17">/home/sanjeevtg/Documents/Zoom</span>
+      <div class="flex items-center gap-1 h-[20px] px-1.5 rounded-md bg-[#15151A] border border-[#26262B] shrink-0" data-kid="18">
+        <i data-lucide="git-branch" class="w-3 h-3 text-[#71717A]" data-kid="19"></i>
+        <span class="ls-mono text-[10.5px] text-[#A1A1AA]" data-kid="20">main</span>
+      </div>
+    </div>
+
+    <div class="absolute left-1/2 -translate-x-1/2 w-[340px] h-[24px] rounded-md bg-[#15151A] border border-[#26262B] flex items-center gap-2 px-2.5" data-kid="21">
+      <i data-lucide="search" class="w-3 h-3 text-[#52525B] shrink-0" data-kid="22"></i>
+      <span class="text-[11px] text-[#52525B] flex-1 truncate" data-kid="23">Search files, commands, settings…</span>
+      <span class="ls-mono text-[9.5px] text-[#71717A] bg-[#1B1B21] border border-[#26262B] rounded px-1 py-px leading-none pb-0.5" data-kid="24">⌘K</span>
+    </div>
+
+    <div class="flex items-center gap-1" data-kid="25">
+      <button class="w-6 h-6 rounded-md flex items-center justify-center text-[#71717A] hover:bg-[#1B1B21]" title="Toggle sidebar" data-kid="26"><i data-lucide="panel-left" class="w-3.5 h-3.5" data-kid="27"></i></button>
+      <button class="w-6 h-6 rounded-md flex items-center justify-center text-[#71717A] hover:bg-[#1B1B21]" title="Toggle dock" data-kid="28"><i data-lucide="panel-bottom" class="w-3.5 h-3.5" data-kid="29"></i></button>
+      <button class="w-6 h-6 rounded-md flex items-center justify-center text-[#9B6AF1] bg-[rgba(155,106,241,0.10)]" title="Toggle agent panel" data-kid="30"><i data-lucide="panel-right" class="w-3.5 h-3.5" data-kid="31"></i></button>
+      <div class="w-px h-4 bg-[#26262B] mx-1" data-kid="32"></div>
+      <button class="h-6 px-2.5 rounded-md bg-[#9B6AF1] hover:bg-[#A87DF5] flex items-center gap-1.5 text-white text-[11.5px] font-medium" data-kid="33">
+        <i data-lucide="play" class="w-3 h-3" data-kid="34"></i>Run
+      </button>
+    </div>
+  </div>
+
+  
+  <div class="flex flex-1 min-h-0" data-kid="35">
+
+    
+    <div class="w-12 shrink-0 bg-[#101014] border-r border-[#1E1E23] flex flex-col items-center justify-between py-2" data-kid="36">
+      <div class="flex flex-col items-center gap-1 w-full" data-kid="37">
+        <div class="relative w-full flex justify-center" data-kid="38"><button class="w-8 h-8 rounded-lg flex items-center justify-center text-[#71717A] hover:text-[#A1A1AA] hover:bg-[#1B1B21]" title="Explorer" data-kid="39"><i data-lucide="files" class="w-4 h-4" data-kid="40"></i></button></div>
+        <div class="relative w-full flex justify-center" data-kid="41"><button class="w-8 h-8 rounded-lg flex items-center justify-center text-[#71717A] hover:text-[#A1A1AA] hover:bg-[#1B1B21]" title="Search" data-kid="42"><i data-lucide="search" class="w-4 h-4" data-kid="43"></i></button></div>
+        <div class="relative w-full flex justify-center" data-kid="44"><button class="w-8 h-8 rounded-lg flex items-center justify-center text-[#71717A] hover:text-[#A1A1AA] hover:bg-[#1B1B21]" title="Indexer" data-kid="45"><i data-lucide="database" class="w-4 h-4" data-kid="46"></i></button></div>
+        <div class="relative w-full flex justify-center" data-kid="47">
+          <span class="absolute left-0 top-1/2 -translate-y-1/2 h-5 w-[2px] rounded-r bg-[#9B6AF1]" data-kid="48"></span>
+          <button class="w-8 h-8 rounded-lg flex items-center justify-center text-[#9B6AF1] bg-[rgba(155,106,241,0.12)]" title="Sessions" data-kid="49"><i data-lucide="message-square" class="w-4 h-4" data-kid="50"></i></button>
+        </div>
+        <div class="relative w-full flex justify-center" data-kid="51"><button class="w-8 h-8 rounded-lg flex items-center justify-center text-[#71717A] hover:text-[#A1A1AA] hover:bg-[#1B1B21]" title="Tasks" data-kid="52"><i data-lucide="clipboard-list" class="w-4 h-4" data-kid="53"></i></button></div>
+      </div>
+      <div class="flex flex-col items-center gap-1" data-kid="54">
+        <button class="w-8 h-8 rounded-lg flex items-center justify-center text-[#71717A] hover:text-[#A1A1AA] hover:bg-[#1B1B21]" title="Appearance" data-kid="55"><i data-lucide="palette" class="w-4 h-4" data-kid="56"></i></button>
+        <button class="w-8 h-8 rounded-lg flex items-center justify-center text-[#71717A] hover:text-[#A1A1AA] hover:bg-[#1B1B21]" title="Settings" data-kid="57"><i data-lucide="settings" class="w-4 h-4" data-kid="58"></i></button>
+      </div>
+    </div>
+
+    
+    <aside class="w-[264px] shrink-0 bg-[#101014] border-r border-[#1E1E23] flex flex-col min-h-0" data-kid="59">
+      <div class="px-3 pt-3 flex items-center justify-between" data-kid="60">
+        <div class="flex items-center gap-1.5" data-kid="61">
+          <span class="text-[10px] font-semibold uppercase tracking-[0.09em] text-[#71717A]" data-kid="62">Sessions</span>
+          <span class="ls-mono text-[9.5px] text-[#71717A] bg-[#1B1B21] border border-[#26262B] rounded px-1 leading-[15px]" data-kid="63">24</span>
+        </div>
+        <button class="w-5 h-5 rounded flex items-center justify-center text-[#52525B] hover:bg-[#1B1B21]" title="Collapse all" data-kid="64"><i data-lucide="chevrons-down-up" class="w-3 h-3" data-kid="65"></i></button>
+      </div>
+      <div class="mx-3 mt-2.5 h-7 rounded-md bg-[#131318] border border-[#26262B] flex items-center gap-2 px-2" data-kid="66">
+        <i data-lucide="search" class="w-3 h-3 text-[#52525B] shrink-0" data-kid="67"></i>
+        <span class="text-[11.5px] text-[#52525B]" data-kid="68">Filter sessions…</span>
+      </div>
+      <button class="mx-3 mt-2 h-7 rounded-md bg-[#15151A] border border-[#26262B] hover:border-[#3F3F46] hover:bg-[#1B1B21] flex items-center justify-center gap-1.5 text-[11.5px] text-[#A1A1AA] font-medium shrink-0" data-kid="69">
+        <i data-lucide="plus" class="w-3 h-3" data-kid="70"></i>New session
+      </button>
+
+      <div class="flex-1 min-h-0 overflow-hidden px-2 mt-2" data-kid="71">
+        
+        <div class="flex items-center gap-1.5 px-2.5 pt-2 pb-1" data-kid="72">
+          <i data-lucide="pin" class="w-2.5 h-2.5 text-[#52525B]" data-kid="73"></i>
+          <span class="text-[9.5px] font-semibold uppercase tracking-[0.09em] text-[#52525B]" data-kid="74">Pinned</span>
+        </div>
+        <div class="relative rounded-lg px-2.5 py-[7px] bg-[rgba(155,106,241,0.10)]" data-kid="75">
+          <span class="absolute left-0 top-1/2 -translate-y-1/2 h-[58%] w-[2px] rounded-r bg-[#9B6AF1]" data-kid="76"></span>
+          <div class="flex items-center gap-2" data-kid="77">
+            <span class="ls-dot w-1.5 h-1.5 rounded-full bg-[#34D399] shrink-0" data-kid="78"></span>
+            <span class="text-[12.5px] font-medium text-white truncate" data-kid="79">retry Mellum2-12B-A2.5B-Thinking</span>
+          </div>
+          <div class="flex items-center justify-between gap-2 mt-1 pl-[14px]" data-kid="80">
+            <span class="ls-mono text-[9.5px] text-[#8E8E99] bg-[rgba(255,255,255,0.05)] border border-[rgba(255,255,255,0.08)] rounded px-1 py-px truncate" data-kid="81">Mellum2-12B · Q4_K_M</span>
+            <span class="ls-mono text-[9.5px] text-[#71717A] shrink-0" data-kid="82">4:49 PM</span>
+          </div>
+        </div>
+        <div class="relative rounded-lg px-2.5 py-[7px] hover:bg-[#1B1B21] mt-0.5" data-kid="83">
+          <div class="flex items-center gap-2" data-kid="84">
+            <span class="ls-dot w-1.5 h-1.5 rounded-full bg-[#34D399] shrink-0" data-kid="85"></span>
+            <span class="text-[12.5px] font-medium text-[#D4D4D8] truncate" data-kid="86">Codex A-Z demo portfolio workflow</span>
+          </div>
+          <div class="flex items-center justify-between gap-2 mt-1 pl-[14px]" data-kid="87">
+            <span class="ls-mono text-[9.5px] text-[#71717A] bg-[#17171C] border border-[#222227] rounded px-1 py-px truncate" data-kid="88">Qwopus3.5-9B · Q6_K</span>
+            <span class="ls-mono text-[9.5px] text-[#52525B] shrink-0" data-kid="89">1:26 PM</span>
+          </div>
+        </div>
+
+        
+        <div class="px-2.5 pt-3 pb-1" data-kid="90"><span class="text-[9.5px] font-semibold uppercase tracking-[0.09em] text-[#52525B]" data-kid="91">Today</span></div>
+        <div class="relative rounded-lg px-2.5 py-[7px] hover:bg-[#1B1B21]" data-kid="92">
+          <div class="flex items-center gap-2" data-kid="93">
+            <span class="ls-dot w-1.5 h-1.5 rounded-full bg-[#34D399] shrink-0" data-kid="94"></span>
+            <span class="text-[12.5px] font-medium text-[#D4D4D8] truncate" data-kid="95">retry Qwopus3.5-9B-Coder-MTP</span>
+          </div>
+          <div class="flex items-center justify-between gap-2 mt-1 pl-[14px]" data-kid="96">
+            <span class="ls-mono text-[9.5px] text-[#71717A] bg-[#17171C] border border-[#222227] rounded px-1 py-px truncate" data-kid="97">Qwopus3.5-9B · Q6_K</span>
+            <span class="ls-mono text-[9.5px] text-[#52525B] shrink-0" data-kid="98">9:32 AM</span>
+          </div>
+        </div>
+        <div class="relative rounded-lg px-2.5 py-[7px] hover:bg-[#1B1B21] mt-0.5" data-kid="99">
+          <div class="flex items-center gap-2" data-kid="100">
+            <span class="ls-dot w-1.5 h-1.5 rounded-full bg-[#34D399] shrink-0" data-kid="101"></span>
+            <span class="text-[12.5px] font-medium text-[#D4D4D8] truncate" data-kid="102">retry gemma-4-e2b-it.Q8_0</span>
+          </div>
+          <div class="flex items-center justify-between gap-2 mt-1 pl-[14px]" data-kid="103">
+            <span class="ls-mono text-[9.5px] text-[#71717A] bg-[#17171C] border border-[#222227] rounded px-1 py-px truncate" data-kid="104">gemma-4-e2b · Q8_0</span>
+            <span class="ls-mono text-[9.5px] text-[#52525B] shrink-0" data-kid="105">9:32 AM</span>
+          </div>
+        </div>
+        <div class="relative rounded-lg px-2.5 py-[7px] hover:bg-[#1B1B21] mt-0.5" data-kid="106">
+          <div class="flex items-center gap-2" data-kid="107">
+            <span class="ls-dot w-1.5 h-1.5 rounded-full bg-[#34D399] shrink-0" data-kid="108"></span>
+            <span class="text-[12.5px] font-medium text-[#D4D4D8] truncate" data-kid="109">retry MiniCPM5-1B-F16</span>
+          </div>
+          <div class="flex items-center justify-between gap-2 mt-1 pl-[14px]" data-kid="110">
+            <span class="ls-mono text-[9.5px] text-[#71717A] bg-[#17171C] border border-[#222227] rounded px-1 py-px truncate" data-kid="111">MiniCPM5-1B · F16</span>
+            <span class="ls-mono text-[9.5px] text-[#52525B] shrink-0" data-kid="112">9:31 AM</span>
+          </div>
+        </div>
+        <div class="relative rounded-lg px-2.5 py-[7px] hover:bg-[#1B1B21] mt-0.5" data-kid="113">
+          <div class="flex items-center gap-2" data-kid="114">
+            <span class="ls-dot w-1.5 h-1.5 rounded-full bg-[#34D399] shrink-0" data-kid="115"></span>
+            <span class="text-[12.5px] font-medium text-[#D4D4D8] truncate" data-kid="116">matrix gemma-4-E4B-it-UD-Q8_K_XL</span>
+          </div>
+          <div class="flex items-center justify-between gap-2 mt-1 pl-[14px]" data-kid="117">
+            <span class="ls-mono text-[9.5px] text-[#71717A] bg-[#17171C] border border-[#222227] rounded px-1 py-px truncate" data-kid="118">gemma-4-E4B · Q8_K_XL</span>
+            <span class="ls-mono text-[9.5px] text-[#52525B] shrink-0" data-kid="119">9:30 AM</span>
+          </div>
+        </div>
+
+        
+        <div class="px-2.5 pt-3 pb-1" data-kid="120"><span class="text-[9.5px] font-semibold uppercase tracking-[0.09em] text-[#52525B]" data-kid="121">Yesterday</span></div>
+        <div class="relative rounded-lg px-2.5 py-[7px] hover:bg-[#1B1B21]" data-kid="122">
+          <div class="flex items-center gap-2" data-kid="123">
+            <span class="ls-dot w-1.5 h-1.5 rounded-full bg-[#34D399] shrink-0" data-kid="124"></span>
+            <span class="text-[12.5px] font-medium text-[#D4D4D8] truncate" data-kid="125">matrix Mellum2-12B-A2.5B-Thinking</span>
+          </div>
+          <div class="flex items-center justify-between gap-2 mt-1 pl-[14px]" data-kid="126">
+            <span class="ls-mono text-[9.5px] text-[#71717A] bg-[#17171C] border border-[#222227] rounded px-1 py-px truncate" data-kid="127">Mellum2-12B · Q4_K_M</span>
+            <span class="ls-mono text-[9.5px] text-[#52525B] shrink-0" data-kid="128">6:12 PM</span>
+          </div>
+        </div>
+        <div class="relative rounded-lg px-2.5 py-[7px] hover:bg-[#1B1B21] mt-0.5" data-kid="129">
+          <div class="flex items-center gap-2" data-kid="130">
+            <span class="ls-dot w-1.5 h-1.5 rounded-full bg-[#34D399] shrink-0" data-kid="131"></span>
+            <span class="text-[12.5px] font-medium text-[#D4D4D8] truncate" data-kid="132">Codex portfolio build validation</span>
+          </div>
+          <div class="flex items-center justify-between gap-2 mt-1 pl-[14px]" data-kid="133">
+            <span class="ls-mono text-[9.5px] text-[#71717A] bg-[#17171C] border border-[#222227] rounded px-1 py-px truncate" data-kid="134">Qwopus3.5-9B · Q6_K</span>
+            <span class="ls-mono text-[9.5px] text-[#52525B] shrink-0" data-kid="135">3:48 PM</span>
+          </div>
+        </div>
+        <div class="relative rounded-lg px-2.5 py-[7px] hover:bg-[#1B1B21] mt-0.5" data-kid="136">
+          <div class="flex items-center gap-2" data-kid="137">
+            <span class="ls-dot w-1.5 h-1.5 rounded-full bg-[#34D399] shrink-0" data-kid="138"></span>
+            <span class="text-[12.5px] font-medium text-[#D4D4D8] truncate" data-kid="139">Zoom website auto workflow</span>
+          </div>
+          <div class="flex items-center justify-between gap-2 mt-1 pl-[14px]" data-kid="140">
+            <span class="ls-mono text-[9.5px] text-[#71717A] bg-[#17171C] border border-[#222227] rounded px-1 py-px truncate" data-kid="141">gemma-4-e2b · Q8_0</span>
+            <span class="ls-mono text-[9.5px] text-[#52525B] shrink-0" data-kid="142">11:05 AM</span>
+          </div>
+        </div>
+
+        
+        <div class="px-2.5 pt-3 pb-1" data-kid="143"><span class="text-[9.5px] font-semibold uppercase tracking-[0.09em] text-[#52525B]" data-kid="144">Earlier this week</span></div>
+        <div class="relative rounded-lg px-2.5 py-[7px] hover:bg-[#1B1B21]" data-kid="145">
+          <div class="flex items-center gap-2" data-kid="146">
+            <span class="w-1.5 h-1.5 rounded-full bg-[#52525B] shrink-0" data-kid="147"></span>
+            <span class="text-[12.5px] font-medium text-[#D4D4D8] truncate" data-kid="148">Session 1:26 PM</span>
+          </div>
+          <div class="flex items-center justify-between gap-2 mt-1 pl-[14px]" data-kid="149">
+            <span class="ls-mono text-[9.5px] text-[#71717A] bg-[#17171C] border border-[#222227] rounded px-1 py-px truncate" data-kid="150">MiniCPM5-1B · F16</span>
+            <span class="ls-mono text-[9.5px] text-[#52525B] shrink-0" data-kid="151">Mon</span>
+          </div>
+        </div>
+        <div class="relative rounded-lg px-2.5 py-[7px] hover:bg-[#1B1B21] mt-0.5" data-kid="152">
+          <div class="flex items-center gap-2" data-kid="153">
+            <span class="w-1.5 h-1.5 rounded-full bg-[#52525B] shrink-0" data-kid="154"></span>
+            <span class="text-[12.5px] font-medium text-[#D4D4D8] truncate" data-kid="155">Session 12:56 PM</span>
+          </div>
+          <div class="flex items-center justify-between gap-2 mt-1 pl-[14px]" data-kid="156">
+            <span class="ls-mono text-[9.5px] text-[#71717A] bg-[#17171C] border border-[#222227] rounded px-1 py-px truncate" data-kid="157">gemma-4-E4B · Q8_K_XL</span>
+            <span class="ls-mono text-[9.5px] text-[#52525B] shrink-0" data-kid="158">Mon</span>
+          </div>
+        </div>
+      </div>
+
+      <button class="shrink-0 border-t border-[#1E1E23] px-3.5 py-2.5 flex items-center justify-between text-[11.5px] text-[#A1A1AA] hover:text-[#E4E4E7] hover:bg-[#15151A]" data-kid="159">
+        <span data-kid="160">Open sessions view</span>
+        <i data-lucide="arrow-right" class="w-3.5 h-3.5" data-kid="161"></i>
+      </button>
+    </aside>
+
+    
+    <main class="flex-1 min-w-0 flex flex-col min-h-0 bg-[#0E0E11]" data-kid="162">
+      <div class="flex-1 min-h-0 overflow-hidden" data-kid="163">
+        <div class="max-w-[980px] mx-auto h-full flex flex-col px-7 pt-5" data-kid="164">
+
+          
+          <div class="flex items-start justify-between gap-4 shrink-0" data-kid="165">
+            <div data-kid="166">
+              <h1 class="text-[21px] font-semibold tracking-[-0.01em] text-[#FAFAFA] leading-7" data-kid="167">Sessions</h1>
+              <p class="text-[12.5px] text-[#A1A1AA] mt-0.5" data-kid="168">Resume any past conversation. Pinned sessions stay at the top.</p>
+            </div>
+            <div class="flex items-center gap-2 shrink-0 pt-0.5" data-kid="169">
+              <button class="h-8 px-3 rounded-lg bg-[#15151A] border border-[#26262B] hover:border-[#3F3F46] flex items-center gap-1.5 text-[12px] font-medium text-[#E4E4E7]" data-kid="170">
+                <i data-lucide="download" class="w-3.5 h-3.5 text-[#71717A]" data-kid="171"></i>Import
+              </button>
+              <button class="h-8 px-3 rounded-lg bg-[#9B6AF1] hover:bg-[#A87DF5] flex items-center gap-1.5 text-[12px] font-medium text-white" data-kid="172">
+                <i data-lucide="plus" class="w-3.5 h-3.5" data-kid="173"></i>New session
+              </button>
+            </div>
+          </div>
+
+          
+          <div class="grid grid-cols-4 gap-2.5 mt-4 shrink-0" data-kid="174">
+            <div class="bg-[#15151A] border border-[#26262B] rounded-[10px] px-3.5 py-3" data-kid="175">
+              <div class="flex items-center justify-between" data-kid="176">
+                <span class="text-[9.5px] font-semibold uppercase tracking-[0.08em] text-[#71717A]" data-kid="177">Active sessions</span>
+                <i data-lucide="messages-square" class="w-3.5 h-3.5 text-[#3F3F46]" data-kid="178"></i>
+              </div>
+              <div class="flex items-center gap-2 mt-1.5" data-kid="179">
+                <span class="ls-dot w-1.5 h-1.5 rounded-full bg-[#34D399]" data-kid="180"></span>
+                <span class="ls-mono text-[17px] font-semibold text-[#FAFAFA] leading-none" data-kid="181">18</span>
+              </div>
+              <p class="text-[10px] text-[#52525B] mt-1.5" data-kid="182">+3 since yesterday</p>
+            </div>
+            <div class="bg-[#15151A] border border-[#26262B] rounded-[10px] px-3.5 py-3" data-kid="183">
+              <div class="flex items-center justify-between" data-kid="184">
+                <span class="text-[9.5px] font-semibold uppercase tracking-[0.08em] text-[#71717A]" data-kid="185">Runs this week</span>
+                <i data-lucide="activity" class="w-3.5 h-3.5 text-[#3F3F46]" data-kid="186"></i>
+              </div>
+              <div class="mt-1.5" data-kid="187"><span class="ls-mono text-[17px] font-semibold text-[#FAFAFA] leading-none" data-kid="188">142</span></div>
+              <p class="text-[10px] text-[#34D399] mt-1.5 flex items-center gap-1" data-kid="189"><i data-lucide="trending-up" class="w-2.5 h-2.5" data-kid="190"></i>+18% vs last week</p>
+            </div>
+            <div class="bg-[#15151A] border border-[#26262B] rounded-[10px] px-3.5 py-3" data-kid="191">
+              <div class="flex items-center justify-between" data-kid="192">
+                <span class="text-[9.5px] font-semibold uppercase tracking-[0.08em] text-[#71717A]" data-kid="193">Models used</span>
+                <i data-lucide="cpu" class="w-3.5 h-3.5 text-[#3F3F46]" data-kid="194"></i>
+              </div>
+              <div class="mt-1.5" data-kid="195"><span class="ls-mono text-[17px] font-semibold text-[#FAFAFA] leading-none" data-kid="196">6</span></div>
+              <p class="ls-mono text-[10px] text-[#52525B] mt-1.5" data-kid="197">all local · llamacpp</p>
+            </div>
+            <div class="bg-[#15151A] border border-[#26262B] rounded-[10px] px-3.5 py-3" data-kid="198">
+              <div class="flex items-center justify-between" data-kid="199">
+                <span class="text-[9.5px] font-semibold uppercase tracking-[0.08em] text-[#71717A]" data-kid="200">Tokens used</span>
+                <i data-lucide="coins" class="w-3.5 h-3.5 text-[#3F3F46]" data-kid="201"></i>
+              </div>
+              <div class="mt-1.5" data-kid="202"><span class="ls-mono text-[17px] font-semibold text-[#FAFAFA] leading-none" data-kid="203">1.2M</span></div>
+              <p class="ls-mono text-[10px] text-[#52525B] mt-1.5" data-kid="204">avg 8.4k / run</p>
+            </div>
+          </div>
+
+          
+          <div class="flex items-center justify-between gap-3 mt-3.5 shrink-0" data-kid="205">
+            <div class="flex items-center gap-0.5 bg-[#131318] border border-[#26262B] rounded-lg p-0.5" data-kid="206">
+              <button class="h-[26px] px-2.5 rounded-md bg-[rgba(155,106,241,0.14)] flex items-center gap-1.5 text-[11.5px] font-medium text-[#C9ADF8]" data-kid="207">All <span class="ls-mono text-[9.5px] text-[#9B6AF1]" data-kid="208">24</span></button>
+              <button class="h-[26px] px-2.5 rounded-md flex items-center gap-1.5 text-[11.5px] text-[#A1A1AA] hover:text-[#E4E4E7]" data-kid="209">Active <span class="ls-mono text-[9.5px] text-[#52525B]" data-kid="210">18</span></button>
+              <button class="h-[26px] px-2.5 rounded-md flex items-center gap-1.5 text-[11.5px] text-[#A1A1AA] hover:text-[#E4E4E7]" data-kid="211">Pinned <span class="ls-mono text-[9.5px] text-[#52525B]" data-kid="212">2</span></button>
+              <button class="h-[26px] px-2.5 rounded-md flex items-center gap-1.5 text-[11.5px] text-[#A1A1AA] hover:text-[#E4E4E7]" data-kid="213">Archived <span class="ls-mono text-[9.5px] text-[#52525B]" data-kid="214">4</span></button>
+            </div>
+            <div class="flex items-center gap-2" data-kid="215">
+              <div class="w-[280px] h-[30px] rounded-lg bg-[#131318] border border-[#26262B] flex items-center gap-2 px-2.5" data-kid="216">
+                <i data-lucide="search" class="w-3.5 h-3.5 text-[#52525B] shrink-0" data-kid="217"></i>
+                <span class="text-[11.5px] text-[#52525B]" data-kid="218">Search sessions…</span>
+              </div>
+              <button class="h-[30px] px-2.5 rounded-lg bg-[#131318] border border-[#26262B] hover:border-[#3F3F46] flex items-center gap-1.5 shrink-0" data-kid="219">
+                <i data-lucide="arrow-up-down" class="w-3 h-3 text-[#71717A]" data-kid="220"></i>
+                <span class="text-[11.5px] text-[#A1A1AA]" data-kid="221">Last updated</span>
+                <i data-lucide="chevron-down" class="w-3 h-3 text-[#52525B]" data-kid="222"></i>
+              </button>
+            </div>
+          </div>
+
+          
+          <div class="flex-1 min-h-0 overflow-hidden mt-4 pb-3" data-kid="223">
+            <div class="flex items-center gap-1.5 mb-2" data-kid="224">
+              <i data-lucide="pin" class="w-2.5 h-2.5 text-[#52525B]" data-kid="225"></i>
+              <span class="text-[10px] font-semibold uppercase tracking-[0.09em] text-[#52525B]" data-kid="226">Pinned</span>
+            </div>
+
+            <div class="flex items-center justify-between gap-4 bg-[#15151A] border border-[#26262B] rounded-[10px] px-4 py-2.5" data-kid="227">
+              <div class="min-w-0" data-kid="228">
+                <div class="flex items-center gap-2" data-kid="229">
+                  <span class="ls-dot w-1.5 h-1.5 rounded-full bg-[#34D399] shrink-0" data-kid="230"></span>
+                  <span class="text-[13px] font-medium text-[#F4F4F5] truncate" data-kid="231">retry Mellum2-12B-A2.5B-Thinking</span>
+                  <i data-lucide="pin" class="w-3 h-3 text-[#9B6AF1] rotate-45 shrink-0" data-kid="232"></i>
+                </div>
+                <div class="flex items-center gap-1.5 mt-1.5" data-kid="233">
+                  <span class="ls-mono text-[9.5px] text-[#34D399] bg-[rgba(52,211,153,0.10)] border border-[rgba(52,211,153,0.25)] rounded px-1.5 py-px" data-kid="234">active</span>
+                  <span class="ls-mono text-[9.5px] text-[#A1A1AA] bg-[#1B1B21] border border-[#26262B] rounded px-1.5 py-px" data-kid="235">llamacpp</span>
+                  <span class="ls-mono text-[9.5px] text-[#A1A1AA] bg-[#1B1B21] border border-[#26262B] rounded px-1.5 py-px max-w-[280px] truncate" data-kid="236">Mellum2-12B-A2.5B-Thinking.Q4_K_M.gguf</span>
+                  <span class="ls-mono text-[9.5px] text-[#71717A] bg-[#1B1B21] border border-[#26262B] rounded px-1.5 py-px" data-kid="237">Q4_K_M · 12B</span>
+                </div>
+                <p class="ls-mono text-[10px] text-[#52525B] mt-1.5" data-kid="238">Updated 6/11, 4:49 PM · 32 messages · 4 runs</p>
+              </div>
+              <div class="flex items-center gap-1 shrink-0" data-kid="239">
+                <button class="w-7 h-7 rounded-md flex items-center justify-center text-[#71717A] hover:text-[#E4E4E7] hover:bg-[#1B1B21]" title="Unpin session" data-kid="240"><i data-lucide="pin" class="w-3.5 h-3.5" data-kid="241"></i></button>
+                <button class="w-7 h-7 rounded-md flex items-center justify-center text-[#71717A] hover:text-[#F87171] hover:bg-[#1B1B21]" title="Delete session" data-kid="242"><i data-lucide="trash-2" class="w-3.5 h-3.5" data-kid="243"></i></button>
+                <button class="h-7 px-3 ml-1 rounded-lg bg-[#1B1B21] border border-[#26262B] hover:border-[#3F3F46] text-[11.5px] font-medium text-[#E4E4E7]" data-kid="244">Resume</button>
+              </div>
+            </div>
+
+            <div class="flex items-center justify-between gap-4 bg-[#15151A] border border-[#26262B] rounded-[10px] px-4 py-2.5 mt-2" data-kid="245">
+              <div class="min-w-0" data-kid="246">
+                <div class="flex items-center gap-2" data-kid="247">
+                  <span class="ls-dot w-1.5 h-1.5 rounded-full bg-[#34D399] shrink-0" data-kid="248"></span>
+                  <span class="text-[13px] font-medium text-[#F4F4F5] truncate" data-kid="249">Codex A-Z demo portfolio workflow</span>
+                  <i data-lucide="pin" class="w-3 h-3 text-[#9B6AF1] rotate-45 shrink-0" data-kid="250"></i>
+                </div>
+                <div class="flex items-center gap-1.5 mt-1.5" data-kid="251">
+                  <span class="ls-mono text-[9.5px] text-[#34D399] bg-[rgba(52,211,153,0.10)] border border-[rgba(52,211,153,0.25)] rounded px-1.5 py-px" data-kid="252">active</span>
+                  <span class="ls-mono text-[9.5px] text-[#A1A1AA] bg-[#1B1B21] border border-[#26262B] rounded px-1.5 py-px" data-kid="253">llamacpp</span>
+                  <span class="ls-mono text-[9.5px] text-[#A1A1AA] bg-[#1B1B21] border border-[#26262B] rounded px-1.5 py-px max-w-[280px] truncate" data-kid="254">Qwopus3.5-9B-Coder-MTP-Q6_K.gguf</span>
+                  <span class="ls-mono text-[9.5px] text-[#71717A] bg-[#1B1B21] border border-[#26262B] rounded px-1.5 py-px" data-kid="255">Q6_K · 9B</span>
+                </div>
+                <p class="ls-mono text-[10px] text-[#52525B] mt-1.5" data-kid="256">Updated 6/11, 1:26 PM · 58 messages · 7 runs</p>
+              </div>
+              <div class="flex items-center gap-1 shrink-0" data-kid="257">
+                <button class="w-7 h-7 rounded-md flex items-center justify-center text-[#71717A] hover:text-[#E4E4E7] hover:bg-[#1B1B21]" title="Unpin session" data-kid="258"><i data-lucide="pin" class="w-3.5 h-3.5" data-kid="259"></i></button>
+                <button class="w-7 h-7 rounded-md flex items-center justify-center text-[#71717A] hover:text-[#F87171] hover:bg-[#1B1B21]" title="Delete session" data-kid="260"><i data-lucide="trash-2" class="w-3.5 h-3.5" data-kid="261"></i></button>
+                <button class="h-7 px-3 ml-1 rounded-lg bg-[#1B1B21] border border-[#26262B] hover:border-[#3F3F46] text-[11.5px] font-medium text-[#E4E4E7]" data-kid="262">Resume</button>
+              </div>
+            </div>
+
+            <div class="flex items-center gap-1.5 mt-4 mb-2" data-kid="263">
+              <i data-lucide="history" class="w-2.5 h-2.5 text-[#52525B]" data-kid="264"></i>
+              <span class="text-[10px] font-semibold uppercase tracking-[0.09em] text-[#52525B]" data-kid="265">Recent</span>
+            </div>
+
+            
+            <div class="flex items-center justify-between gap-4 bg-[#17171D] border border-[#3F3F46] rounded-[10px] px-4 py-2.5" data-kid="266">
+              <div class="min-w-0" data-kid="267">
+                <div class="flex items-center gap-2" data-kid="268">
+                  <span class="ls-dot w-1.5 h-1.5 rounded-full bg-[#34D399] shrink-0" data-kid="269"></span>
+                  <span class="text-[13px] font-medium text-white truncate" data-kid="270">retry Qwopus3.5-9B-Coder-MTP</span>
+                </div>
+                <div class="flex items-center gap-1.5 mt-1.5" data-kid="271">
+                  <span class="ls-mono text-[9.5px] text-[#34D399] bg-[rgba(52,211,153,0.10)] border border-[rgba(52,211,153,0.25)] rounded px-1.5 py-px" data-kid="272">active</span>
+                  <span class="ls-mono text-[9.5px] text-[#A1A1AA] bg-[#1F1F26] border border-[#2E2E33] rounded px-1.5 py-px" data-kid="273">llamacpp</span>
+                  <span class="ls-mono text-[9.5px] text-[#A1A1AA] bg-[#1F1F26] border border-[#2E2E33] rounded px-1.5 py-px max-w-[280px] truncate" data-kid="274">Qwopus3.5-9B-Coder-MTP-Q6_K.gguf</span>
+                  <span class="ls-mono text-[9.5px] text-[#71717A] bg-[#1F1F26] border border-[#2E2E33] rounded px-1.5 py-px" data-kid="275">Q6_K · 9B</span>
+                </div>
+                <p class="ls-mono text-[10px] text-[#71717A] mt-1.5" data-kid="276">Updated 6/11, 9:32 AM · 21 messages · 3 runs</p>
+              </div>
+              <div class="flex items-center gap-1 shrink-0" data-kid="277">
+                <button class="w-7 h-7 rounded-md flex items-center justify-center text-[#A1A1AA] hover:text-[#E4E4E7] hover:bg-[#26262B]" title="Pin session" data-kid="278"><i data-lucide="pin" class="w-3.5 h-3.5" data-kid="279"></i></button>
+                <button class="w-7 h-7 rounded-md flex items-center justify-center text-[#A1A1AA] hover:text-[#F87171] hover:bg-[#26262B]" title="Delete session" data-kid="280"><i data-lucide="trash-2" class="w-3.5 h-3.5" data-kid="281"></i></button>
+                <button class="h-7 px-3 ml-1 rounded-lg bg-[#9B6AF1] hover:bg-[#A87DF5] text-[11.5px] font-medium text-white" data-kid="282">Resume</button>
+              </div>
+            </div>
+
+            <div class="flex items-center justify-between gap-4 bg-[#15151A] border border-[#26262B] rounded-[10px] px-4 py-2.5 mt-2" data-kid="283">
+              <div class="min-w-0" data-kid="284">
+                <div class="flex items-center gap-2" data-kid="285">
+                  <span class="ls-dot w-1.5 h-1.5 rounded-full bg-[#34D399] shrink-0" data-kid="286"></span>
+                  <span class="text-[13px] font-medium text-[#F4F4F5] truncate" data-kid="287">retry gemma-4-e2b-it.Q8_0</span>
+                </div>
+                <div class="flex items-center gap-1.5 mt-1.5" data-kid="288">
+                  <span class="ls-mono text-[9.5px] text-[#34D399] bg-[rgba(52,211,153,0.10)] border border-[rgba(52,211,153,0.25)] rounded px-1.5 py-px" data-kid="289">active</span>
+                  <span class="ls-mono text-[9.5px] text-[#A1A1AA] bg-[#1B1B21] border border-[#26262B] rounded px-1.5 py-px" data-kid="290">llamacpp</span>
+                  <span class="ls-mono text-[9.5px] text-[#A1A1AA] bg-[#1B1B21] border border-[#26262B] rounded px-1.5 py-px max-w-[280px] truncate" data-kid="291">gemma-4-e2b-it.Q8_0.gguf</span>
+                  <span class="ls-mono text-[9.5px] text-[#71717A] bg-[#1B1B21] border border-[#26262B] rounded px-1.5 py-px" data-kid="292">Q8_0 · 2B</span>
+                </div>
+                <p class="ls-mono text-[10px] text-[#52525B] mt-1.5" data-kid="293">Updated 6/11, 9:32 AM · 14 messages · 2 runs</p>
+              </div>
+              <div class="flex items-center gap-1 shrink-0" data-kid="294">
+                <button class="w-7 h-7 rounded-md flex items-center justify-center text-[#71717A] hover:text-[#E4E4E7] hover:bg-[#1B1B21]" title="Pin session" data-kid="295"><i data-lucide="pin" class="w-3.5 h-3.5" data-kid="296"></i></button>
+                <button class="w-7 h-7 rounded-md flex items-center justify-center text-[#71717A] hover:text-[#F87171] hover:bg-[#1B1B21]" title="Delete session" data-kid="297"><i data-lucide="trash-2" class="w-3.5 h-3.5" data-kid="298"></i></button>
+                <button class="h-7 px-3 ml-1 rounded-lg bg-[#1B1B21] border border-[#26262B] hover:border-[#3F3F46] text-[11.5px] font-medium text-[#E4E4E7]" data-kid="299">Resume</button>
+              </div>
+            </div>
+
+            <div class="flex items-center justify-between gap-4 bg-[#15151A] border border-[#26262B] rounded-[10px] px-4 py-2.5 mt-2" data-kid="300">
+              <div class="min-w-0" data-kid="301">
+                <div class="flex items-center gap-2" data-kid="302">
+                  <span class="ls-dot w-1.5 h-1.5 rounded-full bg-[#34D399] shrink-0" data-kid="303"></span>
+                  <span class="text-[13px] font-medium text-[#F4F4F5] truncate" data-kid="304">retry MiniCPM5-1B-F16</span>
+                </div>
+                <div class="flex items-center gap-1.5 mt-1.5" data-kid="305">
+                  <span class="ls-mono text-[9.5px] text-[#34D399] bg-[rgba(52,211,153,0.10)] border border-[rgba(52,211,153,0.25)] rounded px-1.5 py-px" data-kid="306">active</span>
+                  <span class="ls-mono text-[9.5px] text-[#A1A1AA] bg-[#1B1B21] border border-[#26262B] rounded px-1.5 py-px" data-kid="307">llamacpp</span>
+                  <span class="ls-mono text-[9.5px] text-[#A1A1AA] bg-[#1B1B21] border border-[#26262B] rounded px-1.5 py-px max-w-[280px] truncate" data-kid="308">MiniCPM5-1B-F16.gguf</span>
+                  <span class="ls-mono text-[9.5px] text-[#71717A] bg-[#1B1B21] border border-[#26262B] rounded px-1.5 py-px" data-kid="309">F16 · 1B</span>
+                </div>
+                <p class="ls-mono text-[10px] text-[#52525B] mt-1.5" data-kid="310">Updated 6/11, 9:31 AM · 9 messages · 1 run</p>
+              </div>
+              <div class="flex items-center gap-1 shrink-0" data-kid="311">
+                <button class="w-7 h-7 rounded-md flex items-center justify-center text-[#71717A] hover:text-[#E4E4E7] hover:bg-[#1B1B21]" title="Pin session" data-kid="312"><i data-lucide="pin" class="w-3.5 h-3.5" data-kid="313"></i></button>
+                <button class="w-7 h-7 rounded-md flex items-center justify-center text-[#71717A] hover:text-[#F87171] hover:bg-[#1B1B21]" title="Delete session" data-kid="314"><i data-lucide="trash-2" class="w-3.5 h-3.5" data-kid="315"></i></button>
+                <button class="h-7 px-3 ml-1 rounded-lg bg-[#1B1B21] border border-[#26262B] hover:border-[#3F3F46] text-[11.5px] font-medium text-[#E4E4E7]" data-kid="316">Resume</button>
+              </div>
+            </div>
+
+            <div class="flex items-center justify-between gap-4 bg-[#15151A] border border-[#26262B] rounded-[10px] px-4 py-2.5 mt-2" data-kid="317">
+              <div class="min-w-0" data-kid="318">
+                <div class="flex items-center gap-2" data-kid="319">
+                  <span class="ls-dot w-1.5 h-1.5 rounded-full bg-[#34D399] shrink-0" data-kid="320"></span>
+                  <span class="text-[13px] font-medium text-[#F4F4F5] truncate" data-kid="321">matrix gemma-4-E4B-it-UD-Q8_K_XL</span>
+                </div>
+                <div class="flex items-center gap-1.5 mt-1.5" data-kid="322">
+                  <span class="ls-mono text-[9.5px] text-[#34D399] bg-[rgba(52,211,153,0.10)] border border-[rgba(52,211,153,0.25)] rounded px-1.5 py-px" data-kid="323">active</span>
+                  <span class="ls-mono text-[9.5px] text-[#A1A1AA] bg-[#1B1B21] border border-[#26262B] rounded px-1.5 py-px" data-kid="324">llamacpp</span>
+                  <span class="ls-mono text-[9.5px] text-[#A1A1AA] bg-[#1B1B21] border border-[#26262B] rounded px-1.5 py-px max-w-[280px] truncate" data-kid="325">gemma-4-E4B-it-UD-Q8_K_XL.gguf</span>
+                  <span class="ls-mono text-[9.5px] text-[#71717A] bg-[#1B1B21] border border-[#26262B] rounded px-1.5 py-px" data-kid="326">Q8_K_XL · 4B</span>
+                </div>
+                <p class="ls-mono text-[10px] text-[#52525B] mt-1.5" data-kid="327">Updated 6/11, 9:30 AM · 26 messages · 3 runs</p>
+              </div>
+              <div class="flex items-center gap-1 shrink-0" data-kid="328">
+                <button class="w-7 h-7 rounded-md flex items-center justify-center text-[#71717A] hover:text-[#E4E4E7] hover:bg-[#1B1B21]" title="Pin session" data-kid="329"><i data-lucide="pin" class="w-3.5 h-3.5" data-kid="330"></i></button>
+                <button class="w-7 h-7 rounded-md flex items-center justify-center text-[#71717A] hover:text-[#F87171] hover:bg-[#1B1B21]" title="Delete session" data-kid="331"><i data-lucide="trash-2" class="w-3.5 h-3.5" data-kid="332"></i></button>
+                <button class="h-7 px-3 ml-1 rounded-lg bg-[#1B1B21] border border-[#26262B] hover:border-[#3F3F46] text-[11.5px] font-medium text-[#E4E4E7]" data-kid="333">Resume</button>
+              </div>
+            </div>
+
+            <div class="flex items-center justify-between gap-4 bg-[#15151A] border border-[#26262B] rounded-[10px] px-4 py-2.5 mt-2" data-kid="334">
+              <div class="min-w-0" data-kid="335">
+                <div class="flex items-center gap-2" data-kid="336">
+                  <span class="ls-dot w-1.5 h-1.5 rounded-full bg-[#34D399] shrink-0" data-kid="337"></span>
+                  <span class="text-[13px] font-medium text-[#F4F4F5] truncate" data-kid="338">matrix Mellum2-12B-A2.5B-Thinking</span>
+                </div>
+                <div class="flex items-center gap-1.5 mt-1.5" data-kid="339">
+                  <span class="ls-mono text-[9.5px] text-[#34D399] bg-[rgba(52,211,153,0.10)] border border-[rgba(52,211,153,0.25)] rounded px-1.5 py-px" data-kid="340">active</span>
+                  <span class="ls-mono text-[9.5px] text-[#A1A1AA] bg-[#1B1B21] border border-[#26262B] rounded px-1.5 py-px" data-kid="341">llamacpp</span>
+                  <span class="ls-mono text-[9.5px] text-[#A1A1AA] bg-[#1B1B21] border border-[#26262B] rounded px-1.5 py-px max-w-[280px] truncate" data-kid="342">Mellum2-12B-A2.5B-Thinking.Q4_K_M.gguf</span>
+                  <span class="ls-mono text-[9.5px] text-[#71717A] bg-[#1B1B21] border border-[#26262B] rounded px-1.5 py-px" data-kid="343">Q4_K_M · 12B</span>
+                </div>
+                <p class="ls-mono text-[10px] text-[#52525B] mt-1.5" data-kid="344">Updated 6/11, 9:30 AM · 17 messages · 2 runs</p>
+              </div>
+              <div class="flex items-center gap-1 shrink-0" data-kid="345">
+                <button class="w-7 h-7 rounded-md flex items-center justify-center text-[#71717A] hover:text-[#E4E4E7] hover:bg-[#1B1B21]" title="Pin session" data-kid="346"><i data-lucide="pin" class="w-3.5 h-3.5" data-kid="347"></i></button>
+                <button class="w-7 h-7 rounded-md flex items-center justify-center text-[#71717A] hover:text-[#F87171] hover:bg-[#1B1B21]" title="Delete session" data-kid="348"><i data-lucide="trash-2" class="w-3.5 h-3.5" data-kid="349"></i></button>
+                <button class="h-7 px-3 ml-1 rounded-lg bg-[#1B1B21] border border-[#26262B] hover:border-[#3F3F46] text-[11.5px] font-medium text-[#E4E4E7]" data-kid="350">Resume</button>
+              </div>
+            </div>
+
+          </div>
+        </div>
+      </div>
+
+      
+      <div class="h-9 shrink-0 bg-[#101014] border-t border-[#1E1E23] flex items-center justify-between pl-2 pr-3" data-kid="351">
+        <div class="flex items-center h-full" data-kid="352">
+          <button class="relative h-full px-2.5 flex items-center gap-1.5 text-[11.5px] font-medium text-[#FAFAFA]" data-kid="353">
+            <i data-lucide="terminal" class="w-3.5 h-3.5" data-kid="354"></i>Terminal
+            <span class="absolute bottom-0 left-2 right-2 h-[2px] rounded-t bg-[#9B6AF1]" data-kid="355"></span>
+          </button>
+          <button class="h-full px-2.5 flex items-center gap-1.5 text-[11.5px] text-[#71717A] hover:text-[#A1A1AA]" data-kid="356">
+            <i data-lucide="triangle-alert" class="w-3.5 h-3.5" data-kid="357"></i>Problems
+            <span class="ls-mono text-[9.5px] bg-[#1B1B21] border border-[#26262B] rounded px-1 leading-[14px]" data-kid="358">0</span>
+          </button>
+          <button class="h-full px-2.5 flex items-center gap-1.5 text-[11.5px] text-[#71717A] hover:text-[#A1A1AA]" data-kid="359">
+            <i data-lucide="file-text" class="w-3.5 h-3.5" data-kid="360"></i>Logs
+          </button>
+        </div>
+        <div class="flex items-center gap-2.5" data-kid="361">
+          <span class="text-[10.5px] text-[#71717A]" data-kid="362">Agent control</span>
+          <div class="w-7 h-4 rounded-full bg-[#26262B] border border-[#2E2E33] relative" title="Agent control off" data-kid="363">
+            <span class="absolute left-[2px] top-1/2 -translate-y-1/2 w-[11px] h-[11px] rounded-full bg-[#52525B]" data-kid="364"></span>
+          </div>
+          <div class="w-px h-4 bg-[#26262B]" data-kid="365"></div>
+          <button class="w-6 h-6 rounded-md flex items-center justify-center text-[#71717A] hover:bg-[#1B1B21]" title="Close dock" data-kid="366"><i data-lucide="x" class="w-3.5 h-3.5" data-kid="367"></i></button>
+        </div>
+      </div>
+    </main>
+
+    
+    <aside class="w-[380px] shrink-0 bg-[#101014] border-l border-[#1E1E23] flex flex-col min-h-0" data-kid="368">
+      
+      <div class="shrink-0 flex items-center justify-between px-3.5 py-2.5 border-b border-[#1E1E23]" data-kid="369">
+        <div class="flex items-center gap-2.5 min-w-0" data-kid="370">
+          <div class="w-7 h-7 rounded-lg bg-[rgba(155,106,241,0.12)] border border-[rgba(155,106,241,0.22)] flex items-center justify-center shrink-0" data-kid="371">
+            <i data-lucide="sparkles" class="w-3.5 h-3.5 text-[#9B6AF1]" data-kid="372"></i>
+          </div>
+          <div class="min-w-0 leading-none" data-kid="373">
+            <p class="text-[12.5px] font-semibold text-[#FAFAFA]" data-kid="374">Agent</p>
+            <p class="text-[10px] text-[#71717A] mt-1" data-kid="375">Auto run</p>
+          </div>
+        </div>
+        <div class="flex items-center gap-1.5 shrink-0" data-kid="376">
+          <span class="ls-mono text-[10px] text-[#A1A1AA] bg-[#1B1B21] border border-[#26262B] rounded-full px-2 py-0.5" data-kid="377">idle</span>
+          <button class="h-6 px-2 rounded-md bg-[#15151A] border border-[#26262B] hover:border-[#3F3F46] flex items-center gap-1.5" data-kid="378">
+            <i data-lucide="cpu" class="w-3 h-3 text-[#71717A]" data-kid="379"></i>
+            <span class="text-[10.5px] text-[#A1A1AA]" data-kid="380">Select model</span>
+            <i data-lucide="chevron-down" class="w-3 h-3 text-[#52525B]" data-kid="381"></i>
+          </button>
+          <button class="w-6 h-6 rounded-md flex items-center justify-center text-[#71717A] hover:bg-[#1B1B21]" title="More options" data-kid="382"><i data-lucide="ellipsis-vertical" class="w-3.5 h-3.5" data-kid="383"></i></button>
+        </div>
+      </div>
+
+      
+      <div class="flex-1 min-h-0 flex flex-col justify-center px-5" data-kid="384">
+        <div class="ls-orb w-14 h-14 rounded-full mx-auto flex items-center justify-center" style="background: radial-gradient(circle at 32% 28%, #B794F6 0%, #8B5CF6 45%, #6D28D9 100%);" data-kid="385">
+          <i data-lucide="sparkles" class="w-5.5 h-5.5 text-white" style="width:22px;height:22px;" data-kid="386"></i>
+        </div>
+        <h3 class="text-[15.5px] font-semibold text-[#FAFAFA] text-center mt-4" data-kid="387">What should we build?</h3>
+        <p class="text-[12px] leading-[1.55] text-[#A1A1AA] text-center mt-1.5 max-w-[280px] mx-auto" data-kid="388">Pick a session or start a new run. The agent plans, builds, validates and hands you a clean diff.</p>
+
+        <div class="mt-4 space-y-1.5" data-kid="389">
+          <button class="w-full h-9 rounded-lg bg-[#15151A] border border-[#26262B] hover:border-[rgba(155,106,241,0.45)] hover:bg-[#17171D] flex items-center gap-2.5 px-3 text-left" data-kid="390">
+            <i data-lucide="wrench" class="w-3.5 h-3.5 text-[#71717A] shrink-0" data-kid="391"></i>
+            <span class="text-[12px] text-[#E4E4E7] flex-1 truncate" data-kid="392">Fix the failing build</span>
+            <i data-lucide="arrow-up-right" class="w-3 h-3 text-[#3F3F46] shrink-0" data-kid="393"></i>
+          </button>
+          <button class="w-full h-9 rounded-lg bg-[#15151A] border border-[#26262B] hover:border-[rgba(155,106,241,0.45)] hover:bg-[#17171D] flex items-center gap-2.5 px-3 text-left" data-kid="394">
+            <i data-lucide="settings-2" class="w-3.5 h-3.5 text-[#71717A] shrink-0" data-kid="395"></i>
+            <span class="text-[12px] text-[#E4E4E7] flex-1 truncate" data-kid="396">Add a settings page</span>
+            <i data-lucide="arrow-up-right" class="w-3 h-3 text-[#3F3F46] shrink-0" data-kid="397"></i>
+          </button>
+          <button class="w-full h-9 rounded-lg bg-[#15151A] border border-[#26262B] hover:border-[rgba(155,106,241,0.45)] hover:bg-[#17171D] flex items-center gap-2.5 px-3 text-left" data-kid="398">
+            <i data-lucide="book-open" class="w-3.5 h-3.5 text-[#71717A] shrink-0" data-kid="399"></i>
+            <span class="text-[12px] text-[#E4E4E7] flex-1 truncate" data-kid="400">Explain this repo</span>
+            <i data-lucide="arrow-up-right" class="w-3 h-3 text-[#3F3F46] shrink-0" data-kid="401"></i>
+          </button>
+        </div>
+
+        <div class="mt-5" data-kid="402">
+          <div class="flex items-center gap-1.5 mb-1.5" data-kid="403">
+            <i data-lucide="history" class="w-2.5 h-2.5 text-[#52525B]" data-kid="404"></i>
+            <span class="text-[9.5px] font-semibold uppercase tracking-[0.09em] text-[#52525B]" data-kid="405">Recent runs</span>
+          </div>
+          <button class="w-full h-8 rounded-md hover:bg-[#15151A] flex items-center gap-2 px-2 text-left" data-kid="406">
+            <i data-lucide="circle-check" class="w-3.5 h-3.5 text-[#34D399] shrink-0" data-kid="407"></i>
+            <span class="text-[11.5px] text-[#A1A1AA] flex-1 truncate" data-kid="408">Validate and prepare review diff</span>
+            <span class="ls-mono text-[9.5px] text-[#52525B] shrink-0" data-kid="409">12m ago</span>
+          </button>
+          <button class="w-full h-8 rounded-md hover:bg-[#15151A] flex items-center gap-2 px-2 text-left" data-kid="410">
+            <i data-lucide="circle-check" class="w-3.5 h-3.5 text-[#34D399] shrink-0" data-kid="411"></i>
+            <span class="text-[11.5px] text-[#A1A1AA] flex-1 truncate" data-kid="412">Add data, interactions and polish</span>
+            <span class="ls-mono text-[9.5px] text-[#52525B] shrink-0" data-kid="413">38m ago</span>
+          </button>
+        </div>
+      </div>
+
+      
+      <div class="shrink-0 border-t border-[#1E1E23] p-3" data-kid="414">
+        <div class="rounded-[10px] bg-[#131318] border border-[#26262B] p-2.5" data-kid="415">
+          <p class="text-[12.5px] text-[#52525B] min-h-[38px] px-0.5 pt-0.5" data-kid="416">Ask the agent…</p>
+          <div class="flex items-center gap-1.5 mt-1.5" data-kid="417">
+            <button class="w-7 h-7 rounded-md flex items-center justify-center text-[#71717A] hover:bg-[#1B1B21] shrink-0" title="Attach files" data-kid="418"><i data-lucide="paperclip" class="w-3.5 h-3.5" data-kid="419"></i></button>
+            <div class="flex items-center bg-[#0E0E11] border border-[#26262B] rounded-md p-0.5 shrink-0" data-kid="420">
+              <button class="h-[20px] px-2 rounded text-[10.5px] text-[#71717A]" data-kid="421">Plan</button>
+              <button class="h-[20px] px-2 rounded bg-[rgba(155,106,241,0.16)] text-[10.5px] font-medium text-[#C9ADF8]" data-kid="422">Build</button>
+            </div>
+            <button class="h-6 px-2 rounded-md bg-[#15151A] border border-[#26262B] hover:border-[#3F3F46] flex items-center gap-1.5 shrink-0" title="Autonomy level" data-kid="423">
+              <span class="w-[5px] h-[5px] rounded-full bg-[#FB923C]" data-kid="424"></span>
+              <span class="text-[10.5px] text-[#A1A1AA]" data-kid="425">High</span>
+              <i data-lucide="chevron-down" class="w-2.5 h-2.5 text-[#52525B]" data-kid="426"></i>
+            </button>
+            <div class="flex-1" data-kid="427"></div>
+            <div class="flex items-center gap-1.5 shrink-0" title="Context used" data-kid="428">
+              <svg class="w-3.5 h-3.5 -rotate-90" viewBox="0 0 16 16" data-kid="429"></svg>
+              <span class="ls-mono text-[9.5px] text-[#71717A]" data-kid="432">0 / 8.2k</span>
+            </div>
+            <button class="w-7 h-7 rounded-lg bg-[#9B6AF1] hover:bg-[#A87DF5] flex items-center justify-center shrink-0" title="Send" data-kid="433"><i data-lucide="arrow-up" class="w-3.5 h-3.5 text-white" data-kid="434"></i></button>
+          </div>
+        </div>
+        <div class="flex items-center gap-1.5 mt-2 px-0.5" data-kid="435">
+          <i data-lucide="shield-check" class="w-3 h-3 text-[#34D399]" data-kid="436"></i>
+          <span class="text-[10.5px] text-[#71717A]" data-kid="437">Ready · changes stay isolated until review</span>
+        </div>
+      </div>
+    </aside>
+  </div>
+</div>
+
+<script src="https://unpkg.com/lucide@latest" data-kid="438"></script>
+<script data-kid="439">lucide.createIcons({ attrs: { 'stroke-width': 1.75 } });</script></div>
+  
+  
+</body></html>

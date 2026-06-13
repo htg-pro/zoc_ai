@@ -1,0 +1,46 @@
+# Node
+node_modules/
+.pnpm-store/
+dist/
+.vite/
+*.log
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+.uv-cache/
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+*.egg-info/
+
+# Rust
+target/
+**/*.rs.bk
+
+# Tauri
+apps/desktop/gen/
+apps/desktop/target/
+
+# Release artifacts
+dist/
+dist/sidecar/
+apps/desktop/binaries/llama-studio-agent-*
+llama-studio-v*.zip
+
+# Editor
+.vscode/
+.idea/
+*.swp
+.DS_Store
+
+# Local
+.env
+.env.local
+.local/.commit_message
+node_modules
+node_modules
+node_modules
+
+testsprite_tests/tmp/config.json

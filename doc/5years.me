@@ -1,0 +1,140 @@
+# Llama Studio — 5-Year Development Implementation Plan
+
+> Horizon: Year 1 → Year 5 from v2.0.0.
+> One year, one strategic theme. Each year compounds on the last.
+> The arc: from "useful desktop tool" → "the default way developers work with local AI".
+
+---
+
+## Year 1 — Product–Market Fit
+
+**Strategic theme**: prove the daily-driver hypothesis.
+
+### Major bets
+- Execute the 6-month plan in `6plans.me`, then 6 more months of fast iteration on user feedback.
+- Public v3.0.0 launch with signed installers + auto-update for all OSes.
+- Telemetry (opt-in) on what tools / models / workflows people actually use.
+- Land 3–5 "lighthouse" power users (well-known OSS maintainers) who use Llama Studio daily and talk about it publicly.
+
+### Year-end exit criteria
+- 50k monthly active users.
+- 30% week-2 retention.
+- A clear top-3 list of features users would pay for.
+- Net Promoter Score ≥ 40.
+
+### Engineering milestones
+- Stable plugin API v0 (extensions that add slash commands + tools).
+- MCP fully supported (in + out — Llama Studio can be both client and server).
+- Sub-second cold-open on a 100k-LOC repo.
+
+---
+
+## Year 2 — Extensibility & Ecosystem
+
+**Strategic theme**: a platform, not just an app.
+
+### Major bets
+- **Plugin marketplace**: third-party tools, agents, and slash-command packs. Signed, sandboxed, with a permission prompt on first use.
+- **Custom agent recipes**: users compose multi-step agents in YAML/JSON without writing code (think GitHub Actions for the agent loop).
+- **Model marketplace integration**: one-click download from HuggingFace, llama.cpp registry, with quantization picker.
+- **Language pack ecosystem**: tree-sitter grammars + language-server adapters as plugins.
+- **Multi-modal**: image input (screenshot a UI, get code), voice input via Whisper.
+
+### Year-end exit criteria
+- 200+ third-party plugins published.
+- 250k MAU.
+- 5+ enterprise design partners on a private build.
+
+### Engineering milestones
+- Plugin SDK in TS + Python + Rust.
+- Sandboxed execution (WASM for untrusted plugin code).
+- Real-time multi-modal pipeline (audio + image + text → tool calls).
+
+---
+
+## Year 3 — Teams & Knowledge Graphs
+
+**Strategic theme**: from individual tool → team operating system.
+
+### Major bets
+- **Llama Studio Teams** (paid SaaS, optional): shared session history, shared embeddings cache, shared tool permissions, audit log, SSO.
+- **Repository knowledge graph**: long-term memory across sessions — facts, decisions, code conventions captured automatically.
+- **Cross-repo intelligence**: index 100+ repos at once; the agent can answer "where do we handle X across all our services?"
+- **Code review bot**: hosted GitHub/GitLab app that posts Llama Studio reviews on PRs.
+- **Air-gapped enterprise build**: certified install with no outbound network at all; everything (models, plugins, updates) served from an internal mirror.
+
+### Year-end exit criteria
+- $5M ARR from Teams + Enterprise tiers.
+- 1M total installs.
+- Used inside at least 2 Fortune 500 engineering orgs.
+
+### Engineering milestones
+- E2EE shared sessions (CRDTs over WebRTC + relay).
+- Knowledge graph backed by SQLite + vector + graph DB hybrid.
+- SOC 2 Type II certification for the hosted tier.
+
+---
+
+## Year 4 — Agentic Autonomy
+
+**Strategic theme**: from "agent on your turn" → "agent on a long task".
+
+### Major bets
+- **Background tasks**: hand the agent a multi-day project (e.g. "migrate this service from Express to Hono"), it works asynchronously, surfaces draft PRs for review.
+- **Self-improving prompts**: the agent learns from accept/reject feedback per workspace and tunes its system prompts and tool-selection heuristics.
+- **Reasoning model integration**: first-class support for thinking models (o-series equivalents), with collapsible reasoning traces in the UI.
+- **Specialized fine-tunes**: ship a curated bundle of small, fine-tuned models (one for SQL, one for React, one for Rust) — opt-in, downloaded on demand.
+- **Multi-agent orchestration**: a "manager" agent delegates to specialist agents in parallel under a single review surface.
+
+### Year-end exit criteria
+- 30% of accepted diffs come from background tasks the user didn't actively prompt.
+- Long-running task success rate (compiles + tests pass) > 75% on a public benchmark.
+- 3M MAU.
+
+### Engineering milestones
+- Durable workflow engine inside the sidecar (think Temporal-lite).
+- Per-workspace prompt learning store (private, on-device).
+- Public benchmark suite + leaderboard ("Llama Studio Bench").
+
+---
+
+## Year 5 — The Default
+
+**Strategic theme**: Llama Studio is what "AI coding" means.
+
+### Major bets
+- **OS-level integrations**: deep ties to Spotlight / Quick Search / Windows Search; Llama Studio answers code questions from anywhere.
+- **Mobile companion** (read + chat only): iOS/Android app that pairs with your desktop instance to review diffs and chat on the go.
+- **Hardware partnerships**: pre-installed on developer-focused laptops (Framework, System76); first-class on Apple Silicon and ARM Linux.
+- **Open governance**: move the core (Tauri shell + FastAPI sidecar + Rust hotpath) to a foundation (Apache / Linux Foundation). Commercial extensions remain proprietary.
+- **Education tier**: free for students + a curriculum bundle ("Learn to code with Llama Studio").
+- **Llama Studio for Ops / Data / Security**: domain-specific spinoffs that share the core but add specialized tool packs.
+
+### Year-end exit criteria
+- 10M total installs.
+- $50M ARR.
+- Llama Studio cited as a category leader in 2 of: Gartner / Forrester / RedMonk reports.
+- Active foundation with ≥ 3 corporate sponsors.
+
+### Engineering milestones
+- Core moved under foundation governance with a stable LTS branch.
+- Mobile clients shipped (read-only by design — desktop is canonical).
+- Hardware-vendor SDK for embedded NPU acceleration (Qualcomm / Apple / AMD XDNA / Intel NPU).
+
+---
+
+## Risks & assumptions (across all 5 years)
+
+- **Model quality keeps improving locally.** If local models stall, hybrid (local + cloud routing) becomes the default story.
+- **Privacy + local-first remain valuable.** If everyone is happy with cloud, our moat shrinks; mitigation = enterprise / regulated industries who can't use cloud.
+- **Tauri remains a healthy framework.** Mitigation = the React UI + FastAPI sidecar are portable; we could ship an Electron or wry-only build if needed.
+- **Talent**: hiring senior Rust + Python + AI eng is hard; mitigation = open-source first, hire from contributor community.
+- **Competition**: Cursor, Codeium, Continue, Cody all compete. Our wedge is *local-first + truly agentic + open-core*; we must not blur it.
+
+---
+
+## How to read this plan
+
+- Each year stands on its own — if Year 2 ends and Llama Studio shuts down, Year 1 was still a useful tool people used.
+- Anything in Year 4–5 is **intent, not commitment**. Re-plan annually based on what Year N taught us.
+- The North Star metric stays constant: **how many developers used Llama Studio to ship real code today.**

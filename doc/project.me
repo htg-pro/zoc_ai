@@ -1,0 +1,292 @@
+# Llama Studio — Project Guide (A to Z)
+
+> Version: 2.0.0
+> A local-first agentic coding desktop app — llama.cpp-powered, shipped as a Tauri v2 binary with a bundled FastAPI sidecar.
+
+---
+
+## 1. What is this project?
+
+**Llama Studio** is a desktop IDE-style application (think Cursor / Zencoder / Codex), but:
+
+- **Local-first**: the AI brain runs on YOUR machine via `llama.cpp` / `llama-server` (no data leaves your computer unless you opt into a cloud provider).
+- **Agentic**: the assistant can read files, edit code, run a terminal, search the codebase semantically, run tests, and review/explain code.
+- **Cross-platform desktop app**: built with Tauri v2 → ships as a small native installer for Windows, macOS, and Linux.
+- **Bring-your-own-model**: works with llama.cpp server, OpenAI, or any compatible provider.
+
+---
+
+## 2. Architecture (high level)
+
+```
+┌────────────────────┐    spawn (Tauri sidecar)     ┌─────────────────────┐
+│   Tauri shell      │ ───────────────────────────► │  FastAPI agent      │
+│   (Rust)           │                              │  (Python sidecar)   │
+│                    │ ◄── stdout: PORT=<n> ──────  │  loopback only      │
+│                    │                              └──────────┬──────────┘
+│                    │   invoke('agent_port') ──► port         │ child CLI
+│   React webview    │ ─── HTTP / SSE to 127.0.0.1 ──►         ▼
+│   (Vite + TS)      │                              │  hotpath CLI (Rust) │
+└────────────────────┘                              └─────────────────────┘
+```
+
+Three processes:
+
+1. **Tauri shell** (Rust) — opens the window, owns the disk-access permission boundary, spawns the sidecar.
+2. **FastAPI agent** (Python) — the brain. Talks to LLM providers, runs tools, manages sessions, indexes the workspace.
+3. **Hotpath CLI** (Rust) — speed-critical jobs: PTY (terminal), filesystem watching, code indexer.
+
+The React UI talks to the agent over loopback HTTP + Server-Sent Events. The agent talks to hotpath over a child-process CLI. Nothing binds to a public interface.
+
+---
+
+## 3. Repository layout (A to Z)
+
+```
+llama-studio/
+├── apps/
+│   ├── desktop/          Tauri v2 shell (Rust)
+│   │   ├── src/          Rust source: sidecar supervisor, fs commands,
+│   │   │                 secrets (keyring), workspace scope guard,
+│   │   │                 patch applier
+│   │   ├── icons/        Real branded app icons (.icns, .ico, PNG set)
+│   │   ├── binaries/     Per-OS bundled sidecars (created at release time)
+│   │   ├── capabilities/ Tauri v2 permission set
+│   │   ├── tauri.conf.json   Bundle config (targets, identifier, updater)
+│   │   └── Cargo.toml
+│   └── frontend/         React + Vite + TypeScript + Tailwind + shadcn/ui
+│       ├── src/
+│       │   ├── App.tsx                Mounts <Shell/> under TooltipProvider
+│       │   ├── components/ui/         shadcn primitives (button, dialog…)
+│       │   ├── features/
+│       │   │   ├── agent/             Chat, tool-calls, diff cards, plan
+│       │   │   ├── editor/            Monaco tabs + inline-diff view
+│       │   │   ├── files/             File tree (lazy, scoped to workspace)
+│       │   │   ├── search/            Fuse-based fuzzy search
+│       │   │   ├── sessions/          Session panel + history
+│       │   │   ├── terminal/          xterm pane with agent control
+│       │   │   ├── diff/              Inline + split review with hunk Accept/Reject
+│       │   │   ├── palette/           Cmd-K command palette
+│       │   │   ├── onboarding/        4-step first-run wizard
+│       │   │   ├── settings/          Providers, models, indexer, permissions
+│       │   │   ├── problems/          Diagnostics panel + LogsPanel (log viewer)
+│       │   │   ├── indexer/           Indexer status
+│       │   │   └── showcase/          In-app component gallery
+│       │   ├── lib/
+│       │   │   ├── agent-client.ts    Typed REST + SSE client
+│       │   │   ├── tauri-bridge.ts    Typed wrappers for invoke()
+│       │   │   ├── store.ts           Zustand global state (persisted)
+│       │   │   ├── sse.ts             Async-iterator SSE parser
+│       │   │   ├── secure-store.ts    Keyring shim (Tauri + browser)
+│       │   │   ├── slash-commands.ts  /explain /review /test /fix /grok…
+│       │   │   ├── diff-utils.ts      Unified diff parser
+│       │   │   ├── key-bindings.ts    Cmd-K / Cmd-, / Cmd-B / Cmd-J
+│       │   │   ├── telemetry.ts       Opt-in local-only events
+│       │   │   └── mock-data.ts       Dev fixtures
+│       │   └── styles/globals.css     Design tokens (light + dark)
+│       ├── index.html
+│       ├── vite.config.ts
+│       ├── tailwind.config.ts
+│       └── package.json
+├── services/
+│   └── agent/            FastAPI sidecar (Python 3.11+)
+│       ├── src/llama_studio_agent/
+│       │   ├── app.py                 FastAPI factory
+│       │   ├── config.py              Env-driven Settings (pydantic-settings)
+│       │   ├── state.py               AppState (sessions, indexer per root)
+│       │   ├── deps.py                FastAPI dependency wiring
+│       │   ├── scripts/launch.py      Picks free port, prints
+│       │   │                          LLAMA_STUDIO_AGENT_PORT=<n>, runs uvicorn
+│       │   ├── v1/                    Versioned HTTP + SSE routes
+│       │   │                          (sessions, agent run, terminal…)
+│       │   ├── agent/                 Orchestrator loop + tool dispatch
+│       │   ├── tools/                 read_file, write_file, run_shell,
+│       │   │                          index_query, apply_patch, …
+│       │   ├── providers/             OpenAI / llama.cpp adapters
+│       │   ├── modes/                 Chat, terminal (real PTY), review…
+│       │   ├── commands/recipes.py    Slash-command implementations
+│       │   ├── indexer/               SQLite vector store + embedder
+│       │   │                          (auto-selects llama.cpp → OpenAI → hash)
+│       │   ├── persistence/           Session + transcript storage
+│       │   ├── permissions.py         Per-session tool scope grants
+│       │   ├── events/                Event bus for SSE streaming
+│       │   └── hotpath.py             Bridge to the Rust hotpath CLI
+│       ├── tests/                     pytest (60+ unit, plus opt-in smoke)
+│       │   └── smoke/                 LLAMA_STUDIO_SMOKE=1 → real LLM tests
+│       └── pyproject.toml
+├── crates/
+│   └── hotpath/          Rust crate + CLI
+│       ├── src/
+│       │   ├── pty.rs        Terminal PTY
+│       │   ├── fs_watch.rs   Native file watcher
+│       │   ├── indexer.rs    Tree-sitter chunking helpers
+│       │   └── bin/cli.rs    JSON-emitting CLI (used by Python sidecar)
+│       └── Cargo.toml
+├── packages/
+│   └── shared-types/         Source of truth = Pydantic
+│       ├── python/           Pydantic models
+│       ├── typescript/       Generated TS types (mirrored)
+│       └── scripts/generate_ts.py    JSON Schema → TS via datamodel-codegen
+├── scripts/
+│   ├── post-merge.sh         Replit post-merge: pnpm + uv install
+│   ├── stamp_version.py      Fan VERSION → every manifest
+│   ├── bundle_sidecar.py     PyInstaller --onefile build of the agent
+│   ├── release.sh            stamp → frontend → hotpath → sidecar → Tauri
+│   ├── make_zip.sh           Stage cleaned tree + installers → release zip
+│   └── verify_zip.py         Integrity gate for the release zip
+├── .github/workflows/
+│   ├── check.yml             Lint + typecheck + tests
+│   └── smoke-llm.yml         Opt-in real-LLM smoke (manual llama-server run)
+├── attached_assets/          Source artwork (icon master, etc.)
+├── doc/                      ← you are here
+├── VERSION                   Single source of truth (2.0.0)
+├── CHANGELOG.md
+├── Makefile                  install / dev / build / lint / check / zip
+├── Cargo.toml                Rust workspace root
+├── pyproject.toml            uv workspace root
+├── pnpm-workspace.yaml       pnpm workspace root
+├── package.json              Root scripts (dev, build, lint, check)
+├── replit.nix                Replit Nix deps
+└── README.md
+```
+
+---
+
+## 4. How it works (data flow)
+
+1. **You launch Llama Studio.** Tauri shell opens the window AND spawns the Python sidecar as a child process.
+2. **Sidecar handshake.** The sidecar picks a free loopback port and prints `LLAMA_STUDIO_AGENT_PORT=<n>` on stdout. The Tauri shell reads that line and stores the port.
+3. **Frontend asks for the port.** React calls `invoke('agent_port')` and gets the port.
+4. **Workspace scope.** First-run wizard asks you to pick a folder. Tauri pins all file I/O to that root via `WorkspaceState` — paths outside the root are rejected.
+5. **You chat.** UI POSTs the message to `/v1/sessions/{id}/agent/run`, opens an SSE subscription to `/v1/sessions/{id}/agent/events`, and streams tokens, tool calls, plan steps, and diffs back into the UI.
+6. **Agent runs tools.** `read_file`, `write_file`, `run_shell`, `index_query`, `apply_patch`. Each tool either runs locally in the sidecar, or shells out to the Rust hotpath CLI (PTY, fs watch, indexer).
+7. **Diff review.** When the agent proposes edits, the UI shows an inline diff with per-hunk Accept / Reject. Apply is sent to the sidecar's `write_file` / `apply_patch` tools, which enforce workspace-root containment in Python (`services/agent/.../tools/filesystem.py`) before touching disk. The Tauri shell adds a second scope check for any direct fs commands invoked from the renderer.
+8. **Terminal.** Real bidirectional PTY (POSIX `pty.fork`) wired through `/v1/terminal` POST `/input` and `/resize` endpoints.
+9. **Semantic search.** The indexer auto-picks the best available embedder: explicit env var → local llama.cpp (`nomic-embed-text`) → OpenAI (`text-embedding-3-small`) → deterministic hash fallback (with a loud log). Vectors stored in SQLite.
+
+---
+
+## 5. Core features (what works today)
+
+| Area              | Status                                                                  |
+|-------------------|-------------------------------------------------------------------------|
+| Chat with LLM     | ✅ Streaming, llama.cpp / OpenAI                                         |
+| Slash commands    | ✅ `/explain` `/review` `/test` `/fix` `/grok` `/refactor` `/docs`       |
+| Tool calling      | ✅ read, write, shell, index_query, apply_patch (per-call approval)     |
+| Diff review       | ✅ Inline + split, per-hunk accept/reject                                |
+| Workspace scope   | ✅ Hard-pinned in Rust; arbitrary disk access rejected                   |
+| Terminal          | ✅ Real PTY (xterm.js + Python pty.fork)                                 |
+| Semantic search   | ✅ Auto-detects best embedder, resilient fallback                        |
+| File tree + tabs  | ✅ Lazy file tree, Monaco editor tabs                                    |
+| Sessions          | ✅ Persisted (SQLite), resumable, multiple per workspace                 |
+| Onboarding        | ✅ 4-step wizard (welcome → workspace → legacy migration → telemetry)    |
+| Settings          | ✅ Providers / Models / Indexer / Permissions / Appearance               |
+| Secrets           | ✅ OS keyring via Tauri plugin                                           |
+| Packaging         | ✅ AppImage / deb / dmg / app / msi / nsis (per-OS host)                 |
+| Auto-update       | 🟡 Scaffolded but disabled (set endpoint + pubkey to enable)             |
+| Code signing      | 🟡 Documented, off by default                                            |
+
+---
+
+## 6. Setup & install guide
+
+### 6.1 Prerequisites
+
+- **Node.js ≥ 20** and **pnpm ≥ 9**
+- **Python ≥ 3.11** (use `uv` — fastest)
+- **Rust stable** (`rustup default stable`)
+- **Tauri v2 system deps** for your OS — see <https://tauri.app/start/prerequisites/>
+  - Linux: `webkit2gtk-4.1`, `libsoup-3.0`, `libayatana-appindicator3-dev`
+  - macOS: Xcode command-line tools
+  - Windows: WebView2 (preinstalled on Win11), MSVC build tools
+- **Linux release bundling deps**: `libwebkit2gtk-4.1-dev`, `libgtk-3-dev`, `libayatana-appindicator3-dev`, `librsvg2-dev`, `libsoup-3.0-dev`, `libjavascriptcoregtk-4.1-dev`, `patchelf`, `file`, `fakeroot`, `dpkg`, `rpm`
+- **Arch Linux**: install the runtime deps with `sudo pacman -S --needed webkit2gtk-4.1 gtk3 libsoup3 libayatana-appindicator librsvg patchelf file fakeroot rpm-tools`
+- **Arch Linux release bundling**: if `make release` still fails with `failed to run linuxdeploy`, install the AppImage packaging tooling you use on your machine, then retry the release. The repo CI uses the Debian package names above, but on Arch the equivalent runtime packages are the ones listed here.
+- **Optional but recommended**: download a GGUF model from [HuggingFace](https://huggingface.co/models?library=gguf) and start llama-server:
+  ```bash
+  llama-server -m qwen2.5-coder-7b.gguf --port 8080
+  llama-server -m nomic-embed-text.gguf --port 8080     # for semantic search
+  ```
+
+### 6.2 First-time install (developer)
+
+```bash
+git clone <repo>
+cd llama-studio
+make install        # pnpm install + uv sync + cargo fetch
+```
+
+### 6.3 Run in dev mode
+
+```bash
+pnpm dev            # full stack: Tauri window + Vite + sidecar + hotpath
+# or run pieces individually:
+pnpm dev:frontend   # Vite on :1420
+pnpm dev:agent      # sidecar only (prints chosen port)
+cargo run -p llama-studio-hotpath -- version
+```
+
+### 6.4 Build a release installer
+
+```bash
+make release        # stamp version → build everything → produce installer
+make zip            # also produce llama-studio-v<VERSION>.zip
+```
+
+Both fail hard if installers are missing — a "release" with no installer is a bug, not a soft warning. The installer for your current OS lands in `dist/installers/`.
+
+If Linux bundling fails with `failed to run linuxdeploy`, install the Linux release deps above and retry `make release`. The CI workflow in `.github/workflows/release.yml` uses the same package set.
+
+On Arch Linux, the direct package install is:
+
+```bash
+sudo pacman -S --needed webkit2gtk-4.1 gtk3 libsoup3 libayatana-appindicator librsvg patchelf file fakeroot rpm-tools
+```
+
+Cross-OS bundles are NOT supported — run `make release` once per OS, or use a CI matrix (see Task #10 / `.github/workflows`).
+
+### 6.5 End-user install (the people you ship to)
+
+- **Linux**: download the `.AppImage`, `chmod +x`, double-click. OR install the `.deb` with `sudo apt install ./llama-studio_*.deb`.
+- **macOS**: open the `.dmg`, drag Llama Studio to Applications. If unsigned, right-click → Open the first time.
+- **Windows**: run the `.msi` or NSIS `.exe` installer.
+
+First launch: the onboarding wizard walks the user through workspace setup, local GGUF model import, and optional cloud provider keys. Done.
+
+---
+
+## 7. Daily dev commands
+
+```bash
+make check          # lint + typecheck + tests across JS / Python / Rust
+make lint
+make typecheck
+make fmt
+pnpm --filter @llama-studio/frontend test    # frontend vitest
+make test           # tests across JS / Python / Rust
+pytest services/agent/tests        # backend tests
+pytest services/agent/tests/smoke  # opt-in real-LLM smoke (needs llama-server)
+```
+
+---
+
+## 8. Conventions (non-negotiables)
+
+- **Loopback only.** The agent NEVER binds to a public interface.
+- **Pydantic is the schema source of truth.** Edit Pydantic, run `pnpm schema:generate`, commit both Python + TS sides. Drift = CI failure.
+- **No silent fallbacks.** If a piece can't start, fail loudly with a clear error.
+- **Workspace scope is enforced in Rust**, not in the renderer. The renderer's hint is advisory only.
+
+---
+
+## 9. Where to look first when something breaks
+
+| Symptom                                | First file to open                                              |
+|----------------------------------------|-----------------------------------------------------------------|
+| Window opens but UI is blank           | Browser devtools (Tauri inspector) + `apps/frontend/src/App.tsx`|
+| "Can't reach agent"                    | `~/.llama-studio/logs/agent.log` + `apps/desktop/src/sidecar.rs`|
+| Permission denied on a file            | `apps/desktop/src/workspace.rs` (scope guard)                   |
+| Tool call hangs                        | `services/agent/src/llama_studio_agent/agent/`                  |
+| Bad search results                     | `services/agent/src/llama_studio_agent/indexer/embeddings.py`   |
+| Release zip rejected                   | Run `python scripts/verify_zip.py <zip>` for the exact reason   |
+reason   |

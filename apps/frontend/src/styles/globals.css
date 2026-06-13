@@ -1,0 +1,287 @@
+@import "@xterm/xterm/css/xterm.css";
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ── Custom animations ───────────────────────────────────────── */
+@keyframes orb-breathe {
+  0%, 100% {
+    box-shadow: 0 0 32px rgba(155, 106, 241, 0.38), 0 0 0 1px rgba(155, 106, 241, 0.2) inset;
+  }
+  50% {
+    box-shadow: 0 0 56px rgba(155, 106, 241, 0.6), 0 0 0 1px rgba(155, 106, 241, 0.36) inset;
+  }
+}
+@keyframes pulse-status {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(52, 211, 153, 0.55); }
+  50%       { box-shadow: 0 0 0 3.5px rgba(52, 211, 153, 0); }
+}
+@keyframes pulse-primary {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(155, 106, 241, 0.5); }
+  50%       { box-shadow: 0 0 0 4px rgba(155, 106, 241, 0); }
+}
+
+@layer utilities {
+  .orb-breathe      { animation: orb-breathe  3.5s ease-in-out infinite; }
+  .pulse-status-dot { animation: pulse-status  2.2s ease-in-out infinite; }
+  .pulse-primary-dot{ animation: pulse-primary 1.6s ease-in-out infinite; }
+}
+
+/* ── Extra redesign animations ──────────────────────────── */
+@keyframes shimmer {
+  0%   { transform: translateX(-120%); }
+  100% { transform: translateX(340%); }
+}
+@keyframes fade-row {
+  from { opacity: 0; transform: translateY(3px); }
+  to   { opacity: 1; transform: none; }
+}
+@keyframes caret-blink {
+  0%, 49% { opacity: 1; }
+  50%, 100% { opacity: 0; }
+}
+@keyframes pulse-dot {
+  0%, 100% { opacity: 1; box-shadow: 0 0 0 0 rgba(155, 106, 241, 0.45); }
+  50%      { opacity: 0.55; box-shadow: 0 0 0 5px rgba(155, 106, 241, 0); }
+}
+@keyframes pulse-dot-green {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(52, 211, 153, 0.4); }
+  50%      { box-shadow: 0 0 0 3.5px rgba(52, 211, 153, 0); }
+}
+@keyframes typing-dot {
+  0%, 80%, 100% { opacity: 0.2; transform: translateY(0); }
+  40%           { opacity: 1;   transform: translateY(-1px); }
+}
+
+@layer utilities {
+  .animate-shimmer       { animation: shimmer        2.4s linear infinite; }
+  .animate-fade-row      { animation: fade-row       0.45s ease-out both; }
+  .animate-caret         { animation: caret-blink    1s steps(1) infinite; }
+  .animate-pulse-dot     { animation: pulse-dot      1.6s ease-in-out infinite; }
+  .animate-pulse-dot-green { animation: pulse-dot-green 2.4s ease-in-out infinite; }
+  .animate-typing-dot    { animation: typing-dot     1.2s ease-in-out infinite; }
+}
+
+/*
+ * Zencoder-inspired design tokens.
+ * Light + dark modes share semantic names; values tuned for a modern IDE.
+ */
+@layer base {
+  :root {
+    --background: 0 0% 100%;
+    --foreground: 240 10% 8%;
+
+    --card: 0 0% 100%;
+    --card-foreground: 240 10% 8%;
+
+    --popover: 0 0% 100%;
+    --popover-foreground: 240 10% 8%;
+
+    --primary: 262 83% 58%;
+    --primary-foreground: 0 0% 100%;
+
+    --secondary: 240 5% 96%;
+    --secondary-foreground: 240 10% 12%;
+
+    --muted: 240 5% 96%;
+    --muted-foreground: 240 4% 46%;
+
+    --accent: 240 5% 92%;
+    --accent-foreground: 240 10% 12%;
+
+    --destructive: 0 84% 60%;
+    --destructive-foreground: 0 0% 100%;
+
+    --border: 240 6% 90%;
+    --input: 240 6% 90%;
+    --ring: 262 83% 58%;
+
+    --sidebar: 240 6% 98%;
+    --sidebar-foreground: 240 10% 12%;
+    --sidebar-border: 240 6% 90%;
+
+    --radius: 0.625rem;
+  }
+
+  .dark {
+    --background: 240 10% 6.5%;    /* #0E0E11 */
+    --foreground: 0 0% 98%;
+
+    --card: 240 8% 9.5%;           /* #15151A */
+    --card-foreground: 0 0% 98%;
+
+    --popover: 240 8% 9.5%;
+    --popover-foreground: 0 0% 98%;
+
+    --primary: 262 83% 68%;
+    --primary-foreground: 240 10% 6%;
+
+    --secondary: 240 6% 14%;
+    --secondary-foreground: 0 0% 98%;
+
+    --muted: 240 6% 14%;
+    --muted-foreground: 240 5% 65%;
+
+    --accent: 240 7% 12%;          /* #1B1B21 – hover/elevated bg */
+    --accent-foreground: 0 0% 98%;
+
+    --destructive: 0 89% 71%;     /* #F87171 */
+    --destructive-foreground: 0 0% 98%;
+
+    --success: 158 64% 52%;        /* #34D399 */
+    --success-foreground: 0 0% 98%;
+
+    --warning: 43 96% 56%;         /* #FBBF24 */
+    --warning-foreground: 240 10% 6%;
+
+    --border: 240 6% 13%;          /* #1E1E23 – panel dividers */
+    --border-muted: 240 5% 16.2%; /* #26262B – card borders */
+    --input: 240 6% 14%;
+    --ring: 262 83% 68%;
+
+    --surface: 240 8% 7.5%;        /* #101014 – panel/sidebar bg */
+    --sidebar: 240 8% 7.5%;        /* #101014 */
+    --sidebar-foreground: 0 0% 98%;
+    --sidebar-border: 240 6% 13%;
+  }
+
+  * {
+    @apply border-border;
+  }
+  html,
+  body,
+  #root {
+    width: 100%;
+    height: 100%;
+    min-width: 0;
+    min-height: 0;
+    margin: 0;
+    overflow: hidden;
+  }
+
+  body {
+    @apply bg-background text-foreground;
+    font-feature-settings: "rlig" 1, "calt" 1, "ss01" 1;
+  }
+
+  button,
+  input,
+  textarea,
+  select {
+    font: inherit;
+  }
+
+  /* Subtle ambient scrollbar in app chrome */
+  ::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+  }
+  ::-webkit-scrollbar-thumb {
+    background: hsl(var(--border));
+    border-radius: 4px;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: hsl(var(--muted-foreground) / 0.4);
+  }
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+/* ── Monaco agent-editing decorations (R3.9, R3.10) ─────────────
+ * Applied imperatively by MonacoView while the agent edits the active file.
+ * The caret is a blinking bar content-widget; reduced-motion drops the blink
+ * via the global media block above.
+ */
+.agent-edit-line {
+  background: rgba(155, 106, 241, 0.10);
+}
+.agent-edit-line-margin {
+  border-left: 2px solid #9b6af1;
+  margin-left: 2px;
+}
+.agent-edit-glyph {
+  background: radial-gradient(circle at center, #9b6af1 0 40%, transparent 45%);
+}
+.monaco-agent-caret {
+  display: inline-block;
+  width: 2px;
+  height: 1.15em;
+  vertical-align: text-bottom;
+  background: #9b6af1;
+  box-shadow: 0 0 6px rgba(155, 106, 241, 0.7);
+  border-radius: 1px;
+}
+
+/* ── Motion_System token utilities (R6.1) ───────────────────────
+ * Named classes consumed by `lib/reduced-motion.ts` (`motionClass`). Each
+ * token has an animated variant and a static (no continuous/looping motion)
+ * variant so components can swap nodes when reduced-motion is enabled.
+ */
+@layer utilities {
+  .motion-pulse-dot      { animation: pulse-dot      1.6s ease-in-out infinite; }
+  .motion-orb-glow       { animation: orb-breathe    3.5s ease-in-out infinite; }
+  .motion-shimmer        { animation: shimmer        2.4s linear infinite; }
+  .motion-caret-blink    { animation: caret-blink    1s steps(1) infinite; }
+  .motion-typing-dot     { animation: typing-dot     1.2s ease-in-out infinite; }
+  .motion-spinner        { animation: spin           0.8s linear infinite; }
+  .motion-progress-bar   { transition: width 240ms ease-out; }
+  .motion-fade-row       { animation: fade-row       0.3s ease-out both; }
+
+  /* Static variants: one fixed visual state, no looping (R6.6, R6.8). */
+  .motion-static-pulse-dot,
+  .motion-static-orb-glow,
+  .motion-static-shimmer,
+  .motion-static-typing-dot,
+  .motion-static-spinner   { animation: none !important; }
+  .motion-static-caret-blink { animation: none !important; opacity: 1; }
+  .motion-static-progress-bar { transition: none !important; }
+  /* Remaining one-shot transition limited to <=200ms (R6.7). */
+  .motion-static-fade-row  { animation: fade-row 0.2s ease-out both; }
+}
+
+/* ── Reduced-motion (R6.6, R6.7, R6.8) — fixes confirmed bug #2 ──
+ * A single media block neutralizes every continuous/looping animation and
+ * caps any remaining transition at 200ms. Components additionally use the
+ * `useReducedMotion` hook to render static state cues, but this guarantees
+ * the CSS-level guarantee even for nodes that are not JS-gated.
+ */
+@media (prefers-reduced-motion: reduce) {
+  /* Looping/continuous animations are stopped and pinned to a fixed state. */
+  .orb-breathe,
+  .pulse-status-dot,
+  .pulse-primary-dot,
+  .animate-shimmer,
+  .animate-caret,
+  .animate-pulse-dot,
+  .animate-pulse-dot-green,
+  .animate-typing-dot,
+  .motion-pulse-dot,
+  .motion-orb-glow,
+  .motion-shimmer,
+  .motion-caret-blink,
+  .motion-typing-dot,
+  .motion-spinner {
+    animation: none !important;
+  }
+  .animate-caret,
+  .motion-caret-blink {
+    opacity: 1 !important;
+  }
+
+  /* Any remaining transition/animation is non-looping and <=200ms (R6.7). */
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.2s !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.2s !important;
+    scroll-behavior: auto !important;
+  }
+  .animate-fade-row,
+  .motion-fade-row {
+    animation: fade-row 0.2s ease-out both !important;
+  }
+}

@@ -1,0 +1,79 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Llama Studio",
+  "version": "2.0.0",
+  "identifier": "ai.llama.studio",
+  "mainBinaryName": "llama-studio",
+  "build": {
+    "frontendDist": "../frontend/dist",
+    "devUrl": "http://127.0.0.1:1420",
+    "beforeDevCommand": "pnpm --filter @llama-studio/frontend dev",
+    "beforeBuildCommand": "pnpm --filter @llama-studio/frontend build"
+  },
+  "app": {
+    "windows": [
+      {
+        "title": "Llama Studio",
+        "width": 1680,
+        "height": 1040,
+        "minWidth": 1280,
+        "minHeight": 820,
+        "resizable": true,
+        "maximized": true,
+        "decorations": false,
+        "label": "main"
+      }
+    ],
+    "security": {
+      "csp": "default-src 'self'; connect-src 'self' http://127.0.0.1:* ws://127.0.0.1:*; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline'; font-src 'self' data:"
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": ["deb", "rpm"],
+    "category": "DeveloperTool",
+    "copyright": "© 2026 Llama Studio contributors",
+    "shortDescription": "Local agentic coding desktop app.",
+    "longDescription": "Llama Studio is a local-first, llama.cpp-powered agentic coding desktop app shipped as a Tauri v2 binary with a bundled FastAPI sidecar.",
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ],
+    "externalBin": [
+      "binaries/llama-studio-agent",
+      "binaries/llama-studio-hotpath"
+    ],
+    "resources": [],
+    "linux": {
+      "deb": {
+        "depends": [
+          "libwebkit2gtk-4.1-0",
+          "libgtk-3-0",
+          "libssl3 | libssl1.1",
+          "libxdo3"
+        ]
+      }
+    },
+    "macOS": {
+      "minimumSystemVersion": "11.0"
+    },
+    "windows": {
+      "wix": {
+        "language": "en-US"
+      }
+    }
+  },
+  "plugins": {
+    "updater": {
+      "active": false,
+      "endpoints": [
+        "https://releases.llama.studio/updates/{{target}}/{{arch}}/{{current_version}}"
+      ],
+      "dialog": true,
+      "pubkey": ""
+    }
+  }
+}

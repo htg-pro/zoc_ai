@@ -1,0 +1,89 @@
+Investigate the agent/chat feature in this repo to find real, concrete bugs.
+  Don't speculate — only report bugs you can point to specific lines for.
+
+  Project root: /home/sanjeevtg/Documents/learning project/Archivezip
+
+  Focus your investigation on:
+
+  1. /home/sanjeevtg/Documents/learning
+  project/Archivezip/apps/frontend/src/features/agent/ — all files
+  (AgentPanel.tsx, Composer.tsx, MessageList.tsx, MessageItem.tsx,
+  ModelPicker.tsx, ToolStream.tsx, PlanTimeline.tsx, ReviewPanel.tsx,
+  TestsPanel.tsx, ToolCallCard.tsx, DiffCard.tsx, AttachmentChips.tsx,
+  SlashAutocomplete.tsx)
+  2. /home/sanjeevtg/Documents/learning
+  project/Archivezip/apps/frontend/src/lib/store.ts — agent/chat-related state
+  3. /home/sanjeevtg/Documents/learning
+  project/Archivezip/apps/frontend/src/lib/tauri-bridge.ts — agent streaming
+  bridge
+  4. /home/sanjeevtg/Documents/learning
+  project/Archivezip/apps/frontend/src/lib/mock-data.ts — relevant mock data
+  feeding the chat
+  5. /home/sanjeevtg/Documents/learning
+  project/Archivezip/apps/frontend/src/App.tsx — wiring
+
+  The repo's `git status` shows these files are all currently modified. Look
+  for the kinds of bugs that tend to slip in during such edits:
+
+  - React: missing/incorrect keys in lists, stale closures in
+  useEffect/useCallback, missing dependency arrays, setState during render,
+  memory leaks (timers/listeners/AbortController not cleaned up),
+  unmounted-component setState
+  - Streaming/async: races between submit and response, message
+  duplication/reordering, AbortController misuse, lost tokens when component
+  re-renders, scroll-to-bottom logic that fights user scroll
+  - State: mutating state directly, lost updates with sequential setState,
+  store actions that don't actually update the store, selectors with unstable
+  references
+  - Logic bugs: off-by-one in plan/streaming indices, wrong message role,
+  attachments not cleared after send, slash command misparsed, model picker
+  default mismatch
+  - Accessibility/UX: enter/shift-enter handling, IME composition swallowing,
+  focus traps, autoscroll breaking when user scrolls up
+  - Tauri bridge: event listener leaks, missing unlisten, wrong event name,
+  command argument mismatches
+
+  Use grep/Read freely. For each bug, report:
+  - file_path:line_number
+  - the buggy code snippet (short)
+  - why it's a bug (concrete failure mode, not "could be cleaner")
+  - a one-line fix idea
+
+  Group findings by severity: Critical / High / Medium / Low. Skip stylistic
+  nits. Aim for ~5–12 real bugs. Keep total report under 800 words.
+flowchart LR
+  subgraph Desktop["Desktop (Tauri / Rust)"]
+    TAURI[Tauri host (invoke / event emit)]
+    SUP[AgentSupervisor\n(sidecar.rs)]
+    LLAMASRV[Llama-server\n(supervisor llama_server.rs)]
+  end
+
+  subgraph Sidecar["Agent sidecar (Python / FastAPI)"]
+    SIDE[FastAPI API (/v1) \nSSE /sessions/:id/agent/events]
+    PROVIDERS[Model Providers\n(llamacpp, OpenAI, Anthropic, Gemini...)]
+  end
+
+  subgraph Frontend["Frontend (React + TypeScript)"]
+    UI[React components\n(AgentPanel, Composer...)]
+    CLIENT[agent-client.ts\n(SSE + fetch)]
+    TAURI_BR[tauri-bridge.ts\n(Tauri invoke/listen wrappers)]
+    STORE[Zustand store]
+  end
+
+  TAURI -->|manage/emit| SUP
+  SUP -->|spawn & handshake| SIDE
+  SUP -->|spawn| LLAMASRV
+  LLAMASRV -->|/health| SUP
+  SIDE <-->|SSE events| CLIENT
+  CLIENT -->|POST /v1/*| SIDE
+  UI -->|calls| CLIENT
+  UI -->|reads/writes| STORE
+  UI -->|native IPC| TAURI_BR
+  TAURI_BR -->|invoke| TAURI
+  SIDE -->|uses| PROVIDERS
+
+  %% port handshake annotation
+  SUP -. "stdout handshake: LLAMA_STUDIO_AGENT_PORT=<port>" .-> SIDE
+
+  classDef box fill:#f8f9fa,stroke:#333,stroke-width:1;
+  class Desktop,Sidecar,Frontend box;

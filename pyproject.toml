@@ -1,0 +1,41 @@
+[project]
+name = "llama-studio-workspace"
+version = "2.0.0"
+description = "Workspace root for Llama Studio Python packages."
+requires-python = ">=3.11"
+
+[tool.uv.workspace]
+members = ["services/agent", "packages/shared-types/python"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+extend-exclude = ["legacy"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP", "SIM", "RUF"]
+# E501: line length handled by formatter.
+# B008: FastAPI's `Depends()`/`Query()` in argument defaults is the idiomatic,
+#       documented pattern — not a real mutable-default bug.
+# RUF002: ambiguous-unicode in docstrings (en-dashes/arrows) is intentional prose.
+# UP042: `class X(str, Enum)` is valid and used for Pydantic compatibility.
+ignore = ["E501", "B008", "RUF002", "UP042"]
+
+[tool.ruff.lint.per-file-ignores]
+# orchestrator.py interleaves a large prompt-builder helper with grouped imports;
+# E402 here is structural, not a load-order bug.
+"services/agent/src/llama_studio_agent/agent/orchestrator.py" = ["E402"]
+# `I`/`O` are conventional TypeVar names for the tool input/output generics.
+"services/agent/src/llama_studio_agent/tools/base.py" = ["E741"]
+# repository.py defines a `_now()` helper before its grouped model imports;
+# E402 here is structural, not a load-order bug.
+"services/agent/src/llama_studio_agent/persistence/repository.py" = ["E402"]
+
+[tool.mypy]
+python_version = "3.11"
+strict = true
+exclude = ["legacy/"]
+
+[tool.pytest.ini_options]
+testpaths = ["services/agent/tests"]
+addopts = "-q"
