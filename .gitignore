@@ -34,13 +34,23 @@ llama-studio-v*.zip
 .idea/
 *.swp
 .DS_Store
+*.tsbuildinfo
 
 # Local
 .env
 .env.local
 .local/.commit_message
 node_modules
-node_modules
-node_modules
+
+# Secrets / credentials (never commit real keys)
+*.env
+.env.*
+!.env.example
+*.pem
+*.key
+*_rsa
+secrets.json
+credentials.json
+.claude/settings.local.json
 
 testsprite_tests/tmp/config.json

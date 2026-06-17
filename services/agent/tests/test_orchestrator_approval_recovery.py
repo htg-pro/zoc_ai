@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import json
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 from uuid import uuid4
 
@@ -47,7 +47,7 @@ def _suspended_call(state, session_id) -> ToolCall:
         arguments={"path": "out.txt", "content": "hi"},
         status=ToolCallStatus.needs_approval,
         error="needs write_fs",
-        started_at=datetime.utcnow(),
+        started_at=datetime.now(UTC),
     )
     state.repo.upsert_tool_call(session_id, call)
     return call
@@ -85,8 +85,8 @@ async def test_reconcile_leaves_other_statuses_untouched(tmp_path, monkeypatch):
         name="read_file",
         arguments={"path": "x"},
         status=ToolCallStatus.succeeded,
-        started_at=datetime.utcnow(),
-        finished_at=datetime.utcnow(),
+        started_at=datetime.now(UTC),
+        finished_at=datetime.now(UTC),
     )
     state.repo.upsert_tool_call(sess.id, ok)
 
@@ -176,8 +176,8 @@ def test_resolve_endpoint_reports_run_lost(tmp_path, monkeypatch):
         arguments={"path": "out.txt", "content": "hi"},
         status=ToolCallStatus.cancelled,
         error=ORPHANED_APPROVAL_MESSAGE,
-        started_at=datetime.utcnow(),
-        finished_at=datetime.utcnow(),
+        started_at=datetime.now(UTC),
+        finished_at=datetime.now(UTC),
     )
     state.repo.upsert_tool_call(sess.id, call)
 
@@ -293,8 +293,8 @@ def _cancelled_orphan(state, session_id) -> ToolCall:
         arguments={"path": "out.txt", "content": "hi"},
         status=ToolCallStatus.cancelled,
         error=ORPHANED_APPROVAL_MESSAGE,
-        started_at=datetime.utcnow(),
-        finished_at=datetime.utcnow(),
+        started_at=datetime.now(UTC),
+        finished_at=datetime.now(UTC),
     )
     state.repo.upsert_tool_call(session_id, call)
     return call
@@ -328,8 +328,8 @@ def test_retry_endpoint_rejects_non_orphan(tmp_path, monkeypatch):
         arguments={"path": "out.txt", "content": "hi"},
         status=ToolCallStatus.failed,
         error="boom",
-        started_at=datetime.utcnow(),
-        finished_at=datetime.utcnow(),
+        started_at=datetime.now(UTC),
+        finished_at=datetime.now(UTC),
     )
     state.repo.upsert_tool_call(sess.id, call)
 

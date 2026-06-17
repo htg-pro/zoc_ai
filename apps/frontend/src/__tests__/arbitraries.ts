@@ -15,7 +15,6 @@ import type {
   Plan,
   PlanStep,
   PlanStepStatus,
-  ReplitCheckpoint,
   Session,
   SessionStatus,
   ToolCall,
@@ -188,16 +187,6 @@ export const arbAgentEvent = (sessionId = "s"): fc.Arbitrary<AgentEvent> =>
       summary: fc.option(fc.string({ maxLength: 30 }), { nil: null }),
     }),
   ) as fc.Arbitrary<AgentEvent>;
-
-export const arbCheckpoint: fc.Arbitrary<ReplitCheckpoint> = fc.record({
-  id: arbId,
-  session_id: fc.constant("s"),
-  task_id: fc.constant(null),
-  label: fc.string({ maxLength: 20 }),
-  snapshot_path: fc.string({ maxLength: 20 }),
-  files: fc.array(fc.string({ maxLength: 12 }), { maxLength: 4 }),
-  created_at: arbIsoDate,
-});
 
 /**
  * A minimal but well-formed unified diff string with a controllable number of

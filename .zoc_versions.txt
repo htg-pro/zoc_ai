@@ -1,0 +1,5 @@
+node: v25.2.1
+pnpm: 11.4.0
+uv: uv 0.11.16 (x86_64-unknown-linux-gnu)
+cargo: cargo 1.92.0 (344c4567c 2025-10-21)
+python: Python 3.14.5

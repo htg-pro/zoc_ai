@@ -7,7 +7,6 @@ import {
   PanelBottom,
   PanelLeft,
   PanelRight,
-  Play,
   Sparkles,
   Square,
   X,
@@ -15,6 +14,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Kbd } from "@/components/ui/kbd";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import { RunSelector } from "./RunSelector";
 import { useApp } from "@/lib/store";
 import { closeWindow, isTauri, minimizeWindow, toggleMaximizeWindow } from "@/lib/tauri-bridge";
 import { cn } from "@/lib/utils";
@@ -25,24 +25,23 @@ export function TopBar() {
   const toggleSide = useApp((s) => s.toggleSide);
   const toggleRight = useApp((s) => s.toggleRight);
   const toggleBottom = useApp((s) => s.toggleBottom);
-  const setBottomTab = useApp((s) => s.setBottomTab);
-  const runTestGen = useApp((s) => s.runTestGen);
-  const activeFile = useApp((s) => s.activeFile);
   const session = useApp((s) => s.sessions.find((x) => x.id === s.activeSessionId));
-  const testRunning = useApp((s) => s.testGenRunning || s.testRunRunning);
   const isRunning = useApp((s) => s.isRunning);
   const streaming = useApp((s) => s.streaming);
   const rightPanelOpen = useApp((s) => s.layout.rightPanelOpen);
   const sidePanelOpen = useApp((s) => s.layout.sidePanelOpen);
   const bottomDockOpen = useApp((s) => s.layout.bottomDockOpen);
   const pendingPatchCount = useApp((s) => s.pendingPatches.length);
-
-  const runActiveFile = () => {
-    if (activeFile) {
-      void runTestGen({ target: activeFile });
-      return;
-    }
-    setBottomTab("terminal");
+  const git = useApp((s) => s.git);
+  const setActivity = useApp((s) => s.setActivity);
+  const sidePanelOpenForGit = useApp((s) => s.layout.sidePanelOpen);
+  const toggleSideForGit = useApp((s) => s.toggleSide);
+  const gitDirtyCount = git
+    ? git.staged.length + git.unstaged.length + git.untracked.length + git.conflicts.length
+    : 0;
+  const openScm = () => {
+    setActivity("scm");
+    if (!sidePanelOpenForGit) toggleSideForGit();
   };
 
   return (
@@ -92,7 +91,7 @@ export function TopBar() {
           <div className="flex h-[18px] w-[18px] items-center justify-center rounded-[5px] bg-gradient-to-br from-[#9B6AF1] to-[#7C3AED] shadow-[0_2px_8px_rgba(124,58,237,0.35)]">
             <Sparkles className="h-[11px] w-[11px] text-white" />
           </div>
-          <span className="text-[12.5px] font-medium text-foreground">Llama Studio</span>
+          <span className="text-[12.5px] font-medium text-foreground">Zoc AI</span>
         </div>
 
         {/* Divider */}
@@ -106,10 +105,20 @@ export function TopBar() {
           >
             {session?.workspace_root ?? "-"}
           </span>
-          <div className="flex h-5 shrink-0 items-center gap-1 rounded-md border border-[hsl(var(--border-muted))] bg-card px-1.5">
+          <button
+            type="button"
+            onClick={openScm}
+            className="flex h-5 shrink-0 items-center gap-1 rounded-md border border-[hsl(var(--border-muted))] bg-card px-1.5 hover:bg-accent"
+            title={git?.is_repo ? "Open Source Control" : "Not a Git repository"}
+          >
             <GitBranch className="h-3 w-3 text-muted-foreground" />
-            <span className="font-mono text-[10.5px] text-muted-foreground">main</span>
-          </div>
+            <span className="font-mono text-[10.5px] text-muted-foreground">
+              {git?.is_repo ? git.branch ?? "(detached)" : "—"}
+            </span>
+            {gitDirtyCount > 0 && (
+              <span className="ml-0.5 font-mono text-[10.5px] text-warning">{gitDirtyCount}</span>
+            )}
+          </button>
           {pendingPatchCount > 0 && (
             <div className="flex h-5 shrink-0 items-center gap-1.5 rounded-md border border-[hsl(var(--border-muted))] bg-card px-1.5">
               <span className="h-1.5 w-1.5 rounded-full bg-warning" />
@@ -170,21 +179,11 @@ export function TopBar() {
 
         <div className="mx-1 h-4 w-px bg-[hsl(var(--border-muted))]" />
 
-        {/* Running status or Run button */}
+        {/* Running status or Run selector */}
         {isRunning || streaming ? (
           <RunningPill />
         ) : (
-          <Button
-            size="sm"
-            variant="default"
-            className="h-6 gap-1.5 px-2.5 text-[11.5px]"
-            onClick={runActiveFile}
-            disabled={testRunning}
-            title={activeFile ? `Generate/run tests for ${activeFile}` : "Open terminal"}
-          >
-            <Play className="h-3 w-3" />
-            Run
-          </Button>
+          <RunSelector />
         )}
       </div>
     </header>

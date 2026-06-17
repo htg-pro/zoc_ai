@@ -139,6 +139,20 @@ class MessageVectorStore:
         ``exclude_message_ids`` lets the caller skip messages already
         in the working window so recall doesn't return what's already
         in the prompt verbatim.
+
+        Guarantees (Requirements 4.1, 4.2, 4.4, 4.5):
+          - Session isolation (4.1): rows are selected with
+            ``WHERE session_id = ?``, so only vectors stored under
+            ``session_id`` are ever scored — cross-session leakage is
+            impossible by construction (the primary key includes
+            ``session_id``).
+          - Working-window exclusion (4.2): every ``message_id`` in
+            ``exclude_message_ids`` is skipped and never appears in the
+            result.
+          - top_k cap + ordering: hits are sorted by descending score and
+            truncated to at most ``top_k`` entries.
+          - top_k short-circuit: returns ``[]`` immediately when
+            ``top_k <= 0`` (no query work, no hits).
         """
         if top_k <= 0:
             return []
@@ -257,7 +271,21 @@ class RecallService:
         cfg: RecallConfig | None = None,
         exclude_message_ids: set[UUID] | None = None,
     ) -> list[RecallHit]:
-        """Top-k relevant prior messages for ``query`` in ``session_id``."""
+        """Top-k relevant prior messages for ``query`` in ``session_id``.
+
+        Guarantees (Requirements 4.2, 4.3, 4.4, 4.5):
+          - Empty-query short-circuit: returns ``[]`` when ``query`` is
+            empty or whitespace-only (``query.strip()`` is falsy).
+          - min_score floor: every returned hit has
+            ``score >= cfg.min_score`` (default 0.15); lower-scoring hits
+            are dropped.
+          - top_k cap (default 3) and descending-score ordering, plus the
+            ``top_k <= 0`` short-circuit, are enforced by
+            ``MessageVectorStore.query``.
+          - Working-window exclusion (``exclude_message_ids``) and session
+            isolation are likewise delegated to the store, so no excluded
+            or cross-session message can surface here.
+        """
         if not query.strip():
             return []
         cfg = cfg or RecallConfig()

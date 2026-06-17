@@ -13,6 +13,8 @@ import type { OnMount } from "@monaco-editor/react";
 import type { OpenFile } from "@/lib/store";
 import { useApp } from "@/lib/store";
 import { useReducedMotion } from "@/lib/reduced-motion";
+import { clearActiveEditor, setActiveEditor, setCursorPosition } from "@/lib/editor-actions";
+import type { Severity } from "@/lib/problem-matchers";
 
 const Editor = lazy(() =>
   import("@monaco-editor/react").then((m) => ({ default: m.default })),
@@ -43,11 +45,16 @@ export function MonacoView({
   agentEditing?: boolean;
 }) {
   const update = useApp((s) => s.updateFile);
+  const breakpoints = useApp((s) => s.breakpoints[file.path]);
+  const minimap = useApp((s) => s.editorSettings.minimap);
+  const stickyScroll = useApp((s) => s.editorSettings.stickyScroll);
+  const diagnostics = useApp((s) => s.diagnostics);
   const reducedMotion = useReducedMotion();
 
   const editorRef = useRef<MonacoEditor | null>(null);
   const monacoRef = useRef<MonacoNamespace | null>(null);
   const decorationsRef = useRef<DecorationsCollection | null>(null);
+  const breakpointDecorationsRef = useRef<DecorationsCollection | null>(null);
   const caretWidgetRef = useRef<{
     node: HTMLSpanElement;
     widget: unknown;
@@ -64,7 +71,8 @@ export function MonacoView({
       glyphMargin: true,
       folding: true,
       lineDecorationsWidth: 12,
-      minimap: { enabled: false },
+      minimap: { enabled: minimap },
+      stickyScroll: { enabled: stickyScroll },
       scrollBeyondLastLine: false,
       renderLineHighlight: "gutter" as const,
       renderWhitespace: "selection" as const,
@@ -74,13 +82,62 @@ export function MonacoView({
       padding: { top: 12 },
       scrollbar: { verticalScrollbarSize: 8, horizontalScrollbarSize: 8 },
     }),
-    [],
+    [minimap, stickyScroll],
   );
 
   const handleMount = useCallback<OnMount>((editor, monaco) => {
     editorRef.current = editor;
     monacoRef.current = monaco;
+    setActiveEditor(editor as never);
+    editor.onDidFocusEditorText?.(() => setActiveEditor(editor as never));
+    // Track caret position for the status bar (Phase 14).
+    const pos = editor.getPosition?.();
+    if (pos) setCursorPosition({ line: pos.lineNumber, column: pos.column });
+    editor.onDidChangeCursorPosition?.((e) =>
+      setCursorPosition({ line: e.position.lineNumber, column: e.position.column }),
+    );
     decorationsRef.current = editor.createDecorationsCollection?.([]) ?? null;
+    breakpointDecorationsRef.current = editor.createDecorationsCollection?.([]) ?? null;
+    // Toggle a breakpoint when the glyph margin (left of line numbers) is clicked.
+    editor.onMouseDown?.((e) => {
+      const t = e.target as { type?: number; position?: { lineNumber?: number } | null };
+      const GLYPH_MARGIN = monaco.editor.MouseTargetType?.GUTTER_GLYPH_MARGIN ?? 2;
+      if (t?.type === GLYPH_MARGIN && t.position?.lineNumber) {
+        const path = useApp.getState().activeFile;
+        if (path) useApp.getState().toggleBreakpoint(path, t.position.lineNumber);
+      }
+    });
+    // Cmd-K / Ctrl-K inline edit: capture the selection + surrounding context
+    // and open the prompt. Reads store state lazily to avoid stale closures.
+    editor.addAction?.({
+      id: "zoc.inline-edit",
+      label: "Zoc: Inline Edit",
+      keybindings: [monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyK],
+      contextMenuGroupId: "modification",
+      contextMenuOrder: 0,
+      run: (ed) => {
+        const model = ed.getModel();
+        const sel = ed.getSelection();
+        if (!model || !sel) return;
+        const start = model.getOffsetAt(sel.getStartPosition());
+        const end = model.getOffsetAt(sel.getEndPosition());
+        if (start === end) return; // require a non-empty selection
+        const full = model.getValue();
+        const WINDOW = 800;
+        const state = useApp.getState();
+        const path = state.activeFile ?? "";
+        const language = state.openFiles.find((f) => f.path === path)?.language ?? null;
+        state.openInlineEdit({
+          filePath: path,
+          language,
+          start,
+          end,
+          original: model.getValueInRange(sel),
+          prefix: full.slice(Math.max(0, start - WINDOW), start),
+          suffix: full.slice(end, Math.min(full.length, end + WINDOW)),
+        });
+      },
+    });
     const layout = () => {
       if (editor.getDomNode()) editor.layout();
     };
@@ -184,6 +241,69 @@ export function MonacoView({
       clearAll();
     };
   }, [agentEditing, reducedMotion, file.path, file.content, mountTick]);
+
+  // Render breakpoint glyphs in the gutter for the active file.
+  useEffect(() => {
+    const editor = editorRef.current;
+    const monaco = monacoRef.current;
+    const collection = breakpointDecorationsRef.current;
+    if (!editor || !monaco || !collection) return;
+    const lines = breakpoints ?? [];
+    collection.set(
+      lines.map((ln) => ({
+        range: new monaco.Range(ln, 1, ln, 1),
+        options: {
+          glyphMarginClassName: "zoc-breakpoint-glyph",
+          glyphMarginHoverMessage: { value: "Breakpoint" },
+          stickiness: 1,
+        },
+      })) as never,
+    );
+  }, [breakpoints, mountTick]);
+
+  // Push diagnostics (Phase 5) into Monaco as squiggle markers for this file.
+  useEffect(() => {
+    const editor = editorRef.current;
+    const monaco = monacoRef.current as unknown as {
+      editor: {
+        setModelMarkers: (m: unknown, owner: string, markers: unknown[]) => void;
+        MarkerSeverity: Record<string, number>;
+      };
+    } | null;
+    if (!editor || !monaco) return;
+    const model = (editor as { getModel?: () => unknown }).getModel?.();
+    if (!model) return;
+    const sev = (s: Severity): number => {
+      const M = monaco.editor.MarkerSeverity;
+      return s === "error" ? M.Error : s === "warning" ? M.Warning : s === "info" ? M.Info : M.Hint;
+    };
+    const items = Object.values(diagnostics)
+      .flat()
+      .filter((d) => d.file === file.path || file.path.endsWith(d.file));
+    monaco.editor.setModelMarkers(
+      model,
+      "zoc-diagnostics",
+      items.map((d) => ({
+        severity: sev(d.severity),
+        message: `${d.message}${d.code ? ` (${d.code})` : ""}`,
+        startLineNumber: d.line,
+        startColumn: d.column,
+        endLineNumber: d.line,
+        endColumn: d.column + 1,
+        source: d.source,
+      })),
+    );
+  }, [diagnostics, file.path, mountTick]);
+
+  // Drop the active-editor registration when this view unmounts.
+  useEffect(
+    () => () => {
+      const e = editorRef.current;
+      if (e) clearActiveEditor(e as never);
+      setCursorPosition(null);
+    },
+    [],
+  );
 
   return (
     <div className="flex h-full min-h-0 w-full min-w-0 flex-1 overflow-hidden bg-[#1e1e1e]">

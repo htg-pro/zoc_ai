@@ -1,0 +1,493 @@
+[
+  {
+    "id": "TC001",
+    "title": "Send a coding prompt and receive a streamed agent response",
+    "description": "This verifies that a user can send a coding-related prompt and see the assistant response stream through to completion.",
+    "category": "Agent chat with streamed responses",
+    "steps": [
+      {
+        "type": "action",
+        "description": "Navigate to /"
+      },
+      {
+        "type": "action",
+        "description": "Type a coding-related prompt into the agent composer"
+      },
+      {
+        "type": "action",
+        "description": "Send the prompt"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify the user message appears in the conversation timeline"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify a streamed assistant response appears and the run completes"
+      }
+    ],
+    "priority": "High"
+  },
+  {
+    "id": "TC002",
+    "title": "Choose a workspace and enter the main shell",
+    "description": "This verifies that a first-run user can complete onboarding by selecting a workspace and reaching the main application shell.",
+    "category": "First-run onboarding workspace selection",
+    "steps": [
+      {
+        "type": "action",
+        "description": "Navigate to /"
+      },
+      {
+        "type": "action",
+        "description": "Choose a workspace folder"
+      },
+      {
+        "type": "action",
+        "description": "Finish onboarding"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify the main application shell is displayed"
+      }
+    ],
+    "priority": "High"
+  },
+  {
+    "id": "TC003",
+    "title": "Save Groq provider settings and discover models",
+    "description": "This verifies that a user can enter a Groq API key, discover available models, and set Groq as the active provider for agent use.",
+    "category": "Settings provider setup for Groq",
+    "steps": [
+      {
+        "type": "action",
+        "description": "Navigate to /"
+      },
+      {
+        "type": "action",
+        "description": "Open Settings"
+      },
+      {
+        "type": "action",
+        "description": "Switch to the Providers section"
+      },
+      {
+        "type": "action",
+        "description": "Expand the Groq provider details"
+      },
+      {
+        "type": "action",
+        "description": "Paste the Groq API key into the provider key field"
+      },
+      {
+        "type": "action",
+        "description": "Discover available models"
+      },
+      {
+        "type": "action",
+        "description": "Select Groq as the active provider"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify a populated Groq model list is displayed"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify the active provider is set to Groq"
+      }
+    ],
+    "priority": "High"
+  },
+  {
+    "id": "TC004",
+    "title": "Create a new chat session",
+    "description": "This verifies that a user can open the Sessions panel and create a new session that becomes active.",
+    "category": "Sessions panel",
+    "steps": [
+      {
+        "type": "action",
+        "description": "Navigate to /"
+      },
+      {
+        "type": "action",
+        "description": "Open the Sessions panel"
+      },
+      {
+        "type": "action",
+        "description": "Create a new session"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify a new session is displayed as the active session"
+      }
+    ],
+    "priority": "High"
+  },
+  {
+    "id": "TC005",
+    "title": "Switch to another chat session",
+    "description": "This verifies that a user can switch between existing sessions and see the conversation context update.",
+    "category": "Sessions panel",
+    "steps": [
+      {
+        "type": "action",
+        "description": "Navigate to /"
+      },
+      {
+        "type": "action",
+        "description": "Open the Sessions panel"
+      },
+      {
+        "type": "action",
+        "description": "Select an existing session"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify the conversation updates to the selected session"
+      }
+    ],
+    "priority": "High"
+  },
+  {
+    "id": "TC006",
+    "title": "Open settings and discover Groq models",
+    "description": "This verifies that a user can open Settings, add provider credentials, and discover models for the active provider.",
+    "category": "Sessions panel",
+    "steps": [
+      {
+        "type": "action",
+        "description": "Navigate to /"
+      },
+      {
+        "type": "action",
+        "description": "Open Settings"
+      },
+      {
+        "type": "action",
+        "description": "Open the provider settings"
+      },
+      {
+        "type": "action",
+        "description": "Fill in the Groq API key field with {{LOGIN_USER}}"
+      },
+      {
+        "type": "action",
+        "description": "Submit the provider settings"
+      },
+      {
+        "type": "action",
+        "description": "Discover available models"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify discovered models are displayed"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify the provider is shown as active"
+      }
+    ],
+    "priority": "High"
+  },
+  {
+    "id": "TC007",
+    "title": "Choose a Groq model in the agent panel",
+    "description": "This verifies that selecting a Groq model in the agent model picker updates the active model used by the composer.",
+    "category": "Agent model picker",
+    "steps": [
+      {
+        "type": "action",
+        "description": "Navigate to /"
+      },
+      {
+        "type": "action",
+        "description": "Open the model picker in the Agent panel"
+      },
+      {
+        "type": "action",
+        "description": "Select a Groq model"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify the active model label updates"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify the selected model is shown as active in the Agent panel"
+      }
+    ],
+    "priority": "High"
+  },
+  {
+    "id": "TC008",
+    "title": "Delete a chat session",
+    "description": "This verifies that a user can delete a session from its context menu and see it removed from the list.",
+    "category": "Sessions panel",
+    "steps": [
+      {
+        "type": "action",
+        "description": "Navigate to /"
+      },
+      {
+        "type": "action",
+        "description": "Open the Sessions panel"
+      },
+      {
+        "type": "action",
+        "description": "Open a session context menu"
+      },
+      {
+        "type": "action",
+        "description": "Delete the session"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify the session is removed from the list"
+      }
+    ],
+    "priority": "High"
+  },
+  {
+    "id": "TC009",
+    "title": "Rename a chat session",
+    "description": "This verifies that a user can rename a session from its context menu and see the updated name in the list.",
+    "category": "Sessions panel",
+    "steps": [
+      {
+        "type": "action",
+        "description": "Navigate to /"
+      },
+      {
+        "type": "action",
+        "description": "Open the Sessions panel"
+      },
+      {
+        "type": "action",
+        "description": "Open a session context menu"
+      },
+      {
+        "type": "action",
+        "description": "Rename the session"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify the session list shows the updated session name"
+      }
+    ],
+    "priority": "High"
+  },
+  {
+    "id": "TC010",
+    "title": "Choose a local llama.cpp model and see its status",
+    "description": "This verifies that selecting a local llama.cpp model updates the model badge state in the Agent panel.",
+    "category": "Agent model picker",
+    "steps": [
+      {
+        "type": "action",
+        "description": "Navigate to /"
+      },
+      {
+        "type": "action",
+        "description": "Open the model picker in the Agent panel"
+      },
+      {
+        "type": "action",
+        "description": "Select a local llama.cpp model"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify the model badge updates"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify a loading, loaded, or error status is displayed for the selected model"
+      }
+    ],
+    "priority": "High"
+  },
+  {
+    "id": "TC011",
+    "title": "Switch to Ask mode and receive a direct assistant answer",
+    "description": "This verifies that Ask mode returns a streamed assistant answer without requiring a review step.",
+    "category": "Agent chat with streamed responses",
+    "steps": [
+      {
+        "type": "action",
+        "description": "Navigate to /"
+      },
+      {
+        "type": "action",
+        "description": "Type a prompt into the agent composer"
+      },
+      {
+        "type": "action",
+        "description": "Switch the composer to Ask mode"
+      },
+      {
+        "type": "action",
+        "description": "Send the prompt"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify a streamed assistant answer appears"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify no review step is shown"
+      }
+    ],
+    "priority": "High"
+  },
+  {
+    "id": "TC012",
+    "title": "View the current session after provider configuration persists",
+    "description": "This verifies that after provider setup, the user returns to the same session context with model selection available for chatting.",
+    "category": "Sessions panel",
+    "steps": [
+      {
+        "type": "action",
+        "description": "Navigate to /"
+      },
+      {
+        "type": "action",
+        "description": "Open Settings"
+      },
+      {
+        "type": "action",
+        "description": "Open the provider settings"
+      },
+      {
+        "type": "action",
+        "description": "Fill in the Groq API key field with {{LOGIN_USER}}"
+      },
+      {
+        "type": "action",
+        "description": "Submit the provider settings"
+      },
+      {
+        "type": "action",
+        "description": "Close Settings"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify the current session remains selected"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify model selection is available for the active session"
+      }
+    ],
+    "priority": "Medium"
+  },
+  {
+    "id": "TC013",
+    "title": "Stop a long-running agent response",
+    "description": "This verifies that a user can stop an in-progress agent run and that streaming halts.",
+    "category": "Agent chat with streamed responses",
+    "steps": [
+      {
+        "type": "action",
+        "description": "Navigate to /"
+      },
+      {
+        "type": "action",
+        "description": "Type a prompt that starts a long-running agent response into the agent composer"
+      },
+      {
+        "type": "action",
+        "description": "Send the prompt"
+      },
+      {
+        "type": "action",
+        "description": "Stop the run"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify the streaming response halts"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify the run is no longer active"
+      }
+    ],
+    "priority": "Medium"
+  },
+  {
+    "id": "TC014",
+    "title": "Configure a local llama.cpp model and continue chatting",
+    "description": "This verifies that a user can select a local llama.cpp model, see its status update, and return to chat in the active session.",
+    "category": "Sessions panel",
+    "steps": [
+      {
+        "type": "action",
+        "description": "Navigate to /"
+      },
+      {
+        "type": "action",
+        "description": "Open Settings"
+      },
+      {
+        "type": "action",
+        "description": "Open the model settings"
+      },
+      {
+        "type": "action",
+        "description": "Select a local llama.cpp model"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify the selected model status is displayed"
+      },
+      {
+        "type": "action",
+        "description": "Close Settings"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify the active session conversation remains available"
+      }
+    ],
+    "priority": "Medium"
+  },
+  {
+    "id": "TC015",
+    "title": "Reject an invalid Groq key without enabling models",
+    "description": "This verifies that entering an invalid Groq API key does not produce a usable Groq model list.",
+    "category": "Settings provider setup for Groq",
+    "steps": [
+      {
+        "type": "action",
+        "description": "Navigate to /"
+      },
+      {
+        "type": "action",
+        "description": "Open Settings"
+      },
+      {
+        "type": "action",
+        "description": "Switch to the Providers section"
+      },
+      {
+        "type": "action",
+        "description": "Expand the Groq provider details"
+      },
+      {
+        "type": "action",
+        "description": "Paste an invalid Groq API key into the provider key field"
+      },
+      {
+        "type": "action",
+        "description": "Discover available models"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify no usable model list update is shown"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify a validation or warning state is visible"
+      }
+    ],
+    "priority": "Low"
+  }
+]

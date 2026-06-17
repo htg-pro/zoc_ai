@@ -64,11 +64,25 @@ export function DiffReviewView() {
     );
   }
 
-  const applyAll = () => {
+  const applyAll = async () => {
     const ids = patches.map((p) => p.id);
-    ids.forEach(accept);
-    toast.success(`Applied ${ids.length} patch${ids.length === 1 ? "" : "es"}`);
+    const results = await Promise.all(
+      ids.map((id) => accept(id).catch(() => false)),
+    );
+    const applied = results.filter(Boolean).length;
+    const failed = ids.length - applied;
     setConfirm(false);
+    if (failed === 0) {
+      toast.success(`Applied ${applied} patch${applied === 1 ? "" : "es"}`);
+    } else if (applied === 0) {
+      toast.error(`Couldn't apply ${failed} patch${failed === 1 ? "" : "es"}`, {
+        description: "The changes are still pending — check your workspace and permissions.",
+      });
+    } else {
+      toast.warning(`Applied ${applied}, ${failed} still pending`, {
+        description: "Some patches couldn't be written and remain in the review list.",
+      });
+    }
   };
 
   const accepted = acceptedHunks[current.id] ?? new Set<number>();
@@ -193,11 +207,18 @@ export function DiffReviewView() {
               size="sm"
               className="h-7 gap-1.5 px-2.5 text-[12px]"
               onClick={() => {
-                accept(current.id);
-                toast.success("Patch applied", {
-                  description: `${current.file_path} (${accepted.size || currentHunks.length} hunk${
-                    (accepted.size || currentHunks.length) === 1 ? "" : "s"
-                  })`,
+                const hunkCount = accepted.size || currentHunks.length;
+                const filePath = current.file_path;
+                void accept(current.id).then((ok) => {
+                  if (ok) {
+                    toast.success("Patch applied", {
+                      description: `${filePath} (${hunkCount} hunk${hunkCount === 1 ? "" : "s"})`,
+                    });
+                  } else {
+                    toast.error("Couldn't apply patch", {
+                      description: `${filePath} is still pending — check your workspace and permissions.`,
+                    });
+                  }
                 });
               }}
             >
@@ -265,7 +286,7 @@ export function DiffReviewView() {
             <Button variant="ghost" onClick={() => setConfirm(false)}>
               Cancel
             </Button>
-            <Button onClick={applyAll}>Apply {patches.length}</Button>
+            <Button onClick={() => void applyAll()}>Apply {patches.length}</Button>
           </div>
         </DialogContent>
       </Dialog>

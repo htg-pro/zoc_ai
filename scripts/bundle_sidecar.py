@@ -53,7 +53,22 @@ def _detect_triple() -> str:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--clean", action="store_true")
+    # Clean by default: a stale PyInstaller cache is the #1 cause of a packaged
+    # app shipping old backend code after a source change. Pass --no-clean only
+    # when you knowingly want a faster, possibly-stale incremental build.
+    parser.add_argument(
+        "--clean",
+        dest="clean",
+        action="store_true",
+        help="(default) wipe the PyInstaller build cache before bundling",
+    )
+    parser.add_argument(
+        "--no-clean",
+        dest="clean",
+        action="store_false",
+        help="reuse the PyInstaller build cache (faster, may ship stale code)",
+    )
+    parser.set_defaults(clean=True)
     args = parser.parse_args()
 
     triple = _detect_triple()
@@ -63,9 +78,13 @@ def main() -> int:
     BIN_OUT.mkdir(parents=True, exist_ok=True)
     work = DIST / "build"
     out = DIST / "dist"
+    spec = DIST / "llama-studio-agent.spec"
     if args.clean:
+        print("==> Cleaning PyInstaller cache (work/dist/spec) for a fresh build")
         for p in (work, out):
             shutil.rmtree(p, ignore_errors=True)
+        with contextlib.suppress(OSError):
+            spec.unlink()
 
     try:
         import PyInstaller.__main__  # noqa: F401
@@ -84,6 +103,12 @@ def main() -> int:
         "PyInstaller",
         "--noconfirm",
         "--onefile",
+    ]
+    if args.clean:
+        # Clear PyInstaller's own caches (PYINSTALLER_CONFIG_DIR, __pycache__)
+        # in addition to our work/dist dirs, so no stale analysis survives.
+        cmd.append("--clean")
+    cmd += [
         "--name",
         "llama-studio-agent",
         "--paths",

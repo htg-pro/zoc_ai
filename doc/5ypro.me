@@ -1,4 +1,4 @@
-# Llama Studio — 5-Year Implementation Prompts
+# Zoc AI — 5-Year Implementation Prompts
 
 > Companion to `doc/5years.me`.
 > One **ready-to-paste prompt** per year. Each one is a year-long brief for a team (or an AI agent operating over months). They are intentionally higher-level than `6pro.me` — strategy + scope + non-negotiables, not file-level deliverables. Convert each one into a quarterly OKR set when the year starts.
@@ -13,7 +13,7 @@
 v3.0.0 just launched (end of `6pro.me`). The app has signed installers, auto-update, a polished onboarding, persistent permissions, MCP support, and a marketing site.
 
 **Mission.**
-Prove that Llama Studio is something a non-trivial number of developers want to use every day. Get to 50k MAU, 30% week-2 retention, NPS ≥ 40.
+Prove that Zoc AI is something a non-trivial number of developers want to use every day. Get to 50k MAU, 30% week-2 retention, NPS ≥ 40.
 
 **Strategic priorities.**
 1. **Listen relentlessly.** Weekly user interviews (≥ 5/week). In-app feedback widget. Discord office hours. Public roadmap voting.
@@ -22,7 +22,7 @@ Prove that Llama Studio is something a non-trivial number of developers want to 
 4. **Opt-in telemetry.** What tools/models/workflows are people actually using? Feed it back into prioritization.
 5. **Performance never regresses.** Add a perf-budget CI check (cold-boot, indexing throughput, p95 streaming latency) that fails PRs that regress > 10%.
 6. **Plugin API v0.** Even if rough — third parties need a way to extend the app or the ecosystem can't start.
-7. **MCP everywhere.** Llama Studio becomes both an MCP client (uses external MCP tools) AND server (exposes its own tools to other clients). Land this early.
+7. **MCP everywhere.** Zoc AI becomes both an MCP client (uses external MCP tools) AND server (exposes its own tools to other clients). Land this early.
 
 **Non-negotiables.**
 - Local-first. Cloud features are always opt-in; air-gapped use must keep working.
@@ -53,7 +53,7 @@ End-of-year doc: "Top 10 things we learned, top 5 things to double down on, top 
 Year 1 closed at 50k MAU with a working plugin API v0. The roadmap-voting page shows what people want. There's a tail of feature requests we can't all build ourselves.
 
 **Mission.**
-Become a platform: third parties can build on Llama Studio, ship plugins, integrate models, add languages. Hit 250k MAU on the back of the ecosystem.
+Become a platform: third parties can build on Zoc AI, ship plugins, integrate models, add languages. Hit 250k MAU on the back of the ecosystem.
 
 **Strategic priorities.**
 1. **Plugin SDK v1** in TypeScript + Python + Rust. Sandboxed execution (WASM for untrusted code). Capabilities-based permissions.
@@ -62,7 +62,7 @@ Become a platform: third parties can build on Llama Studio, ship plugins, integr
 4. **Model marketplace integration**: one-click download from HuggingFace, llama.cpp registry. Quantization picker. Per-model benchmarks shown in the picker.
 5. **Language packs as plugins**: tree-sitter grammars + LSP adapters bundled as plugins. Ship 20 official packs (TS, Python, Rust, Go, Java, C, C++, C#, Ruby, PHP, Swift, Kotlin, Zig, Elixir, Lua, Haskell, OCaml, Scala, Clojure, SQL).
 6. **Multi-modal input**: screenshot → code (Vision model integration), voice → chat (local Whisper.cpp), document upload (PDF / Markdown → embedded context).
-7. **Public benchmark suite** (alpha): "Llama Studio Bench" — a public set of tasks we run all supported models against, results published quarterly.
+7. **Public benchmark suite** (alpha): "Zoc AI Bench" — a public set of tasks we run all supported models against, results published quarterly.
 
 **Non-negotiables.**
 - Plugins cannot bypass tool-permission prompts. The capability system is non-negotiable.
@@ -91,10 +91,10 @@ Decide: which 3 enterprise design partners do we turn into the first paying Team
 Year 2 closed at 250k MAU with a healthy plugin ecosystem and enterprise interest. Top-3 paid-feature list is clear (likely: shared sessions, team prompts, audit log).
 
 **Mission.**
-Turn Llama Studio from an individual tool into a team operating system. Launch **Llama Studio Teams** (paid SaaS, optional) + **Llama Studio Enterprise** (air-gapped, certified). Hit $5M ARR.
+Turn Zoc AI from an individual tool into a team operating system. Launch **Zoc AI Teams** (paid SaaS, optional) + **Zoc AI Enterprise** (air-gapped, certified). Hit $5M ARR.
 
 **Strategic priorities.**
-1. **Llama Studio Teams** (hosted, opt-in):
+1. **Zoc AI Teams** (hosted, opt-in):
    - Auth: SSO (Google / Microsoft / SAML / OIDC).
    - Shared session history (E2E-encrypted, CRDT-synced).
    - Shared embeddings cache (so a team doesn't re-embed the same monorepo N times).
@@ -108,10 +108,10 @@ Turn Llama Studio from an individual tool into a team operating system. Launch *
    - Index 100+ repos in a single workspace ("organization mode").
    - Cross-repo queries: "Where do we handle X across all our services?"
 4. **Code review bot**:
-   - GitHub / GitLab app that posts Llama Studio reviews on PRs.
+   - GitHub / GitLab app that posts Zoc AI reviews on PRs.
    - Uses the user's chosen model (BYO API key or hosted credit).
    - Configurable per repo via `.llama-studio/review.toml`.
-5. **Llama Studio Enterprise** (air-gapped):
+5. **Zoc AI Enterprise** (air-gapped):
    - Certified install: no outbound network at all.
    - Internal mirror for models (HF mirror), plugins (private marketplace), updates (private update server).
    - SOC 2 Type II certification.
@@ -126,7 +126,7 @@ Turn Llama Studio from an individual tool into a team operating system. Launch *
 - $5M ARR (Teams + Enterprise combined).
 - 1M total installs.
 - SOC 2 Type II completed.
-- ≥ 2 Fortune-500 engineering orgs using Llama Studio Enterprise.
+- ≥ 2 Fortune-500 engineering orgs using Zoc AI Enterprise.
 - Repository knowledge graph cited in user testimonials as a top-3 feature.
 
 **Out of scope.**
@@ -168,7 +168,7 @@ Move from "agent on your turn" to "agent on a long task." Background workflows t
    - "Manager" agent decomposes tasks and delegates to specialist agents in parallel.
    - Single review surface: the user sees all proposed changes from all sub-agents in one diff stack.
    - Visualize the agent graph live in the UI.
-6. **"Llama Studio Bench" public leaderboard**:
+6. **"Zoc AI Bench" public leaderboard**:
    - Open-source benchmark with category leaderboards (refactor, bug-fix, test-gen, doc-gen, migration).
    - Monthly published results across all major local + hosted models.
 
@@ -195,17 +195,17 @@ Pick: foundation governance model. Apache vs Linux Foundation vs new dedicated f
 ## PROMPT — YEAR 5: The Default
 
 **Context.**
-Year 4 closed at 3M MAU with autonomous agentic workflows shipping. Llama Studio is widely known. The question for Year 5 is: how do we cement category leadership?
+Year 4 closed at 3M MAU with autonomous agentic workflows shipping. Zoc AI is widely known. The question for Year 5 is: how do we cement category leadership?
 
 **Mission.**
-Make Llama Studio the **default** answer when a developer thinks "AI coding tool." Move governance to a foundation. Hit 10M total installs, $50M ARR.
+Make Zoc AI the **default** answer when a developer thinks "AI coding tool." Move governance to a foundation. Hit 10M total installs, $50M ARR.
 
 **Strategic priorities.**
 1. **OS-level integrations**:
    - macOS Spotlight + Shortcuts + Quick Action.
    - Windows Search / Copilot Hub plugin.
    - Linux: KRunner / GNOME Shell extension.
-   - Llama Studio answers code questions invoked from anywhere on the system.
+   - Zoc AI answers code questions invoked from anywhere on the system.
 2. **Mobile companion** (read + chat only):
    - iOS + Android native apps that pair with a desktop instance.
    - Review pending diffs, chat, browse session history on the go.
@@ -221,12 +221,12 @@ Make Llama Studio the **default** answer when a developer thinks "AI coding tool
    - Commercial extensions (Teams, Enterprise, hosted bench) stay proprietary.
 5. **Education tier**:
    - Free forever for verified students + educators.
-   - "Learn to code with Llama Studio" curriculum: 10 modules, beginner → intermediate.
+   - "Learn to code with Zoc AI" curriculum: 10 modules, beginner → intermediate.
    - Partner with at least 3 universities for credit-bearing pilots.
 6. **Domain spinoffs**:
-   - **Llama Studio for Data** (notebook + SQL + dataframe focus).
-   - **Llama Studio for Ops** (infra + observability + terraform focus).
-   - **Llama Studio for Security** (SAST + SBOM + remediation focus).
+   - **Zoc AI for Data** (notebook + SQL + dataframe focus).
+   - **Zoc AI for Ops** (infra + observability + terraform focus).
+   - **Zoc AI for Security** (SAST + SBOM + remediation focus).
    - Each shares the core; each ships a domain-specific tool pack + recipes.
 
 **Non-negotiables.**
@@ -237,10 +237,10 @@ Make Llama Studio the **default** answer when a developer thinks "AI coding tool
 **Year-end exit criteria.**
 - 10M total installs.
 - $50M ARR.
-- Llama Studio cited as a category leader in 2 of: Gartner / Forrester / RedMonk.
+- Zoc AI cited as a category leader in 2 of: Gartner / Forrester / RedMonk.
 - Foundation active with ≥ 3 corporate sponsors and an independent board majority.
 - Mobile apps shipped on both stores.
-- At least one OEM laptop SKU ships with Llama Studio preinstalled.
+- At least one OEM laptop SKU ships with Zoc AI preinstalled.
 
 **Out of scope.**
 - Full IDE replacement (we're a partner to VS Code / JetBrains / Zed, not a replacement).
@@ -248,7 +248,7 @@ Make Llama Studio the **default** answer when a developer thinks "AI coding tool
 - Acquisitions for the sake of acquisitions.
 
 **Hand-off to Year 6 (and beyond).**
-End-of-year doc: "What does 'developers in 2030' look like, and what does Llama Studio need to become to still matter?" Re-plan the next 5 years from that vision.
+End-of-year doc: "What does 'developers in 2030' look like, and what does Zoc AI need to become to still matter?" Re-plan the next 5 years from that vision.
 
 ---
 
@@ -258,4 +258,4 @@ End-of-year doc: "What does 'developers in 2030' look like, and what does Llama 
 - **Always read `CHANGELOG.md`** for the actual shipped state — don't trust prompts that contradict it.
 - **Break down before building.** Year prompts → quarters → months → weeks → PR-sized tasks.
 - **Re-plan annually.** A 5-year plan written today will be wrong by Year 3. Treat Year 4 + 5 as **intent**, not commitment.
-- **The North Star never changes:** how many developers shipped real code today with Llama Studio.
+- **The North Star never changes:** how many developers shipped real code today with Zoc AI.

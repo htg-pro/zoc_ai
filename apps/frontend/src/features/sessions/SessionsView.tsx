@@ -70,16 +70,19 @@ export function SessionsView() {
   const createSession = useApp((s) => s.createSession);
   const setMainView = useApp((s) => s.setMainView);
   const workspaceRoot = useApp((s) => s.workspaceRoot);
+  // Pins are persisted in the store (R2.11) — not local component state — so
+  // they survive navigation and reload.
+  const pinnedSessions = useApp((s) => s.pinnedSessions);
+  const togglePin = useApp((s) => s.togglePinnedSession);
 
   const [q, setQ] = useState("");
-  const [pins, setPins] = useState<Record<string, boolean>>({ "sess-1": true });
   const [tab, setTab] = useState<FilterTab>("all");
   const [sortKey, setSortKey] = useState<SortKey>("updated");
 
-  /* ── pinned set (local-only pin state) ─────────────────────── */
+  /* ── pinned set (persisted in the store) ───────────────────── */
   const pinnedSet = useMemo(
-    () => new Set(Object.keys(pins).filter((id) => pins[id])),
-    [pins],
+    () => new Set(Object.keys(pinnedSessions).filter((id) => pinnedSessions[id])),
+    [pinnedSessions],
   );
 
   /* ── filter + search (R2.6, R2.7: case-insensitive substring) ─ */
@@ -123,12 +126,9 @@ export function SessionsView() {
     const ok = window.confirm(`Delete "${session.title}" and its chat history?`);
     if (!ok) return;
     const deleted = await deleteSession(session.id);
-    if (deleted) {
-      setPins((prev) => {
-        const next = { ...prev };
-        delete next[session.id];
-        return next;
-      });
+    if (deleted && pinnedSet.has(session.id)) {
+      // Clear a stale pin for the now-deleted session.
+      togglePin(session.id);
     }
   };
 
@@ -267,7 +267,7 @@ export function SessionsView() {
                   key={s.id}
                   session={s}
                   pinned
-                  onPin={() => setPins((p) => ({ ...p, [s.id]: !p[s.id] }))}
+                  onPin={() => togglePin(s.id)}
                   onResume={() => { select(s.id); setMainView("editor"); }}
                   onDelete={() => void remove(s)}
                 />
@@ -289,7 +289,7 @@ export function SessionsView() {
                   session={s}
                   pinned={false}
                   highlight={i === 0}
-                  onPin={() => setPins((p) => ({ ...p, [s.id]: true }))}
+                  onPin={() => togglePin(s.id)}
                   onResume={() => { select(s.id); setMainView("editor"); }}
                   onDelete={() => void remove(s)}
                 />

@@ -1,6 +1,6 @@
 # Changelog
 
-All notable changes to Llama Studio.
+All notable changes to Zoc AI.
 
 ## [2.0.0] - 2026-05-28
 

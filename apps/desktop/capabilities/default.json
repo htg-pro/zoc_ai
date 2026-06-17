@@ -1,7 +1,7 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "Default capability set for Llama Studio: sidecar shell, scoped FS, dialog, and our custom commands for secrets / patch / workspace.",
+  "description": "Default capability set for Zoc AI: sidecar shell, scoped FS, dialog, and our custom commands for secrets / patch / workspace.",
   "windows": ["main"],
   "permissions": [
     "core:default",

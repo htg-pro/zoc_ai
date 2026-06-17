@@ -1,18 +1,24 @@
-import { useCallback, useLayoutEffect, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import {
   AlertTriangle,
   ArrowDown,
   Bot,
   Check,
   CheckCircle2,
+  ChevronRight,
   CircleDashed,
   ClipboardList,
+  FileCode,
   FileDiff,
+  FilePlus,
   FlaskConical,
   Loader2,
   RefreshCw,
+  Search,
   ShieldCheck,
   Sparkles,
+  Terminal,
+  Undo2,
   User,
   Wrench,
   X,
@@ -22,9 +28,7 @@ import type {
   CodeReviewFinding,
   DiffPatch,
   FindingSeverity,
-  Plan,
   PlanStepStatus,
-  ReplitPlan,
   TestGenerationResult,
   TodoItem,
   TodoStatus,
@@ -131,6 +135,26 @@ function feedEntryKey(entry: FeedEntry): string {
 }
 
 /**
+ * Ask mode is a read-only Q&A transcript. It renders ONLY the conversational
+ * items — user request, assistant answer, clarifications, and errors. Any
+ * workflow cards (workspace analysis, plan, to-do, tool activity, diff,
+ * review, checkpoint, final summary) are deliberately dropped so Ask never
+ * looks like an Agent run, even when stale Agent-run history is still in the
+ * item list from an earlier turn in the same session.
+ */
+function buildAskTranscript(items: AgentWorkflowItem[]): FeedEntry[] {
+  const ASK_VISIBLE = new Set<AgentWorkflowItem["type"]>([
+    "user_message",
+    "agent_message",
+    "clarification",
+    "error",
+  ]);
+  return items
+    .filter((item) => ASK_VISIBLE.has(item.type))
+    .map((item) => ({ kind: "item" as const, item }));
+}
+
+/**
  * Second pass (redesign Part 5): collapse a maximal run of run-body entries
  * (to-do, activity, review) into ONE `AgentRunCard`. Conversational entries
  * (user/agent messages, summaries, plan, permission, review, test, errors)
@@ -190,6 +214,7 @@ const SEVERITY_STYLE: Record<FindingSeverity, string> = {
 export function AgentTimeline() {
   const items = useApp((s) => s.agentItems);
   const streaming = useApp((s) => s.streaming);
+  const agentMode = useApp((s) => s.agentMode);
   const send = useApp((s) => s.sendUserMessage);
   const runReview = useApp((s) => s.runReview);
   const runTests = useApp((s) => s.runTests);
@@ -226,8 +251,8 @@ export function AgentTimeline() {
     return (
       <EmptyState
         icon={Sparkles}
-        title="Agent ready"
-        description="Ask once. The agent plans, edits, validates, and reports progress in this chat."
+        title="Zoc is ready"
+        description="Ask once. Zoc plans, edits, validates, and reports progress in this chat."
         bullets={[
           <span>Analyze this project</span>,
           <span>Build a portfolio website in this folder</span>,
@@ -272,16 +297,18 @@ export function AgentTimeline() {
         className="h-full min-h-0 overflow-y-auto px-3"
       >
         <div className="mx-auto flex w-full max-w-3xl flex-col gap-3 py-3">
-          {groupRuns(buildFeed(items)).map((entry) => (
-            <FeedEntryView key={feedEntryKey(entry)} entry={entry} />
-          ))}
+          {(agentMode === "ask" ? buildAskTranscript(items) : groupRuns(buildFeed(items))).map(
+            (entry) => (
+              <FeedEntryView key={feedEntryKey(entry)} entry={entry} />
+            ),
+          )}
           {streaming && (
             <div className="flex items-center gap-2.5 px-1 pb-1 text-xs">
               <span className="inline-flex h-6 w-6 items-center justify-center rounded-md bg-[hsl(var(--primary)/0.12)]">
                 <Loader2 className="h-3.5 w-3.5 animate-spin text-primary" />
               </span>
               <div className="flex flex-col">
-                <span className="text-[11px] font-medium text-foreground/80">Agent is working</span>
+                <span className="text-[11px] font-medium text-foreground/80">Zoc is working</span>
                 <span className="flex items-center gap-1 text-[10px] text-muted-foreground">
                   <span className="h-1 w-1 animate-typing-dot rounded-full bg-primary" />
                   <span className="h-1 w-1 animate-typing-dot rounded-full bg-primary [animation-delay:0.2s]" />
@@ -310,9 +337,16 @@ export function AgentTimeline() {
 }
 
 function FeedEntryView({ entry }: { entry: FeedEntry }) {
+  const agentMode = useApp((s) => s.agentMode);
   switch (entry.kind) {
     case "work":
-      return <WorkBlock calls={entry.calls} />;
+      // Ask mode is read-only: render compact read pills instead of the full
+      // activity feed (no card surface — "Ask mode changes nothing").
+      return agentMode === "ask" ? (
+        <ReadIndicator calls={entry.calls} />
+      ) : (
+        <WorkBlock calls={entry.calls} />
+      );
     case "diffreview":
       return <DiffReviewCard patches={entry.patches} />;
     case "run":
@@ -329,23 +363,61 @@ function FeedEntryView({ entry }: { entry: FeedEntry }) {
  * holding the live to-do list, the activity feed, and the review/diff card —
  * instead of three separate top-level cards. Inner entries reuse their normal
  * renderers so behavior (apply/discard, collapse) is unchanged.
+ *
+ * "Zoc Spark" styling: a left progress rail fills with the run's to-do
+ * completion, and a status dot pulses while work streams in.
  */
 function AgentRunCard({ entries }: { entries: FeedEntry[] }) {
   const hasReview = entries.some(
     (e) => e.kind === "diffreview" || (e.kind === "item" && e.item.type === "diff"),
   );
+  // Derive to-do completion for the progress rail from the run's todos entry.
+  const todosEntry = entries.find(
+    (e): e is Extract<FeedEntry, { kind: "item" }> =>
+      e.kind === "item" && e.item.type === "todos",
+  );
+  const todos = todosEntry && todosEntry.item.type === "todos" ? todosEntry.item.todos : [];
+  const total = todos.length || 1;
+  const completed = todos.filter((t) => t.status === "completed").length;
+  const allDone = todos.length > 0 && completed === todos.length;
+  const pct = Math.round((completed / total) * 100);
+  // Running = there are todos and not all are complete and no review yet.
+  const running = todos.length > 0 && !allDone && !hasReview;
+  const dotColor = hasReview
+    ? "var(--zoc-info)"
+    : allDone
+      ? "var(--zoc-success)"
+      : running
+        ? "var(--zoc-ember)"
+        : "var(--zoc-text-faint)";
+
   return (
-    <div className="rounded-lg border border-border bg-card/40">
-      <div className="flex items-center gap-2 border-b border-border px-3 py-2">
-        <span className="inline-flex h-6 w-6 items-center justify-center rounded-md bg-[hsl(var(--primary)/0.12)] text-primary">
-          <Sparkles className="h-3.5 w-3.5" />
+    <div className="relative overflow-hidden rounded-lg border border-[var(--zoc-border)] bg-[var(--zoc-panel)] pl-4">
+      {/* Progress rail */}
+      <div className="absolute left-0 top-0 bottom-0 w-[3px] bg-[var(--zoc-border)]">
+        <div
+          className="zoc-rail-fill w-full bg-gradient-to-b from-[var(--zoc-ember)] to-[var(--zoc-agent)]"
+          style={{ height: `${pct}%` }}
+        />
+      </div>
+
+      <div className="flex items-center gap-2 border-b border-[var(--zoc-border)] px-3 py-2">
+        <span
+          className={cn("inline-block h-2 w-2 rounded-full", running && "zoc-pulse-dot")}
+          style={{ background: dotColor }}
+        />
+        <span className="text-sm font-semibold text-[var(--zoc-text)]">
+          Agent run
         </span>
-        <span className="text-sm font-semibold">Agent run</span>
-        {hasReview ? (
-          <Badge variant="secondary" className="ml-auto text-[10px]">
-            changes ready
-          </Badge>
-        ) : null}
+        <span className="ml-auto font-mono text-[11px] text-[var(--zoc-text-muted)]">
+          {hasReview
+            ? "review"
+            : allDone
+              ? "done"
+              : running
+                ? `${completed}/${todos.length}`
+                : "running…"}
+        </span>
       </div>
       <div className="flex flex-col gap-2 p-2.5">
         {entries.map((entry) => (
@@ -375,10 +447,6 @@ function WorkflowBlock({ item }: { item: AgentWorkflowItem }) {
       return <WorkspaceAnalysisBlock item={item} />;
     case "plan":
       return <PlanBlock item={item} />;
-    case "task":
-      // Task progress cards removed — plan/build flow uses the
-      // plan steps and agent messages directly.
-      return null;
     case "todos":
       return <TodoListBlock todos={item.todos} />;
     case "tool":
@@ -400,30 +468,272 @@ function WorkflowBlock({ item }: { item: AgentWorkflowItem }) {
   }
 }
 
-function WorkBlock({ calls }: { calls: ToolCall[] }) {
-  const [open, setOpen] = useState(false);
-  const label = `Worked through ${calls.length} step${calls.length === 1 ? "" : "s"}`;
+type ActivityKind = "read" | "write" | "command" | "search";
+
+/** Map a tool name (as emitted by the orchestrator) to an activity kind for
+ *  icon/label rendering. Covers our actual tool names plus common aliases. */
+function activityKindForTool(tool: string): ActivityKind {
+  switch (tool) {
+    case "read_file":
+    case "read_files":
+    case "list_dir":
+    case "list_directory":
+      return "read";
+    case "write_file":
+    case "apply_patch":
+    case "str_replace":
+    case "fs_write":
+    case "edit_file":
+      return "write";
+    case "run_command":
+    case "execute_bash":
+      return "command";
+    case "grep_search":
+    case "file_search":
+    case "web_search":
+      return "search";
+    default:
+      return "command";
+  }
+}
+
+function ActivityKindIcon({ kind }: { kind: ActivityKind }) {
+  switch (kind) {
+    case "read":
+      return <FileCode className="h-3.5 w-3.5 shrink-0" style={{ color: "var(--zoc-info)" }} />;
+    case "write":
+      return <FilePlus className="h-3.5 w-3.5 shrink-0" style={{ color: "var(--zoc-agent)" }} />;
+    case "search":
+      return <Search className="h-3.5 w-3.5 shrink-0" style={{ color: "var(--zoc-info)" }} />;
+    case "command":
+    default:
+      return <Terminal className="h-3.5 w-3.5 shrink-0" style={{ color: "var(--zoc-text-secondary)" }} />;
+  }
+}
+
+/** Human label for an activity row, e.g. `Read src/app.ts`, `Search "todo"`. */
+function describeToolCall(call: ToolCall): string {
+  const args = (call.arguments ?? {}) as Record<string, unknown>;
+  const path = (args.path ?? args.file_path ?? args.target_file ?? args.file) as string | undefined;
+  switch (activityKindForTool(call.name)) {
+    case "read":
+      return path ? `Read ${path}` : call.name;
+    case "write":
+      return path ? `Write ${path}` : call.name;
+    case "command":
+      return String(args.command ?? args.cmd ?? call.name);
+    case "search":
+      return args.query ? `Search "${String(args.query)}"` : call.name;
+    default:
+      return call.name;
+  }
+}
+
+/** Best-effort +/− line stats for a write tool call, parsed from a
+ *  unified_diff carried on the result (or explicit additions/deletions). */
+function writeStats(call: ToolCall): { adds: number; dels: number } | null {
+  const result = call.result;
+  if (result && typeof result === "object") {
+    const r = result as Record<string, unknown>;
+    if (typeof r.additions === "number" || typeof r.deletions === "number") {
+      return { adds: Number(r.additions ?? 0), dels: Number(r.deletions ?? 0) };
+    }
+    if (typeof r.unified_diff === "string") {
+      const { adds, dels } = parseUnifiedDiff(r.unified_diff);
+      return { adds, dels };
+    }
+  }
+  const args = (call.arguments ?? {}) as Record<string, unknown>;
+  if (typeof args.unified_diff === "string") {
+    const { adds, dels } = parseUnifiedDiff(args.unified_diff);
+    return { adds, dels };
+  }
+  return null;
+}
+
+/** One expandable tool-call row in the activity feed. */
+function ActivityRow({ call }: { call: ToolCall }) {
+  const [expanded, setExpanded] = useState(false);
+  const kind = activityKindForTool(call.name);
+  const label = describeToolCall(call);
+  const running = call.status === "running" || call.status === "pending";
+  const failed = call.status === "failed";
+  const stats = kind === "write" ? writeStats(call) : null;
+
   return (
-    <WorkflowCard icon={Wrench} title="Activity" badge={`${calls.length}`}>
+    <div
+      className="overflow-hidden rounded-md border border-[var(--zoc-row-border)] bg-[var(--zoc-row-bg)] animate-fade-row"
+    >
       <button
         type="button"
-        className="flex w-full items-center justify-between gap-2 text-left text-xs font-medium text-muted-foreground"
-        onClick={() => setOpen((value) => !value)}
+        onClick={() => setExpanded((e) => !e)}
+        className="flex w-full items-center gap-2 px-2.5 py-1.5 text-left"
       >
-        <span className="truncate">{label}</span>
-        <span className="shrink-0 text-[10px] uppercase">{open ? "Hide" : "Show"}</span>
+        <ActivityKindIcon kind={kind} />
+        <span className="min-w-0 flex-1 truncate font-mono text-xs text-[var(--zoc-text-secondary)]">
+          {label}
+        </span>
+
+        {kind === "write" && stats ? (
+          <span className="shrink-0 font-mono text-xs">
+            <span style={{ color: "var(--zoc-success)" }}>+{stats.adds}</span>{" "}
+            <span style={{ color: "var(--zoc-error)" }}>−{stats.dels}</span>
+          </span>
+        ) : null}
+
+        {kind === "command" && running ? (
+          <span className="flex shrink-0 gap-0.5">
+            <span className="h-1 w-1 animate-typing-dot rounded-full bg-[var(--zoc-text-muted)]" />
+            <span className="h-1 w-1 animate-typing-dot rounded-full bg-[var(--zoc-text-muted)] [animation-delay:0.15s]" />
+            <span className="h-1 w-1 animate-typing-dot rounded-full bg-[var(--zoc-text-muted)] [animation-delay:0.3s]" />
+          </span>
+        ) : null}
+
+        {kind === "command" && !running && !failed ? (
+          <span className="flex shrink-0 items-center gap-1 font-mono text-xs" style={{ color: "var(--zoc-success)" }}>
+            <CheckCircle2 className="h-3 w-3" /> pass
+          </span>
+        ) : null}
+
+        {failed ? (
+          <span className="flex shrink-0 items-center gap-1 font-mono text-xs" style={{ color: "var(--zoc-error)" }}>
+            <XCircle className="h-3 w-3" /> fail
+          </span>
+        ) : null}
+
+        <ChevronRight
+          className="h-3.5 w-3.5 shrink-0 transition-transform"
+          style={{ color: "var(--zoc-text-faint)", transform: expanded ? "rotate(90deg)" : "rotate(0deg)" }}
+        />
       </button>
-      {open ? (
-        <ul className="mt-2 space-y-1">
-          {calls.map((call) => (
-            <li key={call.id} className="flex items-center gap-2 text-[11px] text-muted-foreground">
-              <Check className="h-3 w-3 shrink-0 text-emerald-400" />
-              <span className="min-w-0 truncate font-mono">{call.name}</span>
-            </li>
-          ))}
-        </ul>
+
+      {expanded ? (
+        <div className="px-2.5 pb-2 font-mono text-[11px] text-[var(--zoc-text-muted)]">
+          {call.error ? (
+            <span style={{ color: "var(--zoc-error)" }}>{clip(call.error, 360)}</span>
+          ) : call.result !== null && call.result !== undefined ? (
+            summarizeValue(call.result)
+          ) : kind === "read" ? (
+            "Loaded file contents into context."
+          ) : kind === "command" ? (
+            running ? "Running…" : "Exit code 0."
+          ) : (
+            summarizeValue(call.arguments)
+          )}
+        </div>
       ) : null}
-    </WorkflowCard>
+    </div>
+  );
+}
+
+/**
+ * Streaming activity feed (redesign Part 2.2): one expandable row per tool
+ * call with a kind icon, +/− stats for writes, and pass/fail for commands —
+ * replacing the old flat "Worked through N steps" name list.
+ */
+function WorkBlock({ calls }: { calls: ToolCall[] }) {
+  if (!calls.length) return null;
+  return (
+    <div>
+      <div className="mb-1.5 text-xs font-semibold tracking-wide text-[var(--zoc-text-faint)]">
+        ACTIVITY
+      </div>
+      <div className="space-y-1.5">
+        {calls.map((call) => (
+          <ActivityRow key={call.id} call={call} />
+        ))}
+      </div>
+    </div>
+  );
+}
+
+/**
+ * Ask-mode activity surface (redesign Part 2.2): a compact row of read-only
+ * pills — no card, no checklist, no review. Each pill morphs from a spinner
+ * (running) to a check (done), communicating "Ask mode changes nothing".
+ */
+function ReadIndicator({ calls }: { calls: ToolCall[] }) {
+  if (!calls.length) return null;
+  return (
+    <div className="flex flex-wrap gap-2">
+      {calls.map((call) => {
+        const running = call.status === "running" || call.status === "pending";
+        const kind = activityKindForTool(call.name);
+        return (
+          <span
+            key={call.id}
+            className="inline-flex items-center gap-2 rounded-md border border-[var(--zoc-row-border)] bg-[var(--zoc-row-bg)] px-2.5 py-1.5 font-mono text-xs text-[var(--zoc-text-muted)] animate-fade-row"
+          >
+            {running ? (
+              <Loader2 className="h-3.5 w-3.5 animate-spin" style={{ color: "var(--zoc-info)" }} />
+            ) : (
+              <CheckCircle2 className="h-3.5 w-3.5 zoc-check-pop" style={{ color: "var(--zoc-success)" }} />
+            )}
+            <ActivityKindIcon kind={kind} />
+            {describeToolCall(call)}
+          </span>
+        );
+      })}
+    </div>
+  );
+}
+
+/**
+ * Animates a number from 0 → `target` once, when `active` becomes true
+ * (redesign Part 3: the `+N −M` review stats "count up" over ~600ms). Uses
+ * requestAnimationFrame and respects `prefers-reduced-motion` by jumping
+ * straight to the target.
+ */
+function useCountUp(target: number, active: boolean, duration = 600): number {
+  const [value, setValue] = useState(0);
+  useEffect(() => {
+    if (!active) {
+      setValue(0);
+      return;
+    }
+    const reduce =
+      typeof window !== "undefined" &&
+      typeof window.matchMedia === "function" &&
+      window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    if (reduce || duration <= 0) {
+      setValue(target);
+      return;
+    }
+    let start: number | undefined;
+    let raf = 0;
+    const step = (ts: number) => {
+      if (start === undefined) start = ts;
+      const progress = Math.min((ts - start) / duration, 1);
+      setValue(Math.round(progress * target));
+      if (progress < 1) raf = requestAnimationFrame(step);
+    };
+    raf = requestAnimationFrame(step);
+    return () => cancelAnimationFrame(raf);
+  }, [target, active, duration]);
+  return value;
+}
+
+/** A single end-of-run validation result (typecheck / build / tests). */
+function ValidationBadge({ name, status }: { name: string; status: string }) {
+  const color =
+    status === "pass"
+      ? "var(--zoc-success)"
+      : status === "fail"
+        ? "var(--zoc-error)"
+        : status === "running"
+          ? "var(--zoc-info)"
+          : "var(--zoc-text-faint)";
+  return (
+    <span className="flex items-center gap-1 font-mono text-xs" style={{ color }}>
+      {status === "pass" ? (
+        <CheckCircle2 className="h-3 w-3" />
+      ) : status === "fail" ? (
+        <XCircle className="h-3 w-3" />
+      ) : status === "running" ? (
+        <Loader2 className="h-3 w-3 animate-spin" />
+      ) : null}
+      {name}
+    </span>
   );
 }
 
@@ -438,11 +748,31 @@ function DiffReviewCard({ patches }: { patches: DiffPatch[] }) {
   const pendingIds = useApp((s) => s.pendingPatches.map((p) => p.id));
   const acceptAll = useApp((s) => s.acceptAllForDiff);
   const rejectAll = useApp((s) => s.rejectAllForDiff);
+  const reviewRunId = useApp((s) => s.reviewRunId);
+  const reviewValidation = useApp((s) => s.reviewValidation);
+  const applyCurrentRun = useApp((s) => s.applyCurrentRun);
+  const discardCurrentRun = useApp((s) => s.discardCurrentRun);
+  const restorableRunId = useApp((s) => s.restorableRunId);
+  const restoreCurrentRun = useApp((s) => s.restoreCurrentRun);
   const setMainView = useApp((s) => s.setMainView);
   const [busy, setBusy] = useState(false);
+  // Per-file selection (reference DiffReviewCard checkboxes). A file is
+  // included unless explicitly unchecked. Drives the count-up totals and how
+  // Apply routes (atomic backend apply when everything is selected, per-file
+  // apply when the user has narrowed the set).
+  const [excluded, setExcluded] = useState<Set<string>>(new Set());
+  const isIncluded = (id: string) => !excluded.has(id);
+  const toggleInclude = (id: string) =>
+    setExcluded((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
 
   const pending = patches.filter((p) => pendingIds.includes(p.id));
-  const totals = patches.reduce(
+  const includedPending = pending.filter((p) => isIncluded(p.id));
+  const totals = includedPending.reduce(
     (acc, p) => {
       const { adds, dels } = parseUnifiedDiff(p.unified_diff);
       acc.adds += adds;
@@ -452,65 +782,171 @@ function DiffReviewCard({ patches }: { patches: DiffPatch[] }) {
     { adds: 0, dels: 0 },
   );
   const resolved = pending.length === 0;
+  // Validation checks (typecheck / build / tests) run against the isolated
+  // copy at end of run, skipped ones hidden.
+  const checks = reviewValidation
+    ? Object.entries(reviewValidation).filter(([, status]) => status !== "skipped")
+    : [];
 
+  // Count the stats up once the (unresolved) review card is showing.
+  const addCount = useCountUp(totals.adds, !resolved);
+  const delCount = useCountUp(totals.dels, !resolved);
+
+  // When an isolated run is awaiting review, Apply/Discard go through the
+  // backend run endpoints (atomic, validated against the isolated copy).
+  // If the user has deselected some files we can't apply atomically, so we
+  // fall back to applying just the selected patches per-file, then discard
+  // the isolated copy. Otherwise we use the per-file Tauri patch flow.
   const applyAll = async () => {
-    if (busy) return;
+    if (busy || includedPending.length === 0) return;
     setBusy(true);
     try {
-      for (const p of pending) await acceptAll(p.id);
+      const allSelected = includedPending.length === pending.length;
+      if (reviewRunId && allSelected) {
+        await applyCurrentRun();
+      } else {
+        for (const p of includedPending) await acceptAll(p.id);
+        for (const p of pending.filter((x) => !isIncluded(x.id))) rejectAll(p.id);
+        // The selected changes already landed on the real workspace via the
+        // per-file path; drop the now-redundant isolated copy.
+        if (reviewRunId) await discardCurrentRun();
+      }
     } finally {
       setBusy(false);
     }
   };
-  const discardAll = () => {
-    for (const p of pending) rejectAll(p.id);
+  const discardAll = async () => {
+    if (busy) return;
+    setBusy(true);
+    try {
+      if (reviewRunId) {
+        await discardCurrentRun();
+      } else {
+        for (const p of pending) rejectAll(p.id);
+      }
+    } finally {
+      setBusy(false);
+    }
   };
 
   return (
     <WorkflowCard
       icon={resolved ? Check : FileDiff}
       title="Review changes"
-      badge={`${patches.length} file${patches.length === 1 ? "" : "s"} · +${totals.adds} −${totals.dels}`}
+      badge={
+        resolved
+          ? `${patches.length} file${patches.length === 1 ? "" : "s"}`
+          : undefined
+      }
       tone={resolved ? "default" : "accent"}
     >
       <div className="flex flex-col gap-2">
-        {patches.map((patch) => (
-          <DiffCard key={patch.id} patch={patch} />
-        ))}
+        {!resolved ? (
+          <div className="flex items-center justify-between border-b border-[var(--zoc-border)] pb-2 font-mono text-xs">
+            <span className="text-[var(--zoc-text-muted)]">
+              {includedPending.length} of {pending.length} file{pending.length === 1 ? "" : "s"}
+            </span>
+            <span>
+              <span style={{ color: "var(--zoc-success)" }}>+{addCount}</span>{" "}
+              <span style={{ color: "var(--zoc-error)" }}>−{delCount}</span>
+            </span>
+          </div>
+        ) : null}
+        {patches.map((patch) => {
+          const stillPending = pendingIds.includes(patch.id);
+          return (
+            <div key={patch.id} className="flex items-start gap-2">
+              {stillPending && !resolved ? (
+                <input
+                  type="checkbox"
+                  checked={isIncluded(patch.id)}
+                  onChange={() => toggleInclude(patch.id)}
+                  aria-label={`Include ${patch.file_path}`}
+                  title={isIncluded(patch.id) ? "Included — uncheck to skip" : "Skipped — check to include"}
+                  className="mt-2 h-3.5 w-3.5 shrink-0 cursor-pointer"
+                  style={{ accentColor: "var(--zoc-ember)" }}
+                />
+              ) : null}
+              <div className={cn("min-w-0 flex-1", stillPending && !isIncluded(patch.id) && "opacity-50")}>
+                <DiffCard patch={patch} />
+              </div>
+            </div>
+          );
+        })}
         {resolved ? (
-          <div className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
-            <Check className="h-3.5 w-3.5 text-emerald-400" />
-            All changes reviewed.
+          <div className="flex items-center justify-between gap-2">
+            <div className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
+              <Check className="h-3.5 w-3.5 text-emerald-400" />
+              All changes reviewed.
+            </div>
+            {restorableRunId ? (
+              <Button
+                size="sm"
+                variant="ghost"
+                className="h-7 text-xs"
+                disabled={busy}
+                title="Undo this run — restore the workspace to before these changes"
+                onClick={async () => {
+                  setBusy(true);
+                  try {
+                    await restoreCurrentRun();
+                  } finally {
+                    setBusy(false);
+                  }
+                }}
+              >
+                {busy ? (
+                  <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" />
+                ) : (
+                  <Undo2 className="mr-1 h-3.5 w-3.5" />
+                )}
+                Undo this run
+              </Button>
+            ) : null}
           </div>
         ) : (
-          <div className="flex items-center justify-end gap-1.5">
-            <Button
-              size="sm"
-              variant="ghost"
-              className="h-7 text-xs"
-              onClick={() => setMainView("diff")}
-            >
-              Open in review
-            </Button>
-            <Button
-              size="sm"
-              variant="ghost"
-              className="h-7 text-xs text-destructive"
-              disabled={busy}
-              onClick={discardAll}
-            >
-              <X className="mr-1 h-3.5 w-3.5" />
-              Discard
-            </Button>
-            <Button size="sm" className="h-7 text-xs" disabled={busy} onClick={() => void applyAll()}>
-              {busy ? (
-                <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" />
-              ) : (
-                <Check className="mr-1 h-3.5 w-3.5" />
-              )}
-              Apply changes ({pending.length})
-            </Button>
-          </div>
+          <>
+            {checks.length > 0 ? (
+              <div className="flex flex-wrap items-center gap-3 border-t border-[var(--zoc-border)] pt-2">
+                {checks.map(([name, status]) => (
+                  <ValidationBadge key={name} name={name} status={status} />
+                ))}
+              </div>
+            ) : null}
+            <div className="flex items-center justify-end gap-1.5">
+              <Button
+                size="sm"
+                variant="ghost"
+                className="h-7 text-xs"
+                onClick={() => setMainView("diff")}
+              >
+                Open in review
+              </Button>
+              <Button
+                size="sm"
+                variant="ghost"
+                className="h-7 text-xs text-destructive"
+                disabled={busy}
+                onClick={() => void discardAll()}
+              >
+                <X className="mr-1 h-3.5 w-3.5" />
+                Discard
+              </Button>
+              <Button
+                size="sm"
+                className="h-7 text-xs"
+                disabled={busy || includedPending.length === 0}
+                onClick={() => void applyAll()}
+              >
+                {busy ? (
+                  <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" />
+                ) : (
+                  <Check className="mr-1 h-3.5 w-3.5" />
+                )}
+                Apply changes ({includedPending.length})
+              </Button>
+            </div>
+          </>
         )}
       </div>
     </WorkflowCard>
@@ -620,28 +1056,33 @@ function TodoListBlock({ todos }: { todos: TodoItem[] }) {
 
 function TodoRow({ content, status }: { content: string; status: TodoStatus }) {
   const active = status === "in_progress";
-  const Icon = status === "completed" ? Check : active ? Loader2 : CircleDashed;
-  const iconClass =
-    status === "completed"
-      ? "text-emerald-400"
-      : active
-        ? "text-primary animate-spin"
-        : "text-muted-foreground";
+  const completed = status === "completed";
+  const Icon = completed ? Check : active ? Loader2 : CircleDashed;
+  const iconClass = completed
+    ? "text-[var(--zoc-success)] zoc-check-pop"
+    : active
+      ? "text-[var(--zoc-ember)] animate-spin"
+      : "text-[var(--zoc-text-faint)]";
   return (
     <li
       className={cn(
-        "relative flex items-start gap-2 overflow-hidden rounded-md border border-border/60 bg-background/40 p-2",
-        active && "border-primary/40 bg-[hsl(var(--primary)/0.06)]",
+        "relative flex items-start gap-2 overflow-hidden rounded-md border border-[var(--zoc-row-border)] bg-[var(--zoc-row-bg)] p-2",
+        active && "border-[var(--zoc-ember)]/40",
       )}
     >
       <Icon className={cn("mt-0.5 h-3.5 w-3.5 shrink-0", iconClass)} />
       <div className="min-w-0 flex-1">
-        <div className={cn("text-xs", status === "completed" ? "text-muted-foreground line-through" : "font-medium")}>
+        <div
+          className={cn(
+            "text-xs",
+            completed ? "text-[var(--zoc-text-muted)] line-through" : "font-medium text-[var(--zoc-text)]",
+          )}
+        >
           {content}
         </div>
       </div>
       {active ? (
-        <span className="shrink-0 text-[10px] font-medium text-primary/80">in progress</span>
+        <span className="shrink-0 text-[10px] font-medium text-[var(--zoc-ember)]">in progress</span>
       ) : null}
     </li>
   );
@@ -652,51 +1093,23 @@ function PlanBlock({
 }: {
   item: Extract<AgentWorkflowItem, { type: "plan" }>;
 }) {
-  const approvePlan = useApp((s) => s.approvePlan);
-  const cancelPlan = useApp((s) => s.cancelPlan);
-  const setInput = useApp((s) => s.setInput);
-  const loading = useApp((s) => s.replitWorkflowLoading);
   const plan = item.plan;
-  let replit: ReplitPlan | null = null;
-  let title: string;
-  let summary: string;
-  let steps: Array<{ id: string; title: string; detail?: string | null; status: PlanStepStatus }>;
-  let files: string[];
-  let validation: string[];
-
-  if (isReplitPlan(plan)) {
-    replit = plan;
-    title = plan.title;
-    summary = plan.summary;
-    steps = plan.tasks.map((task) => ({
-        id: task.id,
-        title: task.title,
-        detail: task.summary,
-        status: task.status === "draft" ? "pending" : task.status === "active" ? "running" : task.status === "failed" ? "failed" : "done",
-      }));
-    files = unique(plan.tasks.flatMap((task) => task.files_likely_changed));
-    validation = unique(plan.tasks.flatMap((task) => task.test_plan));
-  } else {
-    title = plan.goal;
-    summary = plan.goal;
-    steps = plan.steps.map((step) => ({
-        id: step.id,
-        title: step.title,
-        detail: step.detail ?? "",
-        status: step.status,
-      }));
-    files = [];
-    validation = [];
-  }
+  const title = plan.goal;
+  const summary = plan.goal;
+  const steps = plan.steps.map((step) => ({
+    id: step.id,
+    title: step.title,
+    detail: step.detail ?? "",
+    status: step.status,
+  }));
 
   return (
-    <WorkflowCard icon={ClipboardList} title={replit ? "Agent run" : "Plan"} badge={item.status}>
+    <WorkflowCard icon={ClipboardList} title="Plan" badge={item.status}>
       <div className="flex flex-col gap-2">
         <div>
           <div className="text-sm font-semibold">{title}</div>
           <p className="mt-1 text-xs leading-relaxed text-muted-foreground">{summary}</p>
         </div>
-        <InlineList title="Affected files" values={files} monospace />
         <div>
           <div className="mb-1 text-[10px] font-semibold uppercase text-muted-foreground">Steps</div>
           <ol className="space-y-1.5">
@@ -705,26 +1118,6 @@ function PlanBlock({
             ))}
           </ol>
         </div>
-        {replit ? (
-          <>
-            <InlineList title="Run mode" values={["Auto approved from chat", "Changes stay isolated until review/apply"]} />
-            <InlineList title="Validation" values={validation.length ? validation : ["Run the strongest relevant checks after changes"]} monospace />
-          </>
-        ) : null}
-        {replit && item.status === "pending" ? (
-          <div className="mt-1 flex flex-wrap justify-end gap-1.5">
-            <Button size="sm" variant="ghost" className="h-7 text-xs" onClick={() => setInput(`/plan revise ${replit.title}: `)}>
-              Revise Plan
-            </Button>
-            <Button size="sm" variant="ghost" className="h-7 text-xs" onClick={() => void cancelPlan(replit.id)}>
-              Cancel Plan
-            </Button>
-            <Button size="sm" className="h-7 text-xs" disabled={loading} onClick={() => void approvePlan(replit.id)}>
-              {loading ? <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" /> : <ShieldCheck className="mr-1 h-3.5 w-3.5" />}
-              Run Now
-            </Button>
-          </div>
-        ) : null}
       </div>
     </WorkflowCard>
   );
@@ -997,53 +1390,6 @@ function TestResultSummary({
 }
 
 function FinalSummaryBlock({ summary }: { summary: string }) {
-  const tasks = useApp((s) => s.replitTasks);
-  const checkpoints = useApp((s) => s.replitCheckpoints);
-  const applyTask = useApp((s) => s.applyTask);
-  const dismissTask = useApp((s) => s.dismissTask);
-  const rollbackReplitCheckpoint = useApp((s) => s.rollbackReplitCheckpoint);
-  const loading = useApp((s) => s.replitWorkflowLoading);
-
-  const doneTasks = tasks.filter((t) => t.status === "done" || t.status === "ready").length;
-  const totalTasks = tasks.length || 1;
-  const readyTasks = tasks.filter((t) => t.status === "ready");
-
-  const changedFiles = new Set<string>();
-  tasks.forEach((t) => {
-    t.files_likely_changed.forEach((f) => changedFiles.add(f));
-  });
-  const filesCount = changedFiles.size || 6;
-
-  const handleApplyAll = async () => {
-    for (const t of readyTasks) {
-      try {
-        await applyTask(t.id);
-      } catch (err) {
-        console.error("Failed to apply task", t.id, err);
-      }
-    }
-  };
-
-  const handleDismissAll = async () => {
-    for (const t of readyTasks) {
-      try {
-        await dismissTask(t.id);
-      } catch (err) {
-        console.error("Failed to dismiss task", t.id, err);
-      }
-    }
-  };
-
-  const handleRollback = async () => {
-    if (checkpoints.length > 0) {
-      try {
-        await rollbackReplitCheckpoint(checkpoints[0].id);
-      } catch (err) {
-        console.error("Failed to rollback checkpoint", err);
-      }
-    }
-  };
-
   return (
     <div className="flex flex-col gap-2.5">
       {/* 1. Run Complete card */}
@@ -1063,21 +1409,7 @@ function FinalSummaryBlock({ summary }: { summary: string }) {
                 {summary}
               </p>
             )}
-            <div className="font-mono text-[11px] text-[#71717A] mt-2 leading-normal">
-              Worked 8m 24s · {doneTasks} of {totalTasks} tasks · 21.4k tokens · local (no cost)
-            </div>
           </div>
-        </div>
-        <div className="flex gap-1.5 mt-2.5">
-          <span className="font-mono h-[22px] px-2 flex items-center rounded-md text-[11px] bg-[#1B1B21] border border-[#26262B] text-[#A1A1AA]">
-            Files {filesCount}
-          </span>
-          <span className="font-mono h-[22px] px-2 flex items-center rounded-md text-[11px] text-[#34D399] bg-[#34D399]/10 border border-[#34D399]/20">
-            +214
-          </span>
-          <span className="font-mono h-[22px] px-2 flex items-center rounded-md text-[11px] text-[#F87171] bg-[#F87171]/10 border border-[#F87171]/20">
-            -38
-          </span>
         </div>
       </div>
 
@@ -1171,41 +1503,6 @@ function FinalSummaryBlock({ summary }: { summary: string }) {
           </div>
           <span className="text-[11px] text-[#71717A]">3 screenshots</span>
         </div>
-      </div>
-
-      {/* 4. Controls section: Apply all, Dismiss, and Rollback */}
-      <div className="flex flex-col gap-2 mt-1">
-        {readyTasks.length > 0 && (
-          <div className="flex gap-2">
-            <Button
-              className="flex-1 text-xs h-8"
-              disabled={loading}
-              onClick={() => void handleApplyAll()}
-            >
-              <Check className="w-3.5 h-3.5 mr-1" />
-              Apply All
-            </Button>
-            <Button
-              variant="outline"
-              className="flex-1 text-xs h-8 border-[#26262B] hover:bg-[#1C1C22]"
-              disabled={loading}
-              onClick={() => void handleDismissAll()}
-            >
-              Dismiss
-            </Button>
-          </div>
-        )}
-        
-        {checkpoints.length > 0 && (
-          <button
-            type="button"
-            className="text-[11px] text-[#9B6AF1] hover:underline text-center py-1 mt-1 transition-all"
-            disabled={loading}
-            onClick={() => void handleRollback()}
-          >
-            Rollback to last checkpoint ({checkpoints[0].id.substring(0, 8)})
-          </button>
-        )}
       </div>
     </div>
   );
@@ -1324,10 +1621,6 @@ function SummaryLine({
       </div>
     </div>
   );
-}
-
-function isReplitPlan(plan: Plan | ReplitPlan): plan is ReplitPlan {
-  return "tasks" in plan;
 }
 
 function unique(values: string[]): string[] {

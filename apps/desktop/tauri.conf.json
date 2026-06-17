@@ -1,6 +1,6 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "Llama Studio",
+  "productName": "Zoc AI",
   "version": "2.0.0",
   "identifier": "ai.llama.studio",
   "mainBinaryName": "llama-studio",
@@ -8,12 +8,12 @@
     "frontendDist": "../frontend/dist",
     "devUrl": "http://127.0.0.1:1420",
     "beforeDevCommand": "pnpm --filter @llama-studio/frontend dev",
-    "beforeBuildCommand": "pnpm --filter @llama-studio/frontend build"
+    "beforeBuildCommand": "pnpm -w run tauri:prepare"
   },
   "app": {
     "windows": [
       {
-        "title": "Llama Studio",
+        "title": "Zoc AI",
         "width": 1680,
         "height": 1040,
         "minWidth": 1280,
@@ -30,11 +30,11 @@
   },
   "bundle": {
     "active": true,
-    "targets": ["deb", "rpm"],
+    "targets": "all",
     "category": "DeveloperTool",
-    "copyright": "© 2026 Llama Studio contributors",
+    "copyright": "© 2026 Zoc AI contributors",
     "shortDescription": "Local agentic coding desktop app.",
-    "longDescription": "Llama Studio is a local-first, llama.cpp-powered agentic coding desktop app shipped as a Tauri v2 binary with a bundled FastAPI sidecar.",
+    "longDescription": "Zoc AI is a local-first, llama.cpp-powered agentic coding desktop app shipped as a Tauri v2 binary with a bundled FastAPI sidecar.",
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",

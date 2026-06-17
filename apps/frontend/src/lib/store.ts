@@ -2,19 +2,18 @@ import { create } from "zustand";
 import type {
   AgentEvent,
   CodeReviewReport,
+  CheckpointInfo,
+  ContextCandidate,
   ContextStatus,
-  CreateReplitTaskRequest,
-  ReplitCheckpoint,
-  ReplitPlan,
-  ReplitTask,
-  ReplitTaskLog,
   DiffPatch,
+  IndexStatus,
   MemoryStats,
   Message,
   PermissionGrant,
   PermissionScope,
   Plan,
   PlanStep,
+  ProjectRulesInfo,
   RunAgentRequest,
   Session,
   SlashCommandName,
@@ -30,6 +29,71 @@ import { getAgentClient } from "./agent-client";
 import { getProvider } from "./providers";
 import { secureStore } from "./secure-store";
 import { fsWriteText } from "./tauri-bridge";
+import {
+  fsCreateDir,
+  fsCreateFile,
+  fsDelete,
+  fsDuplicate,
+  fsMove,
+  fsRename,
+  fsReveal,
+  fsReplaceApply,
+  fsReplacePreview,
+  fsSearch,
+  type FileReplace,
+  type ReplaceOptions,
+  type ReplaceSummary,
+  type ReplacedFile,
+  type SearchOptions,
+  type SearchResults,
+} from "./tauri-bridge";
+import {
+  activeAfterDelete,
+  basename,
+  joinPath,
+  openFilesAfterDelete,
+  remapActive,
+  remapOpenFiles,
+  renamedPath,
+} from "./paths";
+import { recordRecentFile } from "./recents";
+import { toast } from "@/components/ui/toast";
+import {
+  parseByKind,
+  sourceForKind,
+  type CheckKind,
+  type Diagnostic,
+} from "./problem-matchers";
+import { runCheck, runTaskCommand } from "./tauri-bridge";
+import {
+  dedupeTasks,
+  defaultBuildTask,
+  defaultTestTask,
+  detectCargo,
+  detectMake,
+  detectNpmScripts,
+  detectPython,
+  parseTasksJson,
+  type Task,
+} from "./tasks";
+import { parseLaunchJson, type LaunchConfig } from "./launch-configs";
+import {
+  gitBranches,
+  gitCheckout,
+  gitCommit,
+  gitCreateBranch,
+  gitDiff,
+  gitDiscard,
+  gitLog,
+  gitPull,
+  gitPush,
+  gitStage,
+  gitStatus,
+  gitUnstage,
+  type GitBranchInfo,
+  type GitCommit,
+  type GitStatus,
+} from "./tauri-bridge";
 import {
   MOCK_FILE_CONTENT,
   MOCK_FILE_STATUS,
@@ -57,12 +121,98 @@ import {
   loadLocalModels,
 } from "./local-models";
 import { track } from "./telemetry";
+import { buildInlineEditPatch, spliceText, stripCodeFence } from "./inline-edit";
 import type { AutonomyLevel } from "./run-machine";
+import { decideIngest } from "./event-ingest";
+import { resolveSessionIntent } from "./session-lifecycle";
+import { effectiveSettings, setSetting } from "./settings";
+import { checkAction } from "./trust";
 
 export type AgentMode = "ask" | "agent";
 
-export type ActivityView = "files" | "search" | "indexer" | "sessions" | "tasks" | "settings";export type MainView = "editor" | "diff" | "sessions" | "tasks" | "settings" | "showcase";
-export type BottomTab = "terminal" | "problems" | "logs";
+/** A user message held in the run queue (develop.md Phase 11). Multiple
+ *  messages can be queued, reordered, and removed while a run is in flight. */
+export interface QueuedMessage {
+  id: string;
+  content: string;
+}
+
+/** Output panel channels (develop.md Phase 5). */
+export type OutputChannel = "Agent" | "Git" | "Tasks" | "MCP" | "Terminal" | "Extension Host";
+export const OUTPUT_CHANNELS: OutputChannel[] = [
+  "Agent",
+  "Git",
+  "Tasks",
+  "MCP",
+  "Terminal",
+  "Extension Host",
+];
+
+export type LogLevel = "debug" | "info" | "warning" | "error";
+export interface LogLine {
+  ts: number;
+  level: LogLevel;
+  message: string;
+}
+
+/** A selectable shell profile for new terminals (develop.md Phase 8). */
+export interface TerminalProfile {
+  id: string;
+  name: string;
+  command: string;
+  args?: string[];
+}
+
+/** Metadata for one terminal session (the live xterm + PTY live in the
+ *  terminal manager; this is the serializable shadow that drives the tabs). */
+export interface TerminalSession {
+  id: string;
+  title: string;
+  profileId: string;
+  status: "running" | "exited";
+  exitCode: number | null;
+}
+
+export type ActivityView = "files" | "search" | "scm" | "debug" | "indexer" | "outline" | "timeline" | "sessions" | "settings";export type MainView = "editor" | "diff" | "sessions" | "settings" | "showcase";
+export type BottomTab = "terminal" | "problems" | "output" | "tasks" | "logs" | "checkpoints";
+
+/** Selection captured at Cmd-K time, used to build the inline-edit request. */
+export interface InlineEditContext {
+  filePath: string;
+  language?: string | null;
+  /** Half-open character offsets [start, end) of the selection in the file. */
+  start: number;
+  end: number;
+  original: string;
+  prefix: string;
+  suffix: string;
+}
+
+export interface InlineEditUiState {
+  open: boolean;
+  filePath: string | null;
+  language: string | null;
+  start: number;
+  end: number;
+  original: string;
+  prefix: string;
+  suffix: string;
+  status: "idle" | "loading" | "error";
+  error: string | null;
+}
+
+const INLINE_EDIT_CLOSED: InlineEditUiState = {
+  open: false,
+  filePath: null,
+  language: null,
+  start: 0,
+  end: 0,
+  original: "",
+  prefix: "",
+  suffix: "",
+  status: "idle",
+  error: null,
+};
 
 export interface OpenFile {
   path: string;
@@ -122,11 +272,10 @@ export type AgentWorkflowItem =
   | {
       type: "plan";
       id: string;
-      plan: Plan | ReplitPlan;
+      plan: Plan;
       status: "pending" | "approved" | "cancelled";
       createdAt: string;
     }
-  | { type: "task"; id: string; task: ReplitTask; createdAt: string }
   | { type: "todos"; id: string; todos: TodoItem[]; createdAt: string }
   | { type: "tool"; id: string; toolCall: ToolCall; createdAt: string }
   | { type: "permission"; id: string; request: PermissionRequest; createdAt: string }
@@ -148,6 +297,9 @@ export interface AppState {
   mainView: MainView;
   bottomTab: BottomTab;
   paletteOpen: boolean;
+  /** Seed text the command palette opens with (e.g. ">" for command mode,
+   *  "@" for symbol mode, "" for Go-to-File). Consumed once on open. */
+  paletteSeed: string;
   layout: LayoutState;
   openFiles: OpenFile[];
   activeFile: string | null;
@@ -168,7 +320,13 @@ export interface AppState {
   input: string;
   streaming: boolean;
   isRunning: boolean;
+  /** The active run's id — the backend-issued (here client-supplied, backend
+   *  echoed) `runId` the run is bound to. Drives cross-run event discarding
+   *  via `decideIngest` (R1.2, R1.3). */
   runId: string | null;
+  /** The user `Message.id` the active run answers, recorded when the run is
+   *  bound in `sendUserMessage` (R1.1). `null` when no run is bound. */
+  boundMessageId: string | null;
   selectedModel: { provider: string; model: string };
   /** Agent autonomy level for the active run config (R9.4). Replaces the
    *  previously hardcoded "High" badge in the Agent_Panel/Composer. */
@@ -184,8 +342,17 @@ export interface AppState {
    * next load attempt.
    */
   llamaCppStatus: LlamaCppStatus | null;
-  attachments: { id: string; label: string; kind: "file" | "selection" }[];
+  attachments: { id: string; label: string; kind: "file" | "selection" | "folder" | "symbol" }[];
   pendingPatches: DiffPatch[];
+  /** Id of the current isolated agent run awaiting review (review-before-apply
+   *  model), captured from `checkpoint.created` / `run.awaiting_review` SSE
+   *  events. `null` when no run is pending review. Drives whether the diff
+   *  review card applies atomically via the backend or per-file via Tauri. */
+  reviewRunId: string | null;
+  /** End-of-run validation results (typecheck / build / tests run against the
+   *  isolated copy), captured from the `diff.ready` SSE event. Keyed by check
+   *  label → "pass" | "fail" | "skipped". `null` until a run reports them. */
+  reviewValidation: Record<string, string> | null;
   acceptedHunks: Record<string, Set<number>>;
   /** Ids of patches applied (written) during this session — used to mark
    *  review findings whose suggested fix has already been applied. */
@@ -204,8 +371,14 @@ export interface AppState {
   setWorkspaceRoot: (root: string | null) => Promise<void>;
   setActivity: (a: ActivityView) => void;
   setMainView: (v: MainView) => void;
+  /** Open the Settings view, optionally deep-linking to a section/tab
+   *  (e.g. "extensions"). Consumed once by SettingsView. */
+  settingsSection: string | null;
+  openSettings: (section?: string) => void;
   setBottomTab: (t: BottomTab) => void;
   togglePalette: (open?: boolean) => void;
+  /** Open the command palette seeded with a mode prefix (">", "@", or ""). */
+  openPalette: (seed?: string) => void;
   toggleSide: () => void;
   toggleRight: () => void;
   toggleBottom: () => void;
@@ -213,6 +386,129 @@ export interface AppState {
   closeFile: (path: string) => void;
   setActiveFile: (path: string) => void;
   updateFile: (path: string, content: string) => void;
+  /** Persist the buffer at `path` to disk. Clears its dirty flag on success.
+   *  Returns true when the write succeeded (or in browser preview where there
+   *  is no disk to write to). */
+  saveFile: (path: string) => Promise<boolean>;
+  /** Persist the currently-active editor buffer. No-op when nothing is open. */
+  saveActiveFile: () => Promise<boolean>;
+  /** Persist every dirty buffer. Returns the count actually written. */
+  saveAllFiles: () => Promise<number>;
+  /** Reload the active file from disk (or mock), discarding unsaved edits. */
+  revertActiveFile: () => Promise<boolean>;
+  /** Editor view toggles (Phase 9). */
+  editorSettings: { minimap: boolean; stickyScroll: boolean; breadcrumbs: boolean };
+  toggleEditorSetting: (key: "minimap" | "stickyScroll" | "breadcrumbs") => void;
+  /** Apply the merged user/workspace settings (Phase 10) into runtime state.
+   *  Pass `includeMode` at startup to also seed the default conversation mode. */
+  applyEffectiveSettings: (opts?: { includeMode?: boolean }) => void;
+  /** Split editor: a second group showing an independently-active open file
+   *  (shares the underlying model with the primary group). */
+  splitView: boolean;
+  rightActiveFile: string | null;
+  splitEditor: () => void;
+  closeRightGroup: () => void;
+  openToSide: (path: string) => Promise<void>;
+  setRightActiveFile: (path: string) => void;
+  /** Tab management. */
+  closeOtherFiles: (path: string) => void;
+  closeSavedFiles: () => void;
+  closeAllFiles: () => void;
+  /** Bumped after any Explorer file operation so the file tree re-fetches the
+   *  affected directories immediately (in addition to the fs watcher). */
+  fsRefreshNonce: number;
+  /** Create an empty file `name` inside `parentDir`; opens it. Returns the new
+   *  absolute path, or null on failure / outside the desktop runtime. */
+  createFile: (parentDir: string, name: string) => Promise<string | null>;
+  /** Create a directory `name` inside `parentDir`. Returns the new path. */
+  createFolder: (parentDir: string, name: string) => Promise<string | null>;
+  /** Rename an entry's final component; remaps open tabs. Returns new path. */
+  renameEntry: (path: string, newName: string) => Promise<string | null>;
+  /** Duplicate a file/dir to a "… copy" sibling. Returns the new path. */
+  duplicateEntry: (path: string) => Promise<string | null>;
+  /** Delete a file/dir; closes affected tabs. Returns true on success. */
+  deleteEntry: (path: string) => Promise<boolean>;
+  /** Move an entry into `toDir`; remaps open tabs. Returns the new path. */
+  moveEntry: (from: string, toDir: string) => Promise<string | null>;
+  /** Reveal a path in the OS file manager (desktop only). */
+  revealEntry: (path: string) => Promise<void>;
+  /** Originals captured from the last replace-all, for a one-click undo. */
+  lastReplaceUndo: ReplacedFile[] | null;
+  /** Run a workspace text search. Empty result outside the desktop runtime. */
+  searchWorkspace: (options: SearchOptions) => Promise<SearchResults>;
+  /** Preview a replace without writing. */
+  previewReplace: (options: ReplaceOptions) => Promise<FileReplace[]>;
+  /** Apply a replace to disk, stashing originals for undo. */
+  applyReplace: (options: ReplaceOptions) => Promise<ReplaceSummary | null>;
+  /** Undo the most recent replace-all by restoring captured originals. */
+  undoLastReplace: () => Promise<number>;
+  /** Latest git working-tree status (null = not loaded / not a repo / no desktop). */
+  git: GitStatus | null;
+  /** Refresh git status into `git`. */
+  refreshGit: () => Promise<void>;
+  stageFiles: (paths: string[]) => Promise<void>;
+  unstageFiles: (paths: string[]) => Promise<void>;
+  discardFiles: (paths: string[]) => Promise<void>;
+  /** Commit staged changes. Returns the new commit hash, or null on failure. */
+  commitChanges: (message: string) => Promise<string | null>;
+  listGitBranches: () => Promise<GitBranchInfo[]>;
+  checkoutBranch: (branch: string) => Promise<void>;
+  createGitBranch: (name: string) => Promise<void>;
+  pullChanges: () => Promise<void>;
+  pushChanges: () => Promise<void>;
+  loadGitLog: (limit?: number) => Promise<GitCommit[]>;
+  gitFileDiff: (path: string, staged: boolean) => Promise<string>;
+  /** Diagnostics keyed by source ("typescript" | "eslint" | "ruff" | "cargo" | …). */
+  diagnostics: Record<string, Diagnostic[]>;
+  setDiagnostics: (source: string, items: Diagnostic[]) => void;
+  clearDiagnostics: (source?: string) => void;
+  /** Run a checker, parse its output into diagnostics, mirror raw to Tasks output. */
+  runDiagnostics: (kind: CheckKind, cwd?: string) => Promise<void>;
+  /** Per-channel output buffers (Agent / Git / Tasks / MCP / Terminal / …). */
+  outputChannels: Record<OutputChannel, string[]>;
+  appendOutput: (channel: OutputChannel, text: string) => void;
+  clearOutput: (channel: OutputChannel) => void;
+  /** Rolling log buffer for the Logs panel (real sidecar/desktop events). */
+  logs: LogLine[];
+  appendLog: (level: LogLevel, message: string) => void;
+  clearLogs: () => void;
+  /** Discovered tasks (config + auto-detected). */
+  tasks: Task[];
+  /** Per-task run status. */
+  taskRuns: Record<string, "running" | "passed" | "failed">;
+  /** Read project config/manifests and populate `tasks`. */
+  discoverTasks: () => Promise<void>;
+  /** Run a task by id; streams output to the Tasks channel and parses any
+   *  problem matcher into diagnostics. */
+  runTask: (id: string) => Promise<void>;
+  /** Run the default build / test task (⌘⇧B and the test command). */
+  runBuildTask: () => Promise<void>;
+  runTestTask: () => Promise<void>;
+  /** Breakpoints keyed by absolute file path → sorted 1-based line numbers. */
+  breakpoints: Record<string, number[]>;
+  toggleBreakpoint: (file: string, line: number) => void;
+  clearBreakpoints: (file?: string) => void;
+  /** Parsed launch.json debug configurations. */
+  launchConfigs: LaunchConfig[];
+  /** Currently-selected debug configuration name. */
+  selectedDebugConfig: string | null;
+  setSelectedDebugConfig: (name: string | null) => void;
+  /** Read .vscode/.zoc launch.json and populate `launchConfigs`. */
+  loadLaunchConfigs: () => Promise<void>;
+  /** Terminal sessions (metadata; live instances live in the terminal manager). */
+  terminals: TerminalSession[];
+  activeTerminalId: string | null;
+  terminalProfiles: TerminalProfile[];
+  /** When true the terminal area shows two panes side-by-side. */
+  terminalSplit: boolean;
+  /** Create a new terminal session (optionally with a given profile). Returns id. */
+  newTerminal: (profileId?: string) => string;
+  closeTerminal: (id: string) => void;
+  setActiveTerminal: (id: string) => void;
+  renameTerminal: (id: string, title: string) => void;
+  /** Mark a terminal exited with its code (called by the terminal manager). */
+  setTerminalExited: (id: string, code: number | null) => void;
+  toggleTerminalSplit: () => void;
   loadSessions: () => Promise<void>;
   selectSession: (id: string) => Promise<void>;
   createSession: (title: string, workspaceRoot: string) => Promise<Session | null>;
@@ -225,14 +521,8 @@ export interface AppState {
   sendMessage: () => Promise<void>;
   setInput: (value: string) => void;
   runSlashCommand: (name: SlashCommandName, args?: Record<string, unknown>) => Promise<void>;
-  approvePlan: (planId: string) => Promise<void>;
-  revisePlan: (planId: string, instruction: string) => Promise<void>;
-  cancelPlan: (planId: string) => Promise<void>;
   approvePermission: (requestId: string) => Promise<void>;
   rejectPermission: (requestId: string) => Promise<void>;
-  retryTask: (taskId: string) => Promise<void>;
-  applyTask: (taskId: string) => Promise<void>;
-  dismissTask: (taskId: string) => Promise<void>;
   runTests: () => Promise<void>;
   cancelRun: () => Promise<void>;
   runReview: (req?: CodeReviewRequest) => Promise<void>;
@@ -263,6 +553,20 @@ export interface AppState {
   pauseAgent: () => void;
   /** Resume a paused run, draining held events (R7.4). */
   resumeAgent: () => void;
+  /** Messages the user composed while a run was active (develop.md Phase 11).
+   *  Released one-by-one as each run reaches a terminal state (R4.11/R4.14). */
+  messageQueue: QueuedMessage[];
+  /** Queue a message to be sent when the active run finishes. No-op when no
+   *  run is active (the caller should just send directly in that case). */
+  queueUserMessage: (content: string) => void;
+  /** Remove a single queued message by id. */
+  dequeueMessage: (id: string) => void;
+  /** Move a queued message from one index to another (drag reorder). */
+  reorderQueue: (fromIndex: number, toIndex: number) => void;
+  /** Drop every queued message. */
+  clearQueue: () => void;
+  /** Cancel the current run and send `content` immediately ("stop and send"). */
+  stopAndSend: (content: string) => void;
   setSelectedModel: (m: { provider: string; model: string }) => void;
   /** Set the agent autonomy level (R9.4, R9.7). */
   setAutonomy: (level: AutonomyLevel) => void;
@@ -270,7 +574,10 @@ export interface AppState {
   setAgentMode: (mode: AgentMode) => void;
   /** Wire up the llama-server status subscription. Called once at app start. */
   initLlamaCppStatus: () => Promise<void>;
-  addAttachment: (a: { label: string; kind: "file" | "selection" }) => void;
+  addAttachment: (a: { label: string; kind: "file" | "selection" | "folder" | "symbol" }) => void;
+  /** Search workspace files/folders/symbols for the `@` context picker.
+   *  Falls back to filtering open files when the sidecar is unavailable. */
+  searchContextCandidates: (query: string) => Promise<ContextCandidate[]>;
   removeAttachment: (id: string) => void;
   clearAttachments: () => void;
   toggleHunk: (diffId: string, hunkIndex: number) => void;
@@ -280,43 +587,59 @@ export interface AppState {
   rejectPatch: (diffId: string) => void;
   acceptAllForDiff: (diffId: string) => Promise<boolean>;
   rejectAllForDiff: (diffId: string) => void;
+  /** Apply the current isolated (review-before-apply) run's changes onto the
+   *  real workspace via the backend `/runs/{id}/apply` endpoint, then clear
+   *  the pending review state. Returns false if there is no run to apply. */
+  applyCurrentRun: () => Promise<boolean>;
+
+  /** Run id of the most recently applied run whose pre-apply checkpoint can
+   *  be restored. `null` when there is nothing to undo. */
+  restorableRunId: string | null;
+  /** Undo the most recently applied run by restoring its checkpoint (reverts
+   *  modifications, deletes created files, recreates deleted ones). */
+  restoreCurrentRun: () => Promise<boolean>;
+
+  /** Restorable checkpoints for the session (newest first). */
+  checkpoints: CheckpointInfo[];
+  /** Fetch the session's checkpoint history. */
+  loadCheckpoints: () => Promise<void>;
+  /** Restore a specific checkpoint by its run id. */
+  restoreCheckpoint: (runId: string) => Promise<boolean>;
+  /** Discard the current isolated run — the real workspace stays untouched. */
+  discardCurrentRun: () => Promise<void>;
   /** Queue a finding's suggested patch into `pendingPatches` (dedup by id)
    *  so it can be accepted/rejected like any agent-produced patch. */
   queueFindingPatch: (patch: DiffPatch) => void;
   /** Queue then immediately apply a finding's suggested patch. */
   applyFindingPatch: (patch: DiffPatch) => Promise<boolean>;
+
+  /** Inline edit (Cmd-K) prompt + request state. Captured from the editor
+   *  selection; the result is spliced back and queued as a pending patch. */
+  inlineEdit: InlineEditUiState;
+  /** Open the Cmd-K prompt for a captured selection. */
+  openInlineEdit: (ctx: InlineEditContext) => void;
+  /** Close/cancel the Cmd-K prompt. */
+  closeInlineEdit: () => void;
+  /** Send the instruction, splice the rewritten selection back into the file,
+   *  and queue it as a pending patch for review/apply. */
+  submitInlineEdit: (instruction: string) => Promise<boolean>;
   /** Latest memory snapshot from the agent sidecar. `null` until the
    *  first `loadMemoryStats` call resolves, or in browser preview where
    *  the sidecar is unreachable. */
   memoryStats: MemoryStats | null;
   /** Extended context status with model recommendations and action flags. */
   contextStatus: ContextStatus | null;
-  replitPlans: ReplitPlan[];
-  replitTasks: ReplitTask[];
-  selectedReplitTaskId: string | null;
-  replitTaskLogs: Record<string, ReplitTaskLog[]>;
-  replitCheckpoints: ReplitCheckpoint[];
-  replitWorkflowLoading: boolean;
-  replitWorkflowError: string | null;
-
-  createReplitPlan: (prompt: string) => Promise<ReplitPlan | null>;
-  reviseReplitPlan: (planId: string, prompt: string) => Promise<ReplitPlan | null>;
-  approveReplitPlan: (planId: string) => Promise<boolean>;
-  loadReplitWorkflow: () => Promise<void>;
-  createReplitTask: (req: CreateReplitTaskRequest) => Promise<ReplitTask | null>;
-  selectReplitTask: (taskId: string | null) => Promise<void>;
-  queueReplitTask: (taskId: string) => Promise<boolean>;
-  startReplitTask: (taskId: string) => Promise<boolean>;
-  markReplitTaskReady: (taskId: string) => Promise<boolean>;
-  applyReplitTask: (taskId: string) => Promise<boolean>;
-  dismissReplitTask: (taskId: string) => Promise<boolean>;
-  cancelReplitTask: (taskId: string) => Promise<boolean>;
-  rollbackReplitCheckpoint: (checkpointId: string) => Promise<boolean>;
-  clearReplitWorkflowError: () => void;
   loadMemoryStats: () => Promise<void>;
   compactMemory: () => Promise<void>;
   forgetMemory: (keepLast?: number) => Promise<void>;
   loadContextStatus: () => Promise<void>;
+  /** Embeddings index status for the status bar / Indexer panel (Phase 14). */
+  indexStatus: IndexStatus | null;
+  loadIndexStatus: () => Promise<void>;
+  /** Project rules (.zoc/rules) active for the current workspace, or null. */
+  projectRules: ProjectRulesInfo | null;
+  /** Fetch the active project rules for the current session. */
+  loadProjectRules: () => Promise<void>;
   setLayoutSizes: (
     sizes: Partial<Pick<LayoutState, "sidePanelSize" | "rightPanelSize" | "bottomDockSize">>,
   ) => void;
@@ -325,6 +648,7 @@ export interface AppState {
 const STORAGE_KEY = "llama-studio.layout.v2";
 const APPLIED_PATCHES_KEY = "llama-studio.applied-patches.v1";
 const PINNED_SESSIONS_KEY = "llama-studio.pinned-sessions.v1";
+const LAST_ACTIVE_SESSION_KEY = "llama-studio.last-active-session.v1";
 
 const DEFAULT_LAYOUT: LayoutState = {
   sidePanelOpen: true,
@@ -411,6 +735,49 @@ function persistPinnedSessions(pinned: Record<string, true>): void {
   } catch {
     /* ignore */
   }
+}
+
+/** Read the persisted "last active" session pointer (R2.2). Returns `null`
+ *  when unset or when localStorage is unavailable (browser preview / tests).
+ *  The pointer is honored on app-open only if it names an existing session;
+ *  `resolveSessionIntent` enforces that contract. */
+function loadLastActiveSession(): string | null {
+  if (typeof localStorage === "undefined") return null;
+  try {
+    const raw = localStorage.getItem(LAST_ACTIVE_SESSION_KEY);
+    return typeof raw === "string" && raw.length > 0 ? raw : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Persist (or clear) the "last active" session pointer. Passing `null` or an
+ *  empty string removes it, so a fresh/cleared state never resumes a stale
+ *  session on the next app-open. */
+function persistLastActiveSession(id: string | null): void {
+  if (typeof localStorage === "undefined") return;
+  try {
+    if (id == null || id.length === 0) localStorage.removeItem(LAST_ACTIVE_SESSION_KEY);
+    else localStorage.setItem(LAST_ACTIVE_SESSION_KEY, id);
+  } catch {
+    /* ignore */
+  }
+}
+
+function defaultTerminalProfiles(): TerminalProfile[] {
+  const isWin =
+    typeof navigator !== "undefined" && /Win/i.test(navigator.userAgent || navigator.platform || "");
+  if (isWin) {
+    return [
+      { id: "pwsh", name: "PowerShell", command: "powershell.exe" },
+      { id: "cmd", name: "Command Prompt", command: "cmd.exe" },
+    ];
+  }
+  return [
+    { id: "bash", name: "bash", command: "/bin/bash" },
+    { id: "zsh", name: "zsh", command: "/bin/zsh" },
+    { id: "sh", name: "sh", command: "/bin/sh" },
+  ];
 }
 
 function loadLayout(): LayoutState {
@@ -562,7 +929,7 @@ function permissionFromToolCall(toolCall: ToolCall): PermissionRequest {
   };
 }
 
-function planStatus(plan: Plan | ReplitPlan): "pending" | "approved" | "cancelled" {
+function planStatus(plan: Plan): "pending" | "approved" | "cancelled" {
   if ("status" in plan) {
     if (plan.status === "approved") return "approved";
     if (plan.status === "archived") return "cancelled";
@@ -570,7 +937,7 @@ function planStatus(plan: Plan | ReplitPlan): "pending" | "approved" | "cancelle
   return "pending";
 }
 
-function planCreatedAt(plan: Plan | ReplitPlan): string {
+function planCreatedAt(plan: Plan): string {
   return "created_at" in plan ? plan.created_at : new Date().toISOString();
 }
 
@@ -626,7 +993,7 @@ function upsertWorkflowTool(
 
 function upsertWorkflowPlan(
   items: AgentWorkflowItem[],
-  plan: Plan | ReplitPlan,
+  plan: Plan,
 ): AgentWorkflowItem[] {
   return upsertWorkflowItem(items, {
     type: "plan",
@@ -634,18 +1001,6 @@ function upsertWorkflowPlan(
     plan,
     status: planStatus(plan),
     createdAt: planCreatedAt(plan),
-  });
-}
-
-function upsertWorkflowTask(
-  items: AgentWorkflowItem[],
-  task: ReplitTask,
-): AgentWorkflowItem[] {
-  return upsertWorkflowItem(items, {
-    type: "task",
-    id: `task-${task.id}`,
-    task,
-    createdAt: task.created_at,
   });
 }
 
@@ -680,8 +1035,7 @@ function appendWorkflowError(items: AgentWorkflowItem[], error: string): AgentWo
   ];
 }
 
-function isPlaceholderPlan(plan: Plan | ReplitPlan): boolean {
-  if ("tasks" in plan) return false;
+function isPlaceholderPlan(plan: Plan): boolean {
   const goal = plan.goal.trim();
   if (goal.length > 80 || plan.steps.length > 1) return false;
   const [step] = plan.steps;
@@ -717,6 +1071,9 @@ export const useApp = create<AppState>((set, get) => ({
   mainView: "editor",
   bottomTab: "terminal",
   paletteOpen: false,
+  paletteSeed: "",
+  settingsSection: null,
+  fsRefreshNonce: 0,
   layout: loadLayout(),
   openFiles: [
     {
@@ -746,13 +1103,20 @@ export const useApp = create<AppState>((set, get) => ({
   streaming: false,
   isRunning: false,
   runId: null,
+  boundMessageId: null,
   selectedModel: { provider: "llamacpp", model: "" },
   autonomy: "High",
   agentMode: "agent",
   agentPaused: false,
+  messageQueue: [],
   llamaCppStatus: null,
   attachments: [],
   pendingPatches: [],
+  reviewRunId: null,
+  restorableRunId: null,
+  checkpoints: [],
+  inlineEdit: { ...INLINE_EDIT_CLOSED },
+  reviewValidation: null,
   acceptedHunks: {},
   appliedPatchIds: loadAppliedPatchIds(),
   liveMode: false,
@@ -769,23 +1133,21 @@ export const useApp = create<AppState>((set, get) => ({
   workspaceRoot: null,
   memoryStats: null,
   contextStatus: null,
-  replitPlans: [],
-  replitTasks: [],
-  selectedReplitTaskId: null,
-  replitTaskLogs: {},
-  replitCheckpoints: [],
-  replitWorkflowLoading: false,
-  replitWorkflowError: null,
+  indexStatus: null,
+  projectRules: null,
 
   setWorkspaceRoot: async (root) => {
     set({ workspaceRoot: root });
     if (isTauri()) await tauriSetWorkspaceRoot(root);
+    void get().refreshGit();
   },
 
   setActivity: (a) => set({ activity: a }),
   setMainView: (v) => set({ mainView: v }),
+  openSettings: (section) => set({ mainView: "settings", settingsSection: section ?? null }),
   setBottomTab: (t) => set({ bottomTab: t, layout: { ...get().layout, bottomDockOpen: true } }),
   togglePalette: (open) => set((s) => ({ paletteOpen: open ?? !s.paletteOpen })),
+  openPalette: (seed) => set({ paletteOpen: true, paletteSeed: seed ?? "" }),
   toggleSide: () => {
     const layout = { ...get().layout, sidePanelOpen: !get().layout.sidePanelOpen };
     persistLayout(layout);
@@ -803,6 +1165,7 @@ export const useApp = create<AppState>((set, get) => ({
   },
 
   openFile: async (path) => {
+    recordRecentFile(path);
     const existing = get().openFiles.find((f) => f.path === path);
     if (existing) {
       set({ activeFile: path, mainView: "editor" });
@@ -841,6 +1204,710 @@ export const useApp = create<AppState>((set, get) => ({
         f.path === path ? { ...f, content, dirty: true } : f,
       ),
     })),
+  saveFile: async (path) => {
+    const file = get().openFiles.find((f) => f.path === path);
+    if (!file) return false;
+    if (!file.dirty) return true;
+    // Browser preview: there is no disk, so just clear the dirty flag so the
+    // UI reflects a "saved" state.
+    if (!isTauri()) {
+      set((s) => ({
+        openFiles: s.openFiles.map((f) =>
+          f.path === path ? { ...f, dirty: false } : f,
+        ),
+      }));
+      return true;
+    }
+    const ok = await fsWriteText(file.path, file.content);
+    if (ok) {
+      set((s) => ({
+        openFiles: s.openFiles.map((f) =>
+          f.path === path ? { ...f, dirty: false } : f,
+        ),
+      }));
+      toast.success("Saved", { description: file.name });
+    } else {
+      toast.error("Couldn't save file", {
+        description: `${file.name} — check workspace permissions.`,
+      });
+    }
+    return ok;
+  },
+  saveActiveFile: async () => {
+    const active = get().activeFile;
+    if (!active) return false;
+    return get().saveFile(active);
+  },
+  saveAllFiles: async () => {
+    const dirty = get().openFiles.filter((f) => f.dirty);
+    if (dirty.length === 0) return 0;
+    let saved = 0;
+    for (const f of dirty) {
+      // Sequential so each write surfaces its own toast/error and we keep a
+      // truthful saved count even when one path fails permission checks.
+      if (await get().saveFile(f.path)) saved += 1;
+    }
+    return saved;
+  },
+  revertActiveFile: async () => {
+    const path = get().activeFile;
+    if (!path) return false;
+    const file = get().openFiles.find((f) => f.path === path);
+    if (!file) return false;
+    // Reload the on-disk (or mock) content and drop unsaved edits.
+    let content: string | null = null;
+    if (isTauri()) content = await fsReadText(path);
+    if (content === null) content = MOCK_FILE_CONTENT[path]?.content ?? file.content;
+    set((s) => ({
+      openFiles: s.openFiles.map((f) =>
+        f.path === path ? { ...f, content: content!, dirty: false } : f,
+      ),
+    }));
+    toast.message("Reverted", { description: file.name });
+    return true;
+  },
+
+  editorSettings: {
+    minimap: effectiveSettings()["editor.minimap"] === true,
+    stickyScroll: effectiveSettings()["editor.stickyScroll"] === true,
+    breadcrumbs: effectiveSettings()["editor.breadcrumbs"] !== false,
+  },
+  toggleEditorSetting: (key) =>
+    set((s) => {
+      const next = !s.editorSettings[key];
+      // Persist to the user scope so the choice survives reloads and stays in
+      // sync with the Settings page (Phase 10).
+      setSetting("user", `editor.${key}`, next);
+      return { editorSettings: { ...s.editorSettings, [key]: next } };
+    }),
+  applyEffectiveSettings: (opts) => {
+    const e = effectiveSettings();
+    set((s) => ({
+      editorSettings: {
+        minimap: e["editor.minimap"] === true,
+        stickyScroll: e["editor.stickyScroll"] === true,
+        breadcrumbs: e["editor.breadcrumbs"] !== false,
+      },
+      autonomy: (e["agent.autonomy"] as AutonomyLevel) ?? s.autonomy,
+      ...(opts?.includeMode ? { agentMode: e["agent.defaultMode"] as AgentMode } : {}),
+    }));
+  },
+
+  splitView: false,
+  rightActiveFile: null,
+  splitEditor: () =>
+    set((s) => (s.activeFile ? { splitView: true, rightActiveFile: s.activeFile } : {})),
+  closeRightGroup: () => set({ splitView: false, rightActiveFile: null }),
+  openToSide: async (path) => {
+    await get().openFile(path);
+    set({ splitView: true, rightActiveFile: path });
+  },
+  setRightActiveFile: (path) => set({ rightActiveFile: path }),
+  closeOtherFiles: (path) =>
+    set((s) => {
+      const keep = s.openFiles.filter((f) => f.path === path);
+      return {
+        openFiles: keep,
+        activeFile: keep.length ? path : null,
+        rightActiveFile: s.rightActiveFile === path ? s.rightActiveFile : null,
+        splitView: s.rightActiveFile === path && s.splitView,
+      };
+    }),
+  closeSavedFiles: () =>
+    set((s) => {
+      const kept = s.openFiles.filter((f) => f.dirty);
+      const active = kept.some((f) => f.path === s.activeFile)
+        ? s.activeFile
+        : kept[kept.length - 1]?.path ?? null;
+      const right = kept.some((f) => f.path === s.rightActiveFile) ? s.rightActiveFile : null;
+      return {
+        openFiles: kept,
+        activeFile: active,
+        rightActiveFile: right,
+        splitView: right !== null && s.splitView,
+      };
+    }),
+  closeAllFiles: () =>
+    set({ openFiles: [], activeFile: null, rightActiveFile: null, splitView: false }),
+
+  createFile: async (parentDir, name) => {
+    const trimmed = name.trim();
+    if (!trimmed) return null;
+    if (!isTauri()) {
+      toast.message("File operations require the desktop app");
+      return null;
+    }
+    try {
+      const created = await fsCreateFile(joinPath(parentDir, trimmed));
+      set((s) => ({ fsRefreshNonce: s.fsRefreshNonce + 1 }));
+      await get().openFile(created);
+      toast.success("Created file", { description: basename(created) });
+      return created;
+    } catch (err) {
+      toast.error("Couldn't create file", { description: (err as Error).message });
+      return null;
+    }
+  },
+  createFolder: async (parentDir, name) => {
+    const trimmed = name.trim();
+    if (!trimmed) return null;
+    if (!isTauri()) {
+      toast.message("File operations require the desktop app");
+      return null;
+    }
+    try {
+      const created = await fsCreateDir(joinPath(parentDir, trimmed));
+      set((s) => ({ fsRefreshNonce: s.fsRefreshNonce + 1 }));
+      toast.success("Created folder", { description: basename(created) });
+      return created;
+    } catch (err) {
+      toast.error("Couldn't create folder", { description: (err as Error).message });
+      return null;
+    }
+  },
+  renameEntry: async (path, newName) => {
+    const trimmed = newName.trim();
+    if (!trimmed || trimmed === basename(path)) return null;
+    if (!isTauri()) {
+      toast.message("File operations require the desktop app");
+      return null;
+    }
+    try {
+      const to = renamedPath(path, trimmed);
+      const newPath = await fsRename(path, to);
+      set((s) => ({
+        openFiles: remapOpenFiles(s.openFiles, path, newPath),
+        activeFile: remapActive(s.activeFile, path, newPath),
+        fsRefreshNonce: s.fsRefreshNonce + 1,
+      }));
+      toast.success("Renamed", { description: basename(newPath) });
+      return newPath;
+    } catch (err) {
+      toast.error("Couldn't rename", { description: (err as Error).message });
+      return null;
+    }
+  },
+  duplicateEntry: async (path) => {
+    if (!isTauri()) {
+      toast.message("File operations require the desktop app");
+      return null;
+    }
+    try {
+      const created = await fsDuplicate(path);
+      set((s) => ({ fsRefreshNonce: s.fsRefreshNonce + 1 }));
+      toast.success("Duplicated", { description: basename(created) });
+      return created;
+    } catch (err) {
+      toast.error("Couldn't duplicate", { description: (err as Error).message });
+      return null;
+    }
+  },
+  deleteEntry: async (path) => {
+    if (!isTauri()) {
+      toast.message("File operations require the desktop app");
+      return false;
+    }
+    try {
+      await fsDelete(path);
+      set((s) => ({
+        openFiles: openFilesAfterDelete(s.openFiles, path),
+        activeFile: activeAfterDelete(s.openFiles, s.activeFile, path),
+        fsRefreshNonce: s.fsRefreshNonce + 1,
+      }));
+      toast.message("Deleted", { description: basename(path) });
+      return true;
+    } catch (err) {
+      toast.error("Couldn't delete", { description: (err as Error).message });
+      return false;
+    }
+  },
+  moveEntry: async (from, toDir) => {
+    if (!isTauri()) {
+      toast.message("File operations require the desktop app");
+      return null;
+    }
+    try {
+      const newPath = await fsMove(from, joinPath(toDir, basename(from)));
+      set((s) => ({
+        openFiles: remapOpenFiles(s.openFiles, from, newPath),
+        activeFile: remapActive(s.activeFile, from, newPath),
+        fsRefreshNonce: s.fsRefreshNonce + 1,
+      }));
+      toast.success("Moved", { description: basename(newPath) });
+      return newPath;
+    } catch (err) {
+      toast.error("Couldn't move", { description: (err as Error).message });
+      return null;
+    }
+  },
+  revealEntry: async (path) => {
+    if (!isTauri()) {
+      toast.message("Reveal requires the desktop app");
+      return;
+    }
+    try {
+      await fsReveal(path);
+    } catch (err) {
+      toast.error("Couldn't reveal in file manager", { description: (err as Error).message });
+    }
+  },
+
+  lastReplaceUndo: null,
+  searchWorkspace: async (options) => {
+    const empty: SearchResults = { files: [], total: 0, truncated: false };
+    if (!isTauri() || !options.query.trim()) return empty;
+    try {
+      return (await fsSearch(options)) ?? empty;
+    } catch (err) {
+      toast.error("Search failed", { description: (err as Error).message });
+      return empty;
+    }
+  },
+  previewReplace: async (options) => {
+    if (!isTauri() || !options.query.trim()) return [];
+    try {
+      return (await fsReplacePreview(options)) ?? [];
+    } catch (err) {
+      toast.error("Couldn't preview replace", { description: (err as Error).message });
+      return [];
+    }
+  },
+  applyReplace: async (options) => {
+    if (!isTauri()) {
+      toast.message("Replace requires the desktop app");
+      return null;
+    }
+    if (!options.query.trim()) return null;
+    try {
+      const summary = await fsReplaceApply(options);
+      // Refresh any open editor buffers for changed files so the editor shows
+      // the replaced content (and reset their dirty flag from disk truth).
+      const changed = new Set(summary.files.map((f) => f.file));
+      const updated = await Promise.all(
+        get().openFiles.map(async (f) => {
+          if (!changed.has(f.path)) return f;
+          const content = await fsReadText(f.path);
+          return content === null ? f : { ...f, content, dirty: false };
+        }),
+      );
+      set((s) => ({
+        openFiles: updated,
+        lastReplaceUndo: summary.files.length > 0 ? summary.files : s.lastReplaceUndo,
+        fsRefreshNonce: s.fsRefreshNonce + 1,
+      }));
+      if (summary.total_replacements > 0) {
+        toast.success(
+          `Replaced ${summary.total_replacements} occurrence${
+            summary.total_replacements === 1 ? "" : "s"
+          } in ${summary.files.length} file${summary.files.length === 1 ? "" : "s"}`,
+          { description: "Undo available from the Search panel." },
+        );
+      } else {
+        toast.message("No occurrences replaced");
+      }
+      return summary;
+    } catch (err) {
+      toast.error("Replace failed", { description: (err as Error).message });
+      return null;
+    }
+  },
+  undoLastReplace: async () => {
+    const undo = get().lastReplaceUndo;
+    if (!undo || undo.length === 0) return 0;
+    if (!isTauri()) return 0;
+    let restored = 0;
+    for (const file of undo) {
+      if (await fsWriteText(file.file, file.original)) restored += 1;
+    }
+    const restoredPaths = new Set(undo.map((f) => f.file));
+    set((s) => ({
+      openFiles: s.openFiles.map((f) => {
+        const orig = undo.find((u) => u.file === f.path);
+        return orig && restoredPaths.has(f.path) ? { ...f, content: orig.original, dirty: false } : f;
+      }),
+      lastReplaceUndo: null,
+      fsRefreshNonce: s.fsRefreshNonce + 1,
+    }));
+    toast.message(`Reverted replace in ${restored} file${restored === 1 ? "" : "s"}`);
+    return restored;
+  },
+
+  git: null,
+  refreshGit: async () => {
+    if (!isTauri()) {
+      set({ git: null });
+      return;
+    }
+    try {
+      set({ git: await gitStatus() });
+    } catch {
+      set({ git: null });
+    }
+  },
+  stageFiles: async (paths) => {
+    if (!isTauri() || paths.length === 0) return;
+    try {
+      await gitStage(paths);
+      await get().refreshGit();
+    } catch (err) {
+      toast.error("Couldn't stage", { description: (err as Error).message });
+    }
+  },
+  unstageFiles: async (paths) => {
+    if (!isTauri() || paths.length === 0) return;
+    try {
+      await gitUnstage(paths);
+      await get().refreshGit();
+    } catch (err) {
+      toast.error("Couldn't unstage", { description: (err as Error).message });
+    }
+  },
+  discardFiles: async (paths) => {
+    if (!isTauri() || paths.length === 0) return;
+    try {
+      await gitDiscard(paths);
+      // Discarded files changed on disk — refresh open buffers from truth.
+      const changed = new Set(paths);
+      const updated = await Promise.all(
+        get().openFiles.map(async (f) => {
+          if (!changed.has(f.path)) return f;
+          const content = await fsReadText(f.path);
+          return content === null ? f : { ...f, content, dirty: false };
+        }),
+      );
+      set((s) => ({ openFiles: updated, fsRefreshNonce: s.fsRefreshNonce + 1 }));
+      await get().refreshGit();
+      toast.message("Discarded changes");
+    } catch (err) {
+      toast.error("Couldn't discard", { description: (err as Error).message });
+    }
+  },
+  commitChanges: async (message) => {
+    if (!isTauri()) {
+      toast.message("Commit requires the desktop app");
+      return null;
+    }
+    if (!message.trim()) {
+      toast.error("A commit message is required");
+      return null;
+    }
+    try {
+      const hash = await gitCommit(message);
+      await get().refreshGit();
+      toast.success("Committed", { description: hash.slice(0, 8) });
+      return hash;
+    } catch (err) {
+      // Surfaces git's own message, e.g. missing identity or nothing staged.
+      toast.error("Commit failed", { description: (err as Error).message });
+      return null;
+    }
+  },
+  listGitBranches: async () => {
+    if (!isTauri()) return [];
+    try {
+      return await gitBranches();
+    } catch {
+      return [];
+    }
+  },
+  checkoutBranch: async (branch) => {
+    if (!isTauri()) return;
+    try {
+      await gitCheckout(branch);
+      set((s) => ({ fsRefreshNonce: s.fsRefreshNonce + 1 }));
+      await get().refreshGit();
+      toast.success(`Switched to ${branch}`);
+    } catch (err) {
+      toast.error("Couldn't switch branch", { description: (err as Error).message });
+    }
+  },
+  createGitBranch: async (name) => {
+    if (!isTauri()) return;
+    try {
+      await gitCreateBranch(name);
+      await get().refreshGit();
+      toast.success(`Created branch ${name.trim()}`);
+    } catch (err) {
+      toast.error("Couldn't create branch", { description: (err as Error).message });
+    }
+  },
+  pullChanges: async () => {
+    if (!isTauri()) return;
+    try {
+      const out = await gitPull();
+      set((s) => ({ fsRefreshNonce: s.fsRefreshNonce + 1 }));
+      await get().refreshGit();
+      toast.success("Pulled", { description: out.split("\n")[0] || undefined });
+    } catch (err) {
+      toast.error("Pull failed", { description: (err as Error).message });
+    }
+  },
+  pushChanges: async () => {
+    if (!isTauri()) return;
+    try {
+      const out = await gitPush();
+      await get().refreshGit();
+      toast.success("Pushed", { description: out.split("\n")[0] || undefined });
+    } catch (err) {
+      toast.error("Push failed", { description: (err as Error).message });
+    }
+  },
+  loadGitLog: async (limit) => {
+    if (!isTauri()) return [];
+    try {
+      return await gitLog(limit);
+    } catch {
+      return [];
+    }
+  },
+  gitFileDiff: async (path, staged) => {
+    if (!isTauri()) return "";
+    try {
+      return await gitDiff(path, staged);
+    } catch {
+      return "";
+    }
+  },
+
+  diagnostics: {},
+  setDiagnostics: (source, items) =>
+    set((s) => ({ diagnostics: { ...s.diagnostics, [source]: items } })),
+  clearDiagnostics: (source) =>
+    set((s) => {
+      if (!source) return { diagnostics: {} };
+      const next = { ...s.diagnostics };
+      delete next[source];
+      return { diagnostics: next };
+    }),
+  runDiagnostics: async (kind, cwd) => {
+    const source = sourceForKind(kind);
+    if (!isTauri()) {
+      toast.message("Validation requires the desktop app");
+      return;
+    }
+    get().appendLog("info", `Running ${kind} check…`);
+    try {
+      const result = await runCheck(kind, cwd);
+      if (!result) {
+        get().appendLog("error", `${kind}: checker unavailable`);
+        return;
+      }
+      const combined = `${result.stdout}\n${result.stderr}`;
+      get().appendOutput("Tasks", `$ ${kind}\n${combined.trim()}\n(exit ${result.code})`);
+      const items = parseByKind(kind, combined);
+      get().setDiagnostics(source, items);
+      get().appendLog(
+        items.length ? "warning" : "info",
+        `${kind}: ${items.length} problem${items.length === 1 ? "" : "s"} (exit ${result.code})`,
+      );
+      toast.message(
+        items.length
+          ? `${kind}: ${items.length} problem${items.length === 1 ? "" : "s"}`
+          : `${kind}: no problems`,
+      );
+    } catch (err) {
+      get().appendLog("error", `${kind}: ${(err as Error).message}`);
+      toast.error(`${kind} check failed`, { description: (err as Error).message });
+    }
+  },
+
+  outputChannels: {
+    Agent: [],
+    Git: [],
+    Tasks: [],
+    MCP: [],
+    Terminal: [],
+    "Extension Host": [],
+  },
+  appendOutput: (channel, text) =>
+    set((s) => {
+      const prev = s.outputChannels[channel] ?? [];
+      // Cap each channel so a noisy producer can't grow memory unbounded.
+      const next = [...prev, text].slice(-2000);
+      return { outputChannels: { ...s.outputChannels, [channel]: next } };
+    }),
+  clearOutput: (channel) =>
+    set((s) => ({ outputChannels: { ...s.outputChannels, [channel]: [] } })),
+
+  logs: [],
+  appendLog: (level, message) =>
+    set((s) => ({ logs: [...s.logs, { ts: Date.now(), level, message }].slice(-2000) })),
+  clearLogs: () => set({ logs: [] }),
+
+  tasks: [],
+  taskRuns: {},
+  discoverTasks: async () => {
+    const root = get().workspaceRoot;
+    if (!isTauri() || !root) {
+      set({ tasks: [] });
+      return;
+    }
+    const read = async (rel: string): Promise<string | null> => fsReadText(joinPath(root, rel));
+    const [pkg, cargo, makefile, pyproject, vscodeTasks, zocTasks] = await Promise.all([
+      read("package.json"),
+      read("Cargo.toml"),
+      read("Makefile"),
+      read("pyproject.toml"),
+      read(".vscode/tasks.json"),
+      read(".zoc/tasks.json"),
+    ]);
+    const tasks = dedupeTasks([
+      // Config sources first so they win on id collisions.
+      ...(vscodeTasks ? parseTasksJson(vscodeTasks, "vscode") : []),
+      ...(zocTasks ? parseTasksJson(zocTasks, "zoc") : []),
+      ...(pkg ? detectNpmScripts(pkg) : []),
+      ...(cargo ? detectCargo(cargo) : []),
+      ...(makefile ? detectMake(makefile) : []),
+      ...(pyproject ? detectPython(pyproject) : []),
+    ]);
+    set({ tasks });
+  },
+  runTask: async (id) => {
+    const task = get().tasks.find((t) => t.id === id);
+    if (!task) return;
+    if (!isTauri()) {
+      toast.message("Tasks require the desktop app");
+      return;
+    }
+    // Workspace Trust + permission gate (Phase 13). A restricted workspace
+    // blocks task execution; the decision is recorded in the audit log.
+    const decision = checkAction(
+      { kind: "task", name: `${task.command} ${task.args.join(" ")}`.trim(), destructive: false },
+      get().workspaceRoot,
+    );
+    if (decision.effect === "deny") {
+      get().appendLog("warning", `Task blocked: ${task.label} — ${decision.reason}`);
+      toast.error("Task blocked", { description: decision.reason });
+      return;
+    }
+    set((s) => ({ taskRuns: { ...s.taskRuns, [id]: "running" } }));
+    get().appendLog("info", `Task started: ${task.label}`);
+    get().appendOutput("Tasks", `$ ${task.command} ${task.args.join(" ")}`.trim());
+    try {
+      const result = await runTaskCommand(task.command, task.args, task.cwd ?? undefined);
+      if (!result) {
+        set((s) => ({ taskRuns: { ...s.taskRuns, [id]: "failed" } }));
+        get().appendLog("error", `Task unavailable: ${task.label}`);
+        return;
+      }
+      const combined = `${result.stdout}\n${result.stderr}`;
+      get().appendOutput("Tasks", `${combined.trim()}\n(exit ${result.code})`);
+      // Feed a problem matcher into the diagnostics store when the task declares one.
+      if (task.problemMatcher) {
+        const kind = task.problemMatcher as CheckKind;
+        get().setDiagnostics(sourceForKind(kind), parseByKind(kind, combined));
+      }
+      const ok = result.code === 0;
+      set((s) => ({ taskRuns: { ...s.taskRuns, [id]: ok ? "passed" : "failed" } }));
+      get().appendLog(ok ? "info" : "error", `Task ${ok ? "succeeded" : "failed"}: ${task.label} (exit ${result.code})`);
+      toast[ok ? "success" : "error"](`${task.label} ${ok ? "passed" : "failed"}`);
+    } catch (err) {
+      set((s) => ({ taskRuns: { ...s.taskRuns, [id]: "failed" } }));
+      get().appendLog("error", `Task error: ${task.label} — ${(err as Error).message}`);
+      toast.error(`${task.label} failed`, { description: (err as Error).message });
+    }
+  },
+  runBuildTask: async () => {
+    if (get().tasks.length === 0) await get().discoverTasks();
+    const task = defaultBuildTask(get().tasks);
+    if (!task) {
+      toast.message("No build task found", { description: "Add one in tasks.json or package.json." });
+      return;
+    }
+    await get().runTask(task.id);
+  },
+  runTestTask: async () => {
+    if (get().tasks.length === 0) await get().discoverTasks();
+    const task = defaultTestTask(get().tasks);
+    if (!task) {
+      toast.message("No test task found", { description: "Add one in tasks.json or package.json." });
+      return;
+    }
+    await get().runTask(task.id);
+  },
+
+  breakpoints: {},
+  toggleBreakpoint: (file, line) =>
+    set((s) => {
+      const cur = s.breakpoints[file] ?? [];
+      const has = cur.includes(line);
+      const next = has ? cur.filter((l) => l !== line) : [...cur, line].sort((a, b) => a - b);
+      const map = { ...s.breakpoints };
+      if (next.length === 0) delete map[file];
+      else map[file] = next;
+      return { breakpoints: map };
+    }),
+  clearBreakpoints: (file) =>
+    set((s) => {
+      if (!file) return { breakpoints: {} };
+      const map = { ...s.breakpoints };
+      delete map[file];
+      return { breakpoints: map };
+    }),
+  launchConfigs: [],
+  selectedDebugConfig: null,
+  setSelectedDebugConfig: (name) => set({ selectedDebugConfig: name }),
+  loadLaunchConfigs: async () => {
+    const root = get().workspaceRoot;
+    if (!isTauri() || !root) {
+      set({ launchConfigs: [] });
+      return;
+    }
+    const [vscode, zoc] = await Promise.all([
+      fsReadText(joinPath(root, ".vscode/launch.json")),
+      fsReadText(joinPath(root, ".zoc/launch.json")),
+    ]);
+    const configs = [
+      ...(vscode ? parseLaunchJson(vscode) : []),
+      ...(zoc ? parseLaunchJson(zoc) : []),
+    ];
+    set((s) => ({
+      launchConfigs: configs,
+      selectedDebugConfig:
+        s.selectedDebugConfig && configs.some((c) => c.name === s.selectedDebugConfig)
+          ? s.selectedDebugConfig
+          : configs[0]?.name ?? null,
+    }));
+  },
+
+  terminals: [],
+  activeTerminalId: null,
+  terminalProfiles: defaultTerminalProfiles(),
+  terminalSplit: false,
+  newTerminal: (profileId) => {
+    const profiles = get().terminalProfiles;
+    const profile = profiles.find((p) => p.id === profileId) ?? profiles[0];
+    const id = `term-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+    const count = get().terminals.filter((t) => t.profileId === profile.id).length + 1;
+    const session: TerminalSession = {
+      id,
+      title: count > 1 ? `${profile.name} (${count})` : profile.name,
+      profileId: profile.id,
+      status: "running",
+      exitCode: null,
+    };
+    set((s) => ({ terminals: [...s.terminals, session], activeTerminalId: id }));
+    return id;
+  },
+  closeTerminal: (id) =>
+    set((s) => {
+      const next = s.terminals.filter((t) => t.id !== id);
+      const active =
+        s.activeTerminalId === id ? next[next.length - 1]?.id ?? null : s.activeTerminalId;
+      return { terminals: next, activeTerminalId: active };
+    }),
+  setActiveTerminal: (id) => set({ activeTerminalId: id }),
+  renameTerminal: (id, title) =>
+    set((s) => ({
+      terminals: s.terminals.map((t) => (t.id === id ? { ...t, title: title.trim() || t.title } : t)),
+    })),
+  setTerminalExited: (id, code) =>
+    set((s) => ({
+      terminals: s.terminals.map((t) =>
+        t.id === id ? { ...t, status: "exited" as const, exitCode: code } : t,
+      ),
+    })),
+  toggleTerminalSplit: () => set((s) => ({ terminalSplit: !s.terminalSplit })),
 
   loadSessions: async () => {
     // Hydrate workspace root from persisted desktop config first so any
@@ -855,9 +1922,40 @@ export const useApp = create<AppState>((set, get) => ({
     }
     try {
       const client = await getAgentClient();
-      let sessions = await client.listSessions();
+      const sessions = await client.listSessions();
+
+      // R2.2: resolve the app-open intent from the persisted "last active"
+      // pointer instead of unconditionally selecting sessions[0]. A `resume`
+      // is produced only when `lastActiveId` names a session that still
+      // exists; otherwise the resolver yields `fresh` and we start clean.
+      const lastActiveId = loadLastActiveSession();
+      const intent = resolveSessionIntent({
+        trigger: "app-open",
+        sessions,
+        lastActiveId,
+      });
+
+      if (intent.kind === "resume" || intent.kind === "select") {
+        const target = sessions.find((s) => s.id === intent.sessionId) ?? sessions[0];
+        set({
+          sessions,
+          liveMode: true,
+          activeSessionId: target.id,
+          chat: entriesFromSession(target),
+          agentItems: workflowItemsFromSession(target),
+          plan: target.plan ?? null,
+          workspaceRoot: target.workspace_root ?? get().workspaceRoot,
+        });
+        persistLastActiveSession(target.id);
+        void get().loadMemoryStats();
+        return;
+      }
+
+      // intent.kind === "fresh": never auto-resume a prior session.
       if (!sessions.length) {
-        // Auto-create a session so the user can start working immediately.
+        // No sessions yet — auto-create a single clean session so the user
+        // can start working immediately. The freshly-created session is
+        // itself clean, so selecting it does not violate the "fresh" intent.
         const workspaceRoot = get().workspaceRoot || "/tmp";
         const { provider, model } = get().selectedModel;
         const session = await client.createSession({
@@ -866,33 +1964,60 @@ export const useApp = create<AppState>((set, get) => ({
           provider: provider || undefined,
           model: model || undefined,
         });
-        sessions = [session];
+        set({
+          sessions: [session],
+          liveMode: true,
+          activeSessionId: session.id,
+          chat: entriesFromSession(session),
+          agentItems: workflowItemsFromSession(session),
+          plan: session.plan ?? null,
+          workspaceRoot: session.workspace_root ?? get().workspaceRoot,
+        });
+        persistLastActiveSession(session.id);
+        void get().loadMemoryStats();
+        return;
       }
-      const first = sessions[0];
+
+      // Sessions exist but none is an explicit resume target — keep the list
+      // for the sidebar but start with a clean/empty active state rather than
+      // auto-resuming the most-recent prior session.
       set({
         sessions,
         liveMode: true,
-        activeSessionId: first.id,
-        chat: entriesFromSession(first),
-        agentItems: workflowItemsFromSession(first),
-        plan: first.plan ?? null,
-        workspaceRoot: first.workspace_root ?? get().workspaceRoot,
+        activeSessionId: "",
+        chat: [],
+        agentItems: [],
+        plan: null,
       });
       void get().loadMemoryStats();
-      void get().loadReplitWorkflow();
     } catch {
       // Browser preview / sidecar offline → keep mocks.
     }
   },
 
   selectSession: async (id) => {
-    set({ activeSessionId: id });
+    // R2.3/R2.4: a user-driven select. Route through the resolver so an id
+    // that no longer exists falls back to a clean/fresh state instead of
+    // leaving a dangling active pointer.
+    const intent = resolveSessionIntent({
+      trigger: "select",
+      sessions: get().sessions,
+      lastActiveId: loadLastActiveSession(),
+      selectedId: id,
+    });
+    if (intent.kind !== "select") {
+      set({ activeSessionId: "", chat: [], agentItems: [], plan: null });
+      persistLastActiveSession(null);
+      return;
+    }
+    set({ activeSessionId: intent.sessionId });
+    persistLastActiveSession(intent.sessionId);
     if (!get().liveMode) return;
     try {
       const client = await getAgentClient();
-      const session = await client.getSession(id);
+      const session = await client.getSession(intent.sessionId);
       set((s) => ({
-        sessions: s.sessions.map((x) => (x.id === id ? session : x)),
+        sessions: s.sessions.map((x) => (x.id === intent.sessionId ? session : x)),
         chat: entriesFromSession(session),
         agentItems: workflowItemsFromSession(session),
         plan: session.plan ?? null,
@@ -901,7 +2026,8 @@ export const useApp = create<AppState>((set, get) => ({
       /* keep cached */
     }
     void get().loadMemoryStats();
-    void get().loadReplitWorkflow();
+    void get().loadProjectRules();
+    void get().loadCheckpoints();
   },
 
   createSession: async (title, workspaceRoot) => {
@@ -921,10 +2047,11 @@ export const useApp = create<AppState>((set, get) => ({
         agentItems: workflowItemsFromSession(session),
         plan: session.plan ?? null,
         liveMode: true,
-        replitPlans: [],
-        replitTasks: [],
-        selectedReplitTaskId: null,
       }));
+      // R2.1: "new chat" yields a fresh session. Persist its id as the new
+      // last-active pointer so a later app-open resumes this one (not a
+      // stale prior session).
+      persistLastActiveSession(session.id);
       await track("session.created", { id: session.id });
       return session;
     } catch {
@@ -950,26 +2077,34 @@ export const useApp = create<AppState>((set, get) => ({
       }
     }
 
-    set({
-      sessions: nextSessions,
-      ...(deletingActive
-        ? {
-            activeSessionId: nextSessions[0]?.id ?? "",
-            chat: nextSessions[0] ? entriesFromSession(nextSessions[0]) : [],
-            agentItems: nextSessions[0] ? workflowItemsFromSession(nextSessions[0]) : [],
-            plan: nextSessions[0]?.plan ?? null,
-            replitPlans: [],
-            replitTasks: [],
-            selectedReplitTaskId: null,
-            replitTaskLogs: {},
-            replitCheckpoints: [],
-          }
-        : {}),
-    });
-
-    if (deletingActive && before.liveMode && nextSessions[0]) {
-      await get().selectSession(nextSessions[0].id);
+    if (deletingActive) {
+      // R2.5: deleting the active session yields a `fresh` intent — do NOT
+      // auto-jump into another session. Start from a clean/empty state and
+      // clear the last-active pointer so the next app-open does not resume
+      // the now-deleted session.
+      const intent = resolveSessionIntent({
+        trigger: "delete-active",
+        sessions: nextSessions,
+        lastActiveId: loadLastActiveSession(),
+        selectedId: id,
+      });
+      // intent.kind is always "fresh" for delete-active.
+      void intent;
+      set({
+        sessions: nextSessions,
+        activeSessionId: "",
+        chat: [],
+        agentItems: [],
+        plan: null,
+      });
+      persistLastActiveSession(null);
+    } else {
+      set({ sessions: nextSessions });
+      // If the deleted session happened to be the persisted pointer (but not
+      // the active one), drop the stale pointer too.
+      if (loadLastActiveSession() === id) persistLastActiveSession(null);
     }
+
     await track("session.deleted", { id });
     return true;
   },
@@ -995,63 +2130,8 @@ export const useApp = create<AppState>((set, get) => ({
     if (!content.trim()) return;
     let sessionId = get().activeSessionId;
     const outgoing = expandFileMentions(content, get());
-    // Ask mode is pure read-only Q&A: never route to the plan/build
-    // workflow, never auto-create tasks. Only explicit slash commands are
-    // still honored below.
-    const askMode = get().agentMode === "ask";
-    const workflowIntent = askMode ? null : workflowIntentForMessage(outgoing, get());
-    const appendLocalUserMessage = () => {
-      const userMsg: Message = {
-        id: `local-${Date.now()}`,
-        role: "user",
-        content: outgoing,
-        created_at: new Date().toISOString(),
-      };
-      set((s) => ({
-        chat: [...s.chat, { kind: "message", id: userMsg.id, message: userMsg }],
-        agentItems: upsertWorkflowMessage(s.agentItems, userMsg),
-      }));
-    };
-
-    // `/plan <description>` is intercepted before the generic slash parser
-    // because it routes to the Replit plan workflow, not the streaming
-    // agent recipe. Mirrors how `/review` and `/test` dispatch in
-    // `runSlashCommand`.
-    const planMatch = /^\s*\/plan(?:\s+(.*))?$/i.exec(outgoing);
-    if (planMatch && !askMode) {
-      const prompt = (planMatch[1] ?? "").trim();
-      if (!prompt) {
-        appendErrorChat(
-          set,
-          "sendUserMessage",
-          new Error("Usage: /plan <describe the change you want planned>"),
-        );
-        return;
-      }
-      appendLocalUserMessage();
-      await get().createReplitPlan(prompt);
-      return;
-    }
-
-    if (workflowIntent) {
-      appendLocalUserMessage();
-      set({
-        activity: get().activity === "tasks" ? "files" : get().activity,
-        mainView: "editor",
-        layout: { ...get().layout, sidePanelOpen: true, rightPanelOpen: true },
-      });
-      if (workflowIntent.existingPlanId) {
-        const approved = await get().approveReplitPlan(workflowIntent.existingPlanId);
-        if (approved) await startFirstRunnableReplitTask(get, workflowIntent.existingPlanId);
-        return;
-      }
-      const plan = await get().createReplitPlan(workflowIntent.prompt);
-      if (plan && workflowIntent.autoApprove) {
-        const approved = await get().approveReplitPlan(plan.id);
-        if (approved) await startFirstRunnableReplitTask(get, plan.id);
-      }
-      return;
-    }
+    // Ask mode is pure read-only Q&A. Explicit slash commands are honored
+    // below; everything else falls through to the streaming agent run.
 
     // Slash command routing: `/name arg1 arg2…` → `runSlashCommand`.
     const slash = parseSlash(outgoing);
@@ -1082,12 +2162,28 @@ export const useApp = create<AppState>((set, get) => ({
       content: outgoing,
       created_at: new Date().toISOString(),
     };
+    // Client-supplied, deterministic run id derived from the just-appended
+    // user message. The backend reuses it as the run's authoritative id and
+    // echoes it on every emitted event (R1.2, R1.7), so we can bind the run to
+    // this exact message up-front and discard events from a superseded run.
+    const runId = `run-${userMsg.id}`;
+    // Terminate any previous in-flight stream BEFORE assigning the new run id
+    // so a stale stream's terminal `finally` can't clobber the new run's
+    // state (fixes bug #4 — run-start ordering race).
+    currentAbort?.abort();
+    currentAbort = null;
+
+    // Bind the run to THIS message: adopt the deterministic run id as the
+    // active run and record `boundMessageId = userMsg.id` (R1.1, R1.3). This
+    // mirrors the run-machine `start` action — a run is bound to exactly one
+    // user message, which is always present here because we just appended it.
     set((s) => ({
       chat: [...s.chat, { kind: "message", id: userMsg.id, message: userMsg }],
       agentItems: upsertWorkflowMessage(s.agentItems, userMsg),
       streaming: true,
       isRunning: true,
-      runId: `run-${Date.now()}`,
+      runId,
+      boundMessageId: userMsg.id,
     }));
     await track("session.message_sent", { id: sessionId });
 
@@ -1112,7 +2208,6 @@ export const useApp = create<AppState>((set, get) => ({
     }
 
     const abort = new AbortController();
-    currentAbort?.abort();
     currentAbort = abort;
     try {
       const client = await getAgentClient();
@@ -1123,6 +2218,7 @@ export const useApp = create<AppState>((set, get) => ({
       const creds = await resolveProviderCreds(get());
       const payloadWithCreds: RunAgentRequest = {
         ...runPayload,
+        runId,
         provider: creds.provider,
         apiKey: creds.apiKey,
         baseUrl: creds.baseUrl,
@@ -1130,6 +2226,7 @@ export const useApp = create<AppState>((set, get) => ({
       await consumeStream(
         client.runAgent(sessionId, payloadWithCreds, abort.signal),
         set,
+        { mode: runPayload.mode === "ask" ? "ask" : "agent", activeRunId: runId },
       );
     } catch (err) {
       appendErrorChat(set, "sendUserMessage", err);
@@ -1139,6 +2236,14 @@ export const useApp = create<AppState>((set, get) => ({
       if (currentAbort === abort) {
         currentAbort = null;
         set({ streaming: false, isRunning: false, runId: null });
+        // Release the next queued message (if any) when this run reaches a
+        // terminal state. Remaining messages stay queued and chain as each
+        // subsequent run completes (R4.11 / R4.14).
+        const [next, ...rest] = get().messageQueue;
+        if (next) {
+          set({ messageQueue: rest });
+          void get().sendUserMessage(next.content);
+        }
       }
       // Refresh the memory snapshot so the indicator reflects the new
       // turn. Best-effort — failure leaves the stale snapshot alone.
@@ -1261,34 +2366,6 @@ export const useApp = create<AppState>((set, get) => ({
 
   setInput: (value) => set({ input: value }),
 
-  approvePlan: async (planId) => {
-    const approved = await get().approveReplitPlan(planId);
-    if (approved) await startFirstRunnableReplitTask(get, planId);
-  },
-
-  revisePlan: async (planId, instruction) => {
-    const prompt = instruction.trim();
-    if (!prompt) {
-      set({ input: "/plan " });
-      return;
-    }
-    await get().reviseReplitPlan(planId, prompt);
-  },
-
-  cancelPlan: async (planId) => {
-    const now = new Date().toISOString();
-    set((s) => ({
-      replitPlans: s.replitPlans.map((plan) =>
-        plan.id === planId ? { ...plan, status: "archived", updated_at: now } : plan,
-      ),
-      agentItems: s.agentItems.map((item) =>
-        item.type === "plan" && item.id === `plan-${planId}`
-          ? { ...item, status: "cancelled" as const }
-          : item,
-      ),
-    }));
-  },
-
   approvePermission: async (requestId) => {
     const item = get().agentItems.find(
       (entry) => entry.type === "permission" && entry.request.id === requestId,
@@ -1301,18 +2378,6 @@ export const useApp = create<AppState>((set, get) => ({
 
   rejectPermission: async (requestId) => {
     await get().resolveApproval(requestId, false);
-  },
-
-  retryTask: async (taskId) => {
-    await get().startReplitTask(taskId);
-  },
-
-  applyTask: async (taskId) => {
-    await get().applyReplitTask(taskId);
-  },
-
-  dismissTask: async (taskId) => {
-    await get().dismissReplitTask(taskId);
   },
 
   runTests: async () => {
@@ -1731,7 +2796,7 @@ export const useApp = create<AppState>((set, get) => ({
   cancelStream: () => {
     currentAbort?.abort();
     currentAbort = null;
-    set({ streaming: false, isRunning: false, runId: null, agentPaused: false });
+    set({ streaming: false, isRunning: false, runId: null, agentPaused: false, messageQueue: [] });
   },
 
   pauseAgent: () => {
@@ -1739,6 +2804,46 @@ export const useApp = create<AppState>((set, get) => ({
     if (get().streaming || get().isRunning) set({ agentPaused: true });
   },
   resumeAgent: () => set({ agentPaused: false }),
+
+  queueUserMessage: (content) => {
+    const text = content.trim();
+    if (!text) return;
+    // Only hold a message while a run is active; otherwise it would never be
+    // released. Callers send directly when idle.
+    if (get().streaming || get().isRunning) {
+      const id = `q-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+      set((s) => ({ messageQueue: [...s.messageQueue, { id, content: text }] }));
+    }
+  },
+
+  dequeueMessage: (id) =>
+    set((s) => ({ messageQueue: s.messageQueue.filter((m) => m.id !== id) })),
+
+  clearQueue: () => set({ messageQueue: [] }),
+
+  reorderQueue: (fromIndex, toIndex) =>
+    set((s) => {
+      const queue = [...s.messageQueue];
+      if (
+        fromIndex < 0 ||
+        fromIndex >= queue.length ||
+        toIndex < 0 ||
+        toIndex >= queue.length ||
+        fromIndex === toIndex
+      ) {
+        return {};
+      }
+      const [moved] = queue.splice(fromIndex, 1);
+      queue.splice(toIndex, 0, moved);
+      return { messageQueue: queue };
+    }),
+
+  stopAndSend: (content) => {
+    const text = content.trim();
+    // Cancel the in-flight run (clears the queue) then send immediately.
+    get().cancelStream();
+    if (text) void get().sendUserMessage(text);
+  },
 
   setAutonomy: (level) => set({ autonomy: level }),
 
@@ -1833,9 +2938,25 @@ export const useApp = create<AppState>((set, get) => ({
     await onLlamaCppStatus((ev) => set({ llamaCppStatus: ev }));
   },
   addAttachment: (a) =>
-    set((s) => ({ attachments: [...s.attachments, { id: `att-${Date.now()}`, ...a }] })),
-  removeAttachment: (id) =>
+    set((s) => ({ attachments: [...s.attachments, { id: `att-${Date.now()}`, ...a }] })),  removeAttachment: (id) =>
     set((s) => ({ attachments: s.attachments.filter((a) => a.id !== id) })),
+  searchContextCandidates: async (query) => {
+    const openFileFallback = (): ContextCandidate[] => {
+      const q = query.toLowerCase();
+      return get()
+        .openFiles.filter((f) => f.path.toLowerCase().includes(q))
+        .slice(0, 25)
+        .map((f) => ({ kind: "file" as const, label: f.name, path: f.path, detail: f.path, line: null }));
+    };
+    if (!get().liveMode || !get().activeSessionId) return openFileFallback();
+    try {
+      const client = await getAgentClient();
+      const out = await client.searchContext(get().activeSessionId, query, 25);
+      return out.length > 0 ? out : openFileFallback();
+    } catch {
+      return openFileFallback();
+    }
+  },
   clearAttachments: () => set({ attachments: [] }),
   toggleHunk: (diffId, hunkIndex) =>
     set((s) => {
@@ -1904,6 +3025,129 @@ export const useApp = create<AppState>((set, get) => ({
   acceptAllForDiff: (diffId) => get().applyPatch(diffId),
   rejectAllForDiff: (diffId) => get().rejectPatch(diffId),
 
+  applyCurrentRun: async () => {
+    const runId = get().reviewRunId;
+    const sessionId = get().activeSessionId;
+    if (!runId || !sessionId || !get().liveMode) return false;
+    try {
+      const client = await getAgentClient();
+      const result = await client.applyRun(sessionId, runId);
+      const failed = result.failed_files ?? [];
+      await track("agent.run.applied", {
+        runId,
+        files: result.applied_files.length,
+        failed: failed.length,
+      });
+      if (failed.length > 0) {
+        // Partial apply: some files couldn't be written to the real
+        // workspace. The backend has already torn down the isolated copy,
+        // so the review can't be retried — surface the failures and clear
+        // the (now-defunct) review state.
+        appendErrorChat(
+          set,
+          "applyCurrentRun",
+          new Error(
+            `Applied ${result.applied_files.length} file(s), but ${failed.length} failed: ` +
+              `${failed.slice(0, 5).join(", ")}${failed.length > 5 ? "…" : ""}. ` +
+              "Check workspace permissions and re-run the agent for the rest.",
+          ),
+        );
+        set({
+          reviewRunId: null,
+          pendingPatches: [],
+          acceptedHunks: {},
+          reviewValidation: null,
+        });
+        return false;
+      }
+      // The whole run landed atomically — clear the pending review queue so
+      // the diff card collapses into its "all reviewed" state. Remember the
+      // checkpoint so the user can one-click Undo this run.
+      set((s) => {
+        const appliedIds = s.pendingPatches.map((p) => p.id);
+        const nextApplied = new Set(s.appliedPatchIds);
+        for (const id of appliedIds) nextApplied.add(id);
+        persistAppliedPatchIds(nextApplied);
+        return {
+          reviewRunId: null,
+          pendingPatches: [],
+          appliedPatchIds: nextApplied,
+          acceptedHunks: {},
+          reviewValidation: null,
+          restorableRunId: result.checkpoint_id ?? runId,
+        };
+      });
+      void get().loadCheckpoints();
+      return true;
+    } catch (err) {
+      appendErrorChat(set, "applyCurrentRun", err as Error);
+      return false;
+    }
+  },
+  restoreCurrentRun: async () => {
+    const runId = get().restorableRunId;
+    const sessionId = get().activeSessionId;
+    if (!runId || !sessionId || !get().liveMode) return false;
+    try {
+      const client = await getAgentClient();
+      const result = await client.restoreRun(sessionId, runId);
+      await track("agent.run.restored", { runId, files: result.restored_files.length });
+      // Undo landed: the applied files are reverted on disk; the fs watcher
+      // will refresh open buffers. Clear the undo affordance.
+      set({ restorableRunId: null });
+      return true;
+    } catch (err) {
+      appendErrorChat(set, "restoreCurrentRun", err as Error);
+      return false;
+    }
+  },
+  loadCheckpoints: async () => {
+    if (!get().liveMode || !get().activeSessionId) {
+      set({ checkpoints: [] });
+      return;
+    }
+    try {
+      const client = await getAgentClient();
+      set({ checkpoints: await client.listCheckpoints(get().activeSessionId) });
+    } catch {
+      // Sidecar offline / endpoint missing — leave the list untouched.
+    }
+  },
+  restoreCheckpoint: async (runId) => {
+    const sessionId = get().activeSessionId;
+    if (!runId || !sessionId || !get().liveMode) return false;
+    try {
+      const client = await getAgentClient();
+      const result = await client.restoreRun(sessionId, runId);
+      await track("agent.run.restored", { runId, files: result.restored_files.length });
+      set((s) => ({
+        restorableRunId: s.restorableRunId === runId ? null : s.restorableRunId,
+      }));
+      void get().loadCheckpoints();
+      return true;
+    } catch (err) {
+      appendErrorChat(set, "restoreCheckpoint", err as Error);
+      return false;
+    }
+  },
+  discardCurrentRun: async () => {
+    const runId = get().reviewRunId;
+    const sessionId = get().activeSessionId;
+    if (!runId || !sessionId || !get().liveMode) {
+      set({ reviewRunId: null, pendingPatches: [], acceptedHunks: {}, reviewValidation: null });
+      return;
+    }
+    try {
+      const client = await getAgentClient();
+      await client.discardRun(sessionId, runId);
+      await track("agent.run.discarded", { runId });
+    } catch (err) {
+      appendErrorChat(set, "discardCurrentRun", err as Error);
+    } finally {
+      set({ reviewRunId: null, pendingPatches: [], acceptedHunks: {}, reviewValidation: null });
+    }
+  },
+
   queueFindingPatch: (patch) => {
     set((s) =>
       s.pendingPatches.some((p) => p.id === patch.id)
@@ -1917,516 +3161,66 @@ export const useApp = create<AppState>((set, get) => ({
     return get().applyPatch(patch.id);
   },
 
-
-  createReplitPlan: async (prompt) => {
-    if (!prompt.trim()) return null;
-    set({ replitWorkflowLoading: true, replitWorkflowError: null });
-    try {
-      if (!get().liveMode) {
-        const now = new Date().toISOString();
-        const planId = `plan-${Date.now()}`;
-        const likelyFiles = likelyFilesForPrompt(prompt);
-        const plan: ReplitPlan = {
-          id: planId,
-          session_id: get().activeSessionId,
-          title: prompt.slice(0, 64) || "Agent workflow plan",
-          summary: "Offline preview: the desktop sidecar will run this as an isolated file-editing agent job.",
-          status: "draft",
-          created_at: now,
-          updated_at: now,
-          tasks: [
-            {
-              id: `task-${Date.now()}`,
-              session_id: get().activeSessionId,
-              plan_id: planId,
-              title: "Run the requested change",
-              summary: prompt,
-              status: "draft",
-              priority: "high",
-              depends_on: [],
-              files_likely_changed: likelyFiles,
-              done_looks_like: ["Requested files are created or updated", "The result can be reviewed from chat"],
-              test_plan: ["Run the strongest available validation"],
-              validation_attempts: 0,
-              created_at: now,
-              updated_at: now,
-            },
-          ],
-        };
-        set((s) => ({
-          replitPlans: [plan, ...s.replitPlans],
-          replitTasks: [...plan.tasks, ...s.replitTasks],
-          selectedReplitTaskId: plan.tasks[0]?.id ?? s.selectedReplitTaskId,
-          replitWorkflowLoading: false,
-          agentItems: upsertWorkflowPlan(s.agentItems, plan),
-          activity: s.activity === "tasks" ? "files" : s.activity,
-          mainView: "editor",
-          layout: { ...s.layout, sidePanelOpen: true, rightPanelOpen: true },
-        }));
-        return plan;
-      }
-      const client = await getAgentClient();
-      // Ensure a valid backend session exists before creating a plan.
-      const sid = await ensureBackendSession(client, get, set);
-      const plan = await client.createReplitPlan(sid, prompt);
-      set((s) => ({
-        replitPlans: [plan, ...s.replitPlans.filter((p) => p.id !== plan.id)],
-        replitTasks: mergeTasks(s.replitTasks, plan.tasks),
-        selectedReplitTaskId: plan.tasks[0]?.id ?? s.selectedReplitTaskId,
-        agentItems: upsertWorkflowPlan(s.agentItems, plan),
-        activity: s.activity === "tasks" ? "files" : s.activity,
-        mainView: "editor",
-        layout: { ...s.layout, sidePanelOpen: true, rightPanelOpen: true },
-      }));
-      await track("replit.plan.created", { id: plan.id, tasks: plan.tasks.length });
-      return plan;
-    } catch (err) {
-      const message = (err as Error).message;
-      set({ replitWorkflowError: message });
-      await track("error", { stage: "createReplitPlan", message }).catch(() => undefined);
-      return null;
-    } finally {
-      set({ replitWorkflowLoading: false });
-    }
-  },
-
-  reviseReplitPlan: async (planId, prompt) => {
-    if (!prompt.trim()) return null;
-    set({ replitWorkflowLoading: true, replitWorkflowError: null });
-    try {
-      if (!get().liveMode) {
-        const archivedAt = new Date().toISOString();
-        const revised = await get().createReplitPlan(prompt);
-        set((s) => ({
-          replitPlans: s.replitPlans.map((p) =>
-            p.id === planId ? { ...p, status: "archived", updated_at: archivedAt } : p,
-          ),
-          agentItems: s.agentItems.map((item) =>
-            item.type === "plan" && item.id === `plan-${planId}`
-              ? { ...item, status: "cancelled" as const }
-              : item,
-          ),
-        }));
-        return revised;
-      }
-      const client = await getAgentClient();
-      const plan = await client.reviseReplitPlan(get().activeSessionId, planId, { prompt });
-      set((s) => ({
-        replitPlans: [plan, ...s.replitPlans.map((p) => p.id === planId ? { ...p, status: "archived" as const } : p).filter((p) => p.id !== plan.id)],
-        replitTasks: mergeTasks(s.replitTasks, plan.tasks),
-        selectedReplitTaskId: plan.tasks[0]?.id ?? s.selectedReplitTaskId,
-        agentItems: upsertWorkflowPlan(
-          s.agentItems.map((item) =>
-            item.type === "plan" && item.id === `plan-${planId}`
-              ? { ...item, status: "cancelled" as const }
-              : item,
-          ),
-          plan,
-        ),
-      }));
-      await track("replit.plan.revised", { id: planId, newId: plan.id });
-      return plan;
-    } catch (err) {
-      const message = (err as Error).message;
-      set({ replitWorkflowError: message });
-      await track("error", { stage: "reviseReplitPlan", message }).catch(() => undefined);
-      return null;
-    } finally {
-      set({ replitWorkflowLoading: false });
-    }
-  },
-
-  approveReplitPlan: async (planId) => {
-    set({ replitWorkflowLoading: true, replitWorkflowError: null });
-    try {
-      if (!get().liveMode) {
-        set((s) => ({
-          replitPlans: s.replitPlans.map((p) =>
-            p.id === planId ? { ...p, status: "approved", tasks: p.tasks.map((t) => ({ ...t, status: "queued" })) } : p,
-          ),
-          replitTasks: s.replitTasks.map((t) =>
-            t.plan_id === planId && t.status === "draft" ? { ...t, status: "queued" } : t,
-          ),
-          agentItems: s.replitPlans
-            .find((p) => p.id === planId)
-            ?.tasks.map((t) => ({ ...t, status: "queued" as const }))
-            .reduce(
-              (items, task) => upsertWorkflowTask(items, task),
-              s.agentItems.map((item) =>
-                item.type === "plan" && item.id === `plan-${planId}`
-                  ? { ...item, status: "approved" as const }
-                  : item,
-              ),
-            ) ?? s.agentItems,
-        }));
-        return true;
-      }
-      const client = await getAgentClient();
-      const plan = await client.approveReplitPlan(get().activeSessionId, planId);
-      set((s) => ({
-        replitPlans: [plan, ...s.replitPlans.filter((p) => p.id !== plan.id)],
-        replitTasks: mergeTasks(s.replitTasks, plan.tasks),
-        agentItems: plan.tasks.reduce(
-          (items, task) => upsertWorkflowTask(items, task),
-          upsertWorkflowPlan(s.agentItems, plan),
-        ),
-        selectedReplitTaskId: plan.tasks[0]?.id ?? s.selectedReplitTaskId,
-        activity: s.activity === "tasks" ? "files" : s.activity,
-        mainView: "editor",
-        layout: { ...s.layout, sidePanelOpen: true, rightPanelOpen: true },
-      }));
-      await track("replit.plan.approved", { id: planId });
-      return true;
-    } catch (err) {
-      const message = (err as Error).message;
-      set({ replitWorkflowError: message });
-      return false;
-    } finally {
-      set({ replitWorkflowLoading: false });
-    }
-  },
-
-  loadReplitWorkflow: async () => {
-    if (!get().liveMode) return;
-    try {
-      const client = await getAgentClient();
-      const sessionId = get().activeSessionId;
-      const [plans, tasks, checkpoints] = await Promise.all([
-        client.listReplitPlans(sessionId),
-        client.listReplitTasks(sessionId),
-        client.listReplitCheckpoints(sessionId),
-      ]);
-      set((s) => ({
-        replitPlans: plans,
-        replitTasks: tasks,
-        replitCheckpoints: checkpoints,
-        agentItems: tasks.reduce(
-          (items, task) => upsertWorkflowTask(items, task),
-          plans.reduce((items, plan) => upsertWorkflowPlan(items, plan), s.agentItems),
-        ),
-        selectedReplitTaskId:
-          s.selectedReplitTaskId && tasks.some((t) => t.id === s.selectedReplitTaskId)
-            ? s.selectedReplitTaskId
-            : tasks[0]?.id ?? null,
-      }));
-    } catch {
-      /* endpoint may not exist in older sidecars */
-    }
-  },
-
-  createReplitTask: async (req) => {
-    set({ replitWorkflowLoading: true, replitWorkflowError: null });
-    try {
-      if (!get().liveMode) {
-        const now = new Date().toISOString();
-        const task: ReplitTask = {
-          id: `task-${Date.now()}`,
-          session_id: get().activeSessionId,
-          plan_id: null,
-          title: req.title,
-          summary: req.summary ?? "Manual Replit-style task",
-          status: "draft",
-          priority: req.priority ?? "medium",
-          depends_on: [],
-          files_likely_changed: req.files_likely_changed ?? [],
-          done_looks_like: req.done_looks_like ?? [],
-          test_plan: req.test_plan ?? [],
-          validation_attempts: 0,
-          created_at: now,
-          updated_at: now,
-        };
-        set((s) => ({
-          replitTasks: mergeTasks(s.replitTasks, [task]),
-          selectedReplitTaskId: task.id,
-          agentItems: upsertWorkflowTask(s.agentItems, task),
-        }));
-        return task;
-      }
-      const client = await getAgentClient();
-      const task = await client.createReplitTask(get().activeSessionId, req);
-      set((s) => ({
-        replitTasks: mergeTasks(s.replitTasks, [task]),
-        selectedReplitTaskId: task.id,
-        agentItems: upsertWorkflowTask(s.agentItems, task),
-      }));
-      return task;
-    } catch (err) {
-      set({ replitWorkflowError: (err as Error).message });
-      return null;
-    } finally {
-      set({ replitWorkflowLoading: false });
-    }
-  },
-
-  selectReplitTask: async (taskId) => {
-    set({ selectedReplitTaskId: taskId });
-    if (!taskId || !get().liveMode) return;
-    try {
-      const client = await getAgentClient();
-      const sessionId = get().activeSessionId;
-      const [logs, diff, tests] = await Promise.all([
-        client.replitTaskLogs(sessionId, taskId),
-        client.replitTaskDiff(sessionId, taskId),
-        client.replitTaskTestResults(sessionId, taskId),
-      ]);
-      set((s) => ({
-        replitTaskLogs: { ...s.replitTaskLogs, [taskId]: logs },
-        replitTasks: s.replitTasks.map((t) =>
-          t.id === taskId ? { ...t, diff: diff.diff, test_output: tests.output } : t,
-        ),
-        agentItems: s.replitTasks
-          .filter((t) => t.id === taskId)
-          .map((t) => ({ ...t, diff: diff.diff, test_output: tests.output }))
-          .reduce((items, task) => upsertWorkflowTask(items, task), s.agentItems),
-      }));
-    } catch {
-      /* keep cached */
-    }
-  },
-
-  queueReplitTask: async (taskId) => {
-    set({ replitWorkflowLoading: true, replitWorkflowError: null, selectedReplitTaskId: taskId });
-    try {
-      if (!get().liveMode) {
-        const now = new Date().toISOString();
-        set((s) => ({
-          replitTasks: s.replitTasks.map((task) =>
-            task.id === taskId ? { ...task, status: "queued", updated_at: now } : task,
-          ),
-          agentItems: s.replitTasks
-            .filter((task) => task.id === taskId)
-            .map((task) => ({ ...task, status: "queued" as const, updated_at: now }))
-            .reduce((items, task) => upsertWorkflowTask(items, task), s.agentItems),
-          replitTaskLogs: {
-            ...s.replitTaskLogs,
-            [taskId]: [
-              ...(s.replitTaskLogs[taskId] ?? []),
-              { id: `log-${Date.now()}`, task_id: taskId, level: "info", message: "Task queued. Start the desktop sidecar for real execution.", created_at: now },
-            ],
-          },
-        }));
-        return true;
-      }
-      const client = await getAgentClient();
-      const task = await client.queueReplitTask(get().activeSessionId, taskId);
-      set((s) => ({
-        replitTasks: mergeTasks(s.replitTasks, [task]),
-        agentItems: upsertWorkflowTask(s.agentItems, task),
-        selectedReplitTaskId: task.id,
-        activity: s.activity === "tasks" ? "files" : s.activity,
-        mainView: "editor",
-        layout: { ...s.layout, sidePanelOpen: true, rightPanelOpen: true },
-      }));
-      await get().selectReplitTask(taskId);
-      await track("replit.task.queued", { id: taskId });
-      return true;
-    } catch (err) {
-      set({ replitWorkflowError: (err as Error).message });
-      return false;
-    } finally {
-      set({ replitWorkflowLoading: false });
-    }
-  },
-
-  startReplitTask: async (taskId) => {
+  openInlineEdit: (ctx) =>
     set({
-      replitWorkflowLoading: true,
-      replitWorkflowError: null,
-      selectedReplitTaskId: taskId,
-    });
+      inlineEdit: {
+        open: true,
+        filePath: ctx.filePath,
+        language: ctx.language ?? null,
+        start: ctx.start,
+        end: ctx.end,
+        original: ctx.original,
+        prefix: ctx.prefix,
+        suffix: ctx.suffix,
+        status: "idle",
+        error: null,
+      },
+    }),
+  closeInlineEdit: () => set({ inlineEdit: { ...INLINE_EDIT_CLOSED } }),
+  submitInlineEdit: async (instruction) => {
+    const ie = get().inlineEdit;
+    const text = instruction.trim();
+    if (!ie.open || !ie.filePath || !text) return false;
+    set((s) => ({ inlineEdit: { ...s.inlineEdit, status: "loading", error: null } }));
     try {
-      if (!get().liveMode) {
-        const now = new Date().toISOString();
-        set((s) => ({
-          replitTasks: s.replitTasks.map((task) =>
-            task.id === taskId ? { ...task, status: "active", updated_at: now } : task,
-          ),
-          agentItems: s.replitTasks
-            .filter((task) => task.id === taskId)
-            .map((task) => ({ ...task, status: "active" as const, updated_at: now }))
-            .reduce((items, task) => upsertWorkflowTask(items, task), s.agentItems),
-          replitTaskLogs: {
-            ...s.replitTaskLogs,
-            [taskId]: [
-              ...(s.replitTaskLogs[taskId] ?? []),
-              { id: `log-${Date.now()}`, task_id: taskId, level: "info", message: "Mock isolated task started.", created_at: now },
-            ],
-          },
-        }));
-        return true;
-      }
       const client = await getAgentClient();
-      const task = await client.startReplitTask(get().activeSessionId, taskId);
-      set((s) => ({
-        replitTasks: mergeTasks(s.replitTasks, [task]),
-        agentItems: upsertWorkflowTask(s.agentItems, task),
-        selectedReplitTaskId: task.id,
-        activity: s.activity === "tasks" ? "files" : s.activity,
-        mainView: "editor",
-        layout: { ...s.layout, sidePanelOpen: true, rightPanelOpen: true },
-      }));
-      await track("replit.task.started", { id: taskId });
-      pollReplitTaskUntilSettled(taskId);
-      return true;
-    } catch (err) {
-      set({ replitWorkflowError: (err as Error).message });
-      return false;
-    } finally {
-      set({ replitWorkflowLoading: false });
-    }
-  },
-
-  markReplitTaskReady: async (taskId) => {
-    set({ replitWorkflowLoading: true, replitWorkflowError: null, selectedReplitTaskId: taskId });
-    try {
-      if (!get().liveMode) {
-        set({ replitWorkflowError: "Desktop sidecar required: ready status needs real diff and NO ERROR validation." });
+      const sessionId = await ensureBackendSession(client, get, set);
+      const creds = await resolveProviderCreds(get());
+      const result = await client.inlineEdit(sessionId, {
+        selection: ie.original,
+        instruction: text,
+        language: ie.language,
+        prefix: ie.prefix,
+        suffix: ie.suffix,
+        model: get().selectedModel.model || null,
+        provider: creds.provider,
+        apiKey: creds.apiKey,
+        baseUrl: creds.baseUrl,
+      });
+      const edited = stripCodeFence(result.edited ?? "");
+      const file = get().openFiles.find((f) => f.path === ie.filePath);
+      if (!file) {
+        set({ inlineEdit: { ...INLINE_EDIT_CLOSED } });
         return false;
       }
-      const client = await getAgentClient();
-      const task = await client.markReplitTaskReady(get().activeSessionId, taskId);
-      set((s) => ({
-        replitTasks: mergeTasks(s.replitTasks, [task]),
-        agentItems: upsertWorkflowTask(s.agentItems, task),
-      }));
-      await get().selectReplitTask(taskId);
-      await track("replit.task.ready", { id: taskId });
-      return true;
-    } catch (err) {
-      set({ replitWorkflowError: (err as Error).message });
-      return false;
-    } finally {
-      set({ replitWorkflowLoading: false });
-    }
-  },
-
-  applyReplitTask: async (taskId) => {
-    set({ replitWorkflowLoading: true, replitWorkflowError: null });
-    try {
-      if (!get().liveMode) {
-        const now = new Date().toISOString();
-        set((s) => ({
-          replitTasks: s.replitTasks.map((task) =>
-            task.id === taskId ? { ...task, status: "done", updated_at: now } : task,
-          ),
-          agentItems: s.replitTasks
-            .filter((task) => task.id === taskId)
-            .map((task) => ({ ...task, status: "done" as const, updated_at: now }))
-            .reduce((items, task) => upsertWorkflowTask(items, task), s.agentItems),
-          replitCheckpoints: [
-            {
-              id: `checkpoint-${Date.now()}`,
-              session_id: get().activeSessionId,
-              task_id: taskId,
-              label: "Mock checkpoint before apply",
-              snapshot_path: ".mock/checkpoint",
-              files: ["mock-file.ts"],
-              created_at: now,
-            },
-            ...s.replitCheckpoints,
-          ],
-        }));
-        return true;
+      const newFull = spliceText(file.content, ie.start, ie.end, edited);
+      const patch = buildInlineEditPatch(file.path, file.content, newFull, `Inline edit: ${text}`);
+      if (!patch) {
+        // Model returned an identical selection — nothing to review.
+        set({ inlineEdit: { ...INLINE_EDIT_CLOSED } });
+        return false;
       }
-      const client = await getAgentClient();
-      const task = await client.applyReplitTask(get().activeSessionId, taskId);
-      set((s) => ({
-        replitTasks: mergeTasks(s.replitTasks, [task]),
-        agentItems: upsertWorkflowTask(s.agentItems, task),
-      }));
-      await get().loadReplitWorkflow();
-      await track("replit.task.applied", { id: taskId });
+      get().queueFindingPatch(patch);
+      await track("inline_edit.queued", { file: file.path });
+      set({ inlineEdit: { ...INLINE_EDIT_CLOSED }, mainView: "editor", activeFile: file.path });
       return true;
     } catch (err) {
-      set({ replitWorkflowError: (err as Error).message });
+      const message = err instanceof Error ? err.message : String(err);
+      set((s) => ({ inlineEdit: { ...s.inlineEdit, status: "error", error: message } }));
       return false;
-    } finally {
-      set({ replitWorkflowLoading: false });
     }
   },
 
-  dismissReplitTask: async (taskId) => {
-    set({ replitWorkflowLoading: true, replitWorkflowError: null });
-    try {
-      if (!get().liveMode) {
-        const now = new Date().toISOString();
-        set((s) => ({
-          replitTasks: s.replitTasks.map((task) =>
-            task.id === taskId ? { ...task, status: "dismissed", updated_at: now } : task,
-          ),
-          agentItems: s.replitTasks
-            .filter((task) => task.id === taskId)
-            .map((task) => ({ ...task, status: "dismissed" as const, updated_at: now }))
-            .reduce((items, task) => upsertWorkflowTask(items, task), s.agentItems),
-        }));
-        return true;
-      }
-      const client = await getAgentClient();
-      const task = await client.dismissReplitTask(get().activeSessionId, taskId);
-      set((s) => ({
-        replitTasks: mergeTasks(s.replitTasks, [task]),
-        agentItems: upsertWorkflowTask(s.agentItems, task),
-      }));
-      return true;
-    } catch (err) {
-      set({ replitWorkflowError: (err as Error).message });
-      return false;
-    } finally {
-      set({ replitWorkflowLoading: false });
-    }
-  },
-
-  cancelReplitTask: async (taskId) => {
-    set({ replitWorkflowLoading: true, replitWorkflowError: null });
-    try {
-      if (!get().liveMode) {
-        const now = new Date().toISOString();
-        set((s) => ({
-          replitTasks: s.replitTasks.map((task) =>
-            task.id === taskId ? { ...task, status: "cancelled", updated_at: now } : task,
-          ),
-          agentItems: s.replitTasks
-            .filter((task) => task.id === taskId)
-            .map((task) => ({ ...task, status: "cancelled" as const, updated_at: now }))
-            .reduce((items, task) => upsertWorkflowTask(items, task), s.agentItems),
-        }));
-        return true;
-      }
-      const client = await getAgentClient();
-      const task = await client.cancelReplitTask(get().activeSessionId, taskId);
-      set((s) => ({
-        replitTasks: mergeTasks(s.replitTasks, [task]),
-        agentItems: upsertWorkflowTask(s.agentItems, task),
-      }));
-      return true;
-    } catch (err) {
-      set({ replitWorkflowError: (err as Error).message });
-      return false;
-    } finally {
-      set({ replitWorkflowLoading: false });
-    }
-  },
-
-  rollbackReplitCheckpoint: async (checkpointId) => {
-    set({ replitWorkflowLoading: true, replitWorkflowError: null });
-    try {
-      if (!get().liveMode) {
-        await track("replit.checkpoint.rollback", { id: checkpointId, mock: true });
-        return true;
-      }
-      const client = await getAgentClient();
-      await client.rollbackReplitCheckpoint(get().activeSessionId, checkpointId);
-      await track("replit.checkpoint.rollback", { id: checkpointId });
-      return true;
-    } catch (err) {
-      set({ replitWorkflowError: (err as Error).message });
-      return false;
-    } finally {
-      set({ replitWorkflowLoading: false });
-    }
-  },
-
-  clearReplitWorkflowError: () => set({ replitWorkflowError: null }),
 
   loadMemoryStats: async () => {
     if (!get().liveMode) return;
@@ -2448,6 +3242,29 @@ export const useApp = create<AppState>((set, get) => ({
       set({ contextStatus: status });
     } catch {
       // Sidecar offline / endpoint missing — leave status untouched.
+    }
+  },
+
+  loadIndexStatus: async () => {
+    if (!get().liveMode || !get().activeSessionId) return;
+    try {
+      const client = await getAgentClient();
+      set({ indexStatus: await client.indexStatus(get().activeSessionId) });
+    } catch {
+      // Sidecar offline / endpoint missing — leave status untouched.
+    }
+  },
+
+  loadProjectRules: async () => {
+    if (!get().liveMode || !get().activeSessionId) {
+      set({ projectRules: null });
+      return;
+    }
+    try {
+      const client = await getAgentClient();
+      set({ projectRules: await client.getProjectRules(get().activeSessionId) });
+    } catch {
+      // Sidecar offline / endpoint missing — leave rules unset.
     }
   },
   compactMemory: async () => {
@@ -2497,11 +3314,14 @@ interface AgentEventHandlers {
   addDiff: (p: DiffPatch) => void;
   setPlan: (p: Plan) => void;
   updatePlanStep: (step: PlanStep) => void;
-  addTask: (task: ReplitTask) => void;
   setTodos: (todos: TodoItem[]) => void;
   addTestRun: (result: AgentTestRun) => void;
   addFinalSummary: (summary: string) => void;
   addError: (message: string) => void;
+  /** Record/clear the id of the isolated run awaiting review. */
+  setReviewRunId: (runId: string | null) => void;
+  /** Record end-of-run validation results for the review card. */
+  setReviewValidation: (validation: Record<string, string>) => void;
 }
 
 function applyAgentEvent(ev: AgentEvent, h: AgentEventHandlers): void {
@@ -2534,9 +3354,6 @@ function applyAgentEvent(ev: AgentEvent, h: AgentEventHandlers): void {
     case "plan":
     case "plan.created":
       h.setPlan(ev.plan);
-      break;
-    case "task.created":
-      h.addTask(ev.task);
       break;
     case "todo_update":
       h.setTodos(ev.todos);
@@ -2581,14 +3398,29 @@ function applyAgentEvent(ev: AgentEvent, h: AgentEventHandlers): void {
     // legacy agent.* / diff events the UI already renders, so during the
     // migration these are intentionally no-ops here to avoid duplicate
     // cards. A future single AgentRunCard will consume them directly.
-    case "run.started":
-    case "run.context_ready":
+    // Unified run lifecycle (Part 4) + review-before-apply (Part 2.5).
+    // The isolated-run id arrives on `checkpoint.created` (emitted before the
+    // run) and is reasserted on `run.awaiting_review`; it is cleared once the
+    // run is applied or discarded. Other lifecycle types remain no-ops here
+    // to avoid duplicate cards during the migration.
+    case "checkpoint.created":
+      if (ev.run_id) h.setReviewRunId(ev.run_id);
+      break;
     case "run.awaiting_review":
+      if (ev.run_id) h.setReviewRunId(ev.run_id);
+      break;
     case "run.applied":
     case "run.discarded":
+      h.setReviewRunId(null);
+      break;
+    case "run.started":
+    case "run.context_ready":
     case "run.error":
-    case "checkpoint.created":
+      break;
     case "diff.ready":
+      if (ev.validation && Object.keys(ev.validation).length > 0) {
+        h.setReviewValidation(ev.validation);
+      }
       break;
     default:
       break;
@@ -2611,10 +3443,30 @@ type SetState = (
 async function consumeStream(
   stream: AsyncIterable<AgentEvent>,
   set: SetState,
+  opts: { mode?: AgentMode; activeRunId?: string | null } = {},
 ): Promise<void> {
+  // Capture the run mode at send time. Ask mode is a read-only Q&A transcript:
+  // it must never accrete workspace-analysis / plan / to-do / diff / review /
+  // final-summary workflow cards, even if the backend (or a misbehaving model)
+  // emits those events. Assistant message streaming is always honored.
+  const mode: AgentMode = opts.mode ?? useApp.getState().agentMode;
+  const isAsk = mode === "ask";
+  // The active run id the stream is bound to (R1.2). Events tagged with a
+  // different `run_id` are stale cross-run replays and are discarded by
+  // `decideIngest`. `null`/undefined (slash commands, retry) disables the
+  // cross-run rule, preserving the prior behavior for those callers.
+  const activeRunId: string | null = opts.activeRunId ?? null;
+  // Per-run ingest seq floor used by `decideIngest` to drop duplicate/stale
+  // deliveries (R1.4). The single shared `SeqCursor` authority in
+  // `agent-client` owns the resubscribe cursor; this mirrors the applied floor
+  // within this stream so re-delivered events are idempotently ignored.
+  let highestSeq = 0;
   let assistantId: string | null = null;
   let assistantText = "";
-  let streamRunId = `run-${Date.now()}`;
+  // Namespace workflow item ids by the bound run id when available so cards
+  // stay associated with the run that produced them; otherwise fall back to a
+  // synthetic id (slash commands / retries have no bound run).
+  let streamRunId = activeRunId ?? `run-${Date.now()}`;
   let sawWorkflowArtifact = false;
   const ensureAssistant = () => {
     if (assistantId) return assistantId;
@@ -2651,12 +3503,40 @@ async function consumeStream(
       while (useApp.getState().agentPaused) {
         await new Promise((resolve) => setTimeout(resolve, 120));
       }
+      // Ingestion gate (R1.2, R1.4): discard events from a superseded run
+      // (cross-run `run_id` mismatch) and duplicate/stale re-deliveries before
+      // applying anything to the chat or workflow timeline. The pause gate
+      // above has already cleared, so the only outcomes here are apply/discard.
+      const decision = decideIngest(ev, {
+        highestSeq,
+        paused: false,
+        stopped: false,
+        activeRunId,
+      });
+      if (decision === "discard") continue;
+      highestSeq = Math.max(highestSeq, ev.seq);
+      // Mirror sidecar log events into the Logs panel + the Agent output channel.
+      if (ev.type === "log") {
+        const level =
+          ev.level === "warning" || ev.level === "error" || ev.level === "debug"
+            ? ev.level
+            : "info";
+        useApp.getState().appendLog(level, ev.message);
+        useApp.getState().appendOutput("Agent", `[${ev.level}] ${ev.message}`);
+      }
       applyAgentEvent(ev, {
         startRun: () => {
-          streamRunId = `run-${ev.seq || Date.now()}`;
-          set({ runId: streamRunId, isRunning: true });
+          // Keep the run bound to the id assigned at send time (R1.3). Only
+          // synthesize an id for callers that did not bind one (slash/retry).
+          if (!activeRunId) {
+            streamRunId = `run-${ev.seq || Date.now()}`;
+            set({ runId: streamRunId, isRunning: true });
+          } else {
+            set({ isRunning: true });
+          }
         },
         contextLoading: (message) => {
+          if (isAsk) return;
           set((s) => ({
             agentItems: upsertWorkflowItem(s.agentItems, {
               type: "workspace_analysis",
@@ -2671,6 +3551,7 @@ async function consumeStream(
           }));
         },
         contextReady: (message) => {
+          if (isAsk) return;
           set((s) => {
             const active = s.openFiles.find((file) => file.path === s.activeFile);
             return {
@@ -2762,6 +3643,7 @@ async function consumeStream(
           });
         },
         addToolCall: (tc) => {
+          if (isAsk) return;
           sawWorkflowArtifact = true;
           set((s) => {
             const idx = s.chat.findIndex((e) => e.id === tc.id);
@@ -2777,6 +3659,7 @@ async function consumeStream(
           });
         },
         addDiff: (p) => {
+          if (isAsk) return;
           sawWorkflowArtifact = true;
           set((s) => {
             const idx = s.chat.findIndex((e) => e.id === p.id);
@@ -2800,6 +3683,7 @@ async function consumeStream(
           });
         },
         setPlan: (p) => {
+          if (isAsk) return;
           if (isPlaceholderPlan(p)) return;
           sawWorkflowArtifact = true;
           set((s) => ({
@@ -2808,6 +3692,7 @@ async function consumeStream(
           }));
         },
         updatePlanStep: (step) => {
+          if (isAsk) return;
           set((s) => {
             if (!s.plan) return {};
             const plan = {
@@ -2824,15 +3709,8 @@ async function consumeStream(
             };
           });
         },
-        addTask: (task) => {
-          sawWorkflowArtifact = true;
-          set((s) => ({
-            replitTasks: mergeTasks(s.replitTasks, [task]),
-            selectedReplitTaskId: s.selectedReplitTaskId ?? task.id,
-            agentItems: upsertWorkflowTask(s.agentItems, task),
-          }));
-        },
         setTodos: (todos) => {
+          if (isAsk) return;
           sawWorkflowArtifact = true;
           set((s) => ({
             agentItems: upsertWorkflowItem(s.agentItems, {
@@ -2844,10 +3722,12 @@ async function consumeStream(
           }));
         },
         addTestRun: (result) => {
+          if (isAsk) return;
           sawWorkflowArtifact = true;
           set((s) => ({ agentItems: upsertWorkflowTest(s.agentItems, result) }));
         },
         addFinalSummary: (summary) => {
+          if (isAsk) return;
           const trimmed = summary.trim();
           if (!trimmed) return;
           const answer = assistantText.trim();
@@ -2864,6 +3744,14 @@ async function consumeStream(
         addError: (message) => {
           appendErrorChat(set, "agent.event", new Error(message));
         },
+        setReviewRunId: (runId) => {
+          if (isAsk) return;
+          set({ reviewRunId: runId });
+        },
+        setReviewValidation: (validation) => {
+          if (isAsk) return;
+          set({ reviewValidation: validation });
+        },
       });
     }
   } finally {
@@ -2871,25 +3759,6 @@ async function consumeStream(
   }
 }
 
-
-function mergeTasks(existing: ReplitTask[], incoming: ReplitTask[]): ReplitTask[] {
-  const byId = new Map(existing.map((task) => [task.id, task]));
-  for (const task of incoming) byId.set(task.id, { ...byId.get(task.id), ...task });
-  return Array.from(byId.values()).sort(
-    (a, b) => Date.parse(a.created_at) - Date.parse(b.created_at),
-  );
-}
-
-function pollReplitTaskUntilSettled(taskId: string, attempts = 0): void {
-  const delay = Math.min(2500 + attempts * 750, 8000);
-  window.setTimeout(() => {
-    const state = useApp.getState();
-    void state.loadReplitWorkflow().then(() => state.selectReplitTask(taskId)).then(() => {
-      const task = useApp.getState().replitTasks.find((item) => item.id === taskId);
-      if (task?.status === "active" && attempts < 60) pollReplitTaskUntilSettled(taskId, attempts + 1);
-    });
-  }, delay);
-}
 
 function appendAssistantSummary(set: SetState, content: string): void {
   const id = `assistant-${Date.now()}`;
@@ -3011,97 +3880,6 @@ function expandFileMentions(content: string, state: AppState): string {
   return content.replaceAll("@file", active);
 }
 
-type WorkflowIntent = {
-  prompt: string;
-  autoApprove: boolean;
-  existingPlanId?: string;
-};
-
-function workflowIntentForMessage(content: string, state: AppState): WorkflowIntent | null {
-  const trimmed = content.trim();
-  if (!trimmed || trimmed.startsWith("/")) return null;
-  const normalized = normalizeIntent(trimmed);
-
-  // Only treat a message as an approval intent if it's an explicit
-  // approval phrase AND there's a draft plan waiting. Never auto-approve
-  // just because the message starts with a "build" verb — that creates
-  // a brand new plan instead.
-  const pendingReplit = latestDraftReplitPlan(state);
-  if (isApprovalIntent(normalized) && pendingReplit) {
-    return {
-      prompt: promptFromReplitPlan(pendingReplit),
-      autoApprove: true,
-      existingPlanId: pendingReplit.id,
-    };
-  }
-
-  // A free-form build request (no pending plan) creates a new plan
-  // but does NOT auto-approve — the user must explicitly approve.
-  if (isBuildRequest(normalized)) {
-    return { prompt: trimmed, autoApprove: false };
-  }
-  return null;
-}
-
-function normalizeIntent(value: string): string {
-  return value
-    .toLowerCase()
-    .replace(/[`"'.,!?;:()[\]{}]/g, " ")
-    .replace(/\s+/g, " ")
-    .trim();
-}
-
-function isApprovalIntent(normalized: string): boolean {
-  return (
-    /^(ok|okay|yes|yep|yeah|sure|approved?|confirm|go ahead|please)\s+(implement|build|create|make|start|run|execute|continue|do)\b/.test(normalized) ||
-    /^(implement|build|create|make|start|run|execute)\s+(this|it|that|the plan|the task|the app|the website|the project)\b/.test(normalized) ||
-    /^(go ahead|looks good|approved?|ship it|do it)$/.test(normalized)
-  );
-}
-
-function isBuildRequest(normalized: string): boolean {
-  return /^(build|create|make|implement|develop|scaffold|generate|add|fix|update|design)\b/.test(normalized);
-}
-
-function likelyFilesForPrompt(prompt: string): string[] {
-  const normalized = normalizeIntent(prompt);
-  if (/(website|web app|webapp|portfolio|landing page|homepage|frontend app)/.test(normalized)) {
-    return ["package.json", "src/App.tsx", "src/main.tsx", "src/styles.css", "index.html"];
-  }
-  if (/(readme|docs|documentation)/.test(normalized)) return ["README.md"];
-  if (/(test|spec|vitest|pytest)/.test(normalized)) return ["tests", "src"];
-  return ["README.md", "src", "tests"];
-}
-
-function latestDraftReplitPlan(state: AppState): ReplitPlan | null {
-  return state.replitPlans.find((plan) => plan.status === "draft") ?? null;
-}
-
-function promptFromReplitPlan(plan: ReplitPlan): string {
-  return [
-    `Implement this approved workflow: ${plan.title}`,
-    plan.summary,
-    "Tasks:",
-    ...plan.tasks.map((task, index) => `${index + 1}. ${task.title}: ${task.summary}`),
-  ].join("\n");
-}
-
-async function startFirstRunnableReplitTask(
-  get: () => AppState,
-  planId?: string,
-): Promise<void> {
-  const state = get();
-  const tasks = state.replitTasks.filter((task) => !planId || task.plan_id === planId);
-  const runnable = tasks.find((task) => {
-    if (!["draft", "queued", "failed"].includes(task.status)) return false;
-    return task.depends_on.every((dep) => {
-      const dependency = state.replitTasks.find((candidate) => candidate.id === dep);
-      return !dependency || ["done", "dismissed"].includes(dependency.status);
-    });
-  });
-  if (runnable) await get().startReplitTask(runnable.id);
-}
-
 interface ProviderCreds {
   provider: string | null;
   apiKey: string | null;
@@ -3152,6 +3930,10 @@ function buildRunAgentRequest(
     provider: state.selectedModel.provider ?? null,
     apiKey: null,
     baseUrl: null,
+    // Agent mode runs review-before-apply: edits land in an isolated copy of
+    // the workspace and only touch the real project when the user clicks
+    // Apply. Ask mode is read-only, so the flag is irrelevant there.
+    reviewChanges: state.agentMode === "agent",
     maxIterations: 20,
     maxRepairAttempts: 2,
   };

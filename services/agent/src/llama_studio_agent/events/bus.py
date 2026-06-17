@@ -43,6 +43,12 @@ class EventBus:
         self._lock = asyncio.Lock()
 
     def next_seq(self, session_id: UUID) -> int:
+        """Return the next monotonic per-session sequence number.
+
+        This is the sole authority for event ordering. It is orthogonal to an
+        event's ``run_id`` (the owning run is stamped by the producer, e.g. the
+        orchestrator's ``_emit``); ``seq`` never resets per run.
+        """
         counter = self._seq.get(session_id)
         if counter is None:
             start = 1
@@ -53,6 +59,12 @@ class EventBus:
         return next(counter)
 
     async def publish(self, event: AgentEventBase) -> None:
+        """Fan out an event to all subscribers of its session.
+
+        The event is published as-is: producers stamp ``event.run_id`` (the
+        owning run) before publishing so every subscriber can correlate the
+        event to its run and discard events from a superseded run.
+        """
         async with self._lock:
             subs = list(self._subs.get(event.session_id, ()))
         for sub in subs:

@@ -2,7 +2,7 @@
   "name": "llama-studio",
   "version": "2.0.0",
   "private": true,
-  "description": "Llama Studio \u2014 Zencoder/Codex-style local agentic coding desktop app.",
+  "description": "Zoc AI \u2014 Zencoder/Codex-style local agentic coding desktop app.",
   "scripts": {
     "dev": "pnpm --filter @llama-studio/desktop dev",
     "dev:frontend": "pnpm --filter @llama-studio/frontend dev",
@@ -16,6 +16,7 @@
     "check": "pnpm lint && pnpm typecheck && pnpm --filter @llama-studio/agent... check && cargo check --workspace",
     "version:stamp": "python3 scripts/stamp_version.py",
     "sidecar:bundle": "python3 scripts/bundle_sidecar.py",
+    "tauri:prepare": "bash scripts/prepare_tauri_build.sh",
     "release": "bash scripts/release.sh",
     "zip": "bash scripts/release.sh && bash scripts/make_zip.sh"
   },

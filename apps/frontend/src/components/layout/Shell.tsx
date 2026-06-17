@@ -4,6 +4,7 @@ import { ActivityBar } from "./ActivityBar";
 import { TopBar } from "./TopBar";
 import { SidePanel } from "./SidePanel";
 import { BottomDock } from "./BottomDock";
+import { StatusBar } from "./StatusBar";
 import { EditorArea } from "@/features/editor/EditorArea";
 import { AgentPanel } from "@/features/agent/AgentPanel";
 import { SessionsView } from "@/features/sessions/SessionsView";
@@ -14,10 +15,23 @@ import { CommandPalette } from "@/features/palette/CommandPalette";
 import { useApp } from "@/lib/store";
 import { useGlobalShortcuts } from "@/lib/key-bindings";
 import { useViewport } from "@/lib/use-viewport";
+import {
+  DOCK_MAX_HEIGHT_RATIO,
+  DOCK_MIN_HEIGHT,
+  PANEL_MAX_WIDTH,
+  PANEL_MIN_WIDTH,
+} from "@/lib/layout";
 import { Toaster } from "@/components/ui/toast";
 
 const HANDLE_H = "h-full w-[3px] bg-transparent transition-colors hover:bg-primary/40";
 const HANDLE_V = "h-[3px] w-full bg-transparent transition-colors hover:bg-primary/40";
+
+// Panel size bounds (single source of truth in lib/layout). Side panels
+// (Explorer/Agent) clamp to [180, 600]px; the dock to [120px, 80%] (R12.7).
+const PANEL_MIN = `${PANEL_MIN_WIDTH}px`;
+const PANEL_MAX = `${PANEL_MAX_WIDTH}px`;
+const DOCK_MIN = `${DOCK_MIN_HEIGHT}px`;
+const DOCK_MAX = `${Math.round(DOCK_MAX_HEIGHT_RATIO * 100)}%`;
 
 function pct(value: number): string {
   return `${value}%`;
@@ -71,8 +85,8 @@ export function Shell() {
               <Panel
                 id="side"
                 defaultSize={pct(layout.sidePanelSize)}
-                minSize="240px"
-                maxSize="34%"
+                minSize={PANEL_MIN}
+                maxSize={PANEL_MAX}
                 className="min-h-0 min-w-0 border-r border-border"
               >
                 <SidePanel />
@@ -91,8 +105,8 @@ export function Shell() {
                   <Panel
                     id="bottom"
                     defaultSize={pct(layout.bottomDockSize)}
-                    minSize="180px"
-                    maxSize="52%"
+                    minSize={DOCK_MIN}
+                    maxSize={DOCK_MAX}
                     className="min-h-0 min-w-0"
                   >
                     <BottomDock />
@@ -107,8 +121,8 @@ export function Shell() {
               <Panel
                 id="right"
                 defaultSize={pct(layout.rightPanelSize)}
-                minSize="360px"
-                maxSize="42%"
+                minSize={PANEL_MIN}
+                maxSize={PANEL_MAX}
                 className="min-h-0 min-w-0 border-l border-border"
               >
                 <AgentPanel />
@@ -117,6 +131,7 @@ export function Shell() {
           )}
         </Group>
       </div>
+      <StatusBar />
       <CommandPalette />
       <Toaster theme="dark" position="bottom-right" />
     </div>

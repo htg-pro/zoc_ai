@@ -1,7 +1,7 @@
 [project]
 name = "llama-studio-workspace"
 version = "2.0.0"
-description = "Workspace root for Llama Studio Python packages."
+description = "Workspace root for Zoc AI Python packages."
 requires-python = ">=3.11"
 
 [tool.uv.workspace]

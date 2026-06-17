@@ -1,0 +1,973 @@
+# Zoc AI Hyper Hybrid Monorepo Architecture Plan
+
+> Status: planning document
+> Source of truth for current structure: `MONOREPO_ARCHITECTURE.md`
+> Target: Hybrid Monorepo, not full multi-repo split
+> Date: 2026-06-16
+
+---
+
+## 1. Purpose
+
+This file defines a future architecture direction for Zoc AI.
+
+The current project is already a real monorepo:
+
+- `apps/frontend` is the React/Vite IDE frontend.
+- `apps/desktop` is the Tauri/Rust desktop shell.
+- `services/agent` is the FastAPI Python sidecar.
+- `crates/hotpath` is the Rust performance/native helper crate.
+- `packages/shared-types` is the cross-language schema contract.
+- `scripts` owns build, release, sidecar bundle, zip, and version automation.
+- `doc` owns roadmap and architecture planning.
+- `testsprite_tests` contains generated or product-level tests.
+
+The next architecture goal is not to split everything into separate
+repositories immediately. The goal is a **Hyper Hybrid Monorepo**:
+
+- one repo for fast local development and release coordination
+- strong internal package boundaries
+- explicit ownership per folder
+- generated artifacts separated from source
+- stable shared contracts
+- independent test boundaries
+- optional future extraction paths if one package becomes large enough
+
+The repo should feel like one product, but each major area should behave like a
+well-owned package.
+
+---
+
+## 2. Architecture Decision
+
+Chosen direction:
+
+```text
+Hybrid Monorepo
+```
+
+Meaning:
+
+- Keep one repository.
+- Keep one coordinated release pipeline.
+- Keep root-level workspace tooling.
+- Strengthen package boundaries inside the repo.
+- Extract reusable code into `packages` only when reuse is real.
+- Prepare optional future repo extraction, but do not split early.
+
+Rejected direction:
+
+```text
+Full Multi-Repo Split
+```
+
+Reason:
+
+- The desktop app, frontend, sidecar, shared schema, and Rust helpers must ship
+  together.
+- Splitting too early would add coordination cost before boundaries are stable.
+- Shared schema changes currently need synchronized frontend and backend
+  updates.
+- Release packaging depends on frontend, Python sidecar, Rust hotpath, and
+  Tauri shell in one pipeline.
+
+Neutral future option:
+
+```text
+Selective Extraction
+```
+
+Some areas may become separate repos later, but only after stable ownership,
+versioning, and CI boundaries exist.
+
+---
+
+## 3. Current State Summary
+
+Current runtime shape:
+
+```text
+Tauri desktop shell
+  -> React webview frontend
+  -> FastAPI agent sidecar over loopback HTTP/SSE
+  -> Rust hotpath CLI for native/performance-heavy work
+  -> local workspace files
+```
+
+Current root zones:
+
+```text
+Archivezip/
+- apps/
+  - desktop/
+  - frontend/
+- services/
+  - agent/
+- crates/
+  - hotpath/
+- packages/
+  - shared-types/
+- scripts/
+- doc/
+- testsprite_tests/
+- attached_assets/
+- .agents/
+- .codex/
+- .claude/
+- .kiro/
+- .kombai/
+- .vscode/
+- develop.md
+- MONOREPO_ARCHITECTURE.md
+- README.md
+- package.json
+- pyproject.toml
+- Cargo.toml
+- pnpm-workspace.yaml
+- Makefile
+```
+
+Current strengths:
+
+- Clear high-level folder separation already exists.
+- Cross-language shared schema already exists.
+- Runtime process boundaries are clear.
+- Rust hotpath is already separated from Python sidecar.
+- Desktop shell is already separated from frontend UI.
+- Developer docs already exist in `doc/dev`.
+- Release pipeline already knows about frontend, sidecar, hotpath, and Tauri.
+
+Current risks:
+
+- Some frontend `lib` modules may grow into a large mixed utility zone.
+- Generated files, binary artifacts, temp reports, and source docs can blur
+  boundaries.
+- Tests exist in several places, but ownership rules are not fully explicit.
+- `packages` currently only has shared types; future shared UI/config/core
+  packages are not yet defined.
+- Future agents may add new files in convenient locations instead of correct
+  ownership zones.
+
+---
+
+## 4. Target Hyper Hybrid Shape
+
+Future target:
+
+```text
+Archivezip/
+- apps/
+  - desktop/
+  - frontend/
+- services/
+  - agent/
+- packages/
+  - shared-types/
+  - ui/                 # future only, if UI primitives become cross-app
+  - config/             # future only, if shared config grows
+  - core/               # future only, if pure TS domain logic is reused
+  - testing/            # future only, if test fixtures/helpers are reused
+- crates/
+  - hotpath/
+  - shared-native/      # future only, if Rust helpers are reused beyond hotpath
+- scripts/
+- tools/                # future only, if build/dev automation becomes large
+- doc/
+  - dev/
+  - architecture/       # future optional, if architecture docs grow
+- testsprite_tests/
+- e2e/                  # future optional, curated product E2E tests
+- attached_assets/
+- generated/            # future optional, central generated report/artifact zone
+```
+
+Important: this target tree is a roadmap, not an immediate move request.
+
+Only create new packages when there is a clear reason:
+
+- code is reused by two or more owners
+- the package has a stable API
+- the package can be tested independently
+- the package can avoid importing application-specific state
+- the package has a clean build/test command
+
+---
+
+## 5. Ownership Map
+
+### `apps/frontend`
+
+Owns:
+
+- visible IDE UI
+- React component composition
+- frontend state and client workflows
+- command palette UI
+- agent panel presentation
+- editor, terminal, search, SCM, problems, settings, sessions UI
+- Tauri bridge calls from the renderer
+- HTTP/SSE client usage
+- frontend tests
+
+Must not own:
+
+- Python agent orchestration
+- provider implementations
+- backend persistence
+- filesystem trust enforcement as the only security layer
+- shared schema source of truth
+- release packaging rules
+
+Allowed dependencies:
+
+- `@llama-studio/shared-types`
+- frontend-local modules under `apps/frontend/src/lib`
+- Tauri API wrappers through `tauri-bridge`
+- backend only through typed client/API contracts
+
+### `apps/desktop`
+
+Owns:
+
+- Tauri app shell
+- native window startup
+- sidecar lifecycle
+- native filesystem IPC
+- workspace root scope guard
+- secure secrets
+- native search/git/patch commands
+- bundled binary configuration
+- platform icons and Tauri capabilities
+
+Must not own:
+
+- React UI state
+- agent reasoning/orchestration
+- provider-specific LLM logic
+- generated shared schema source
+
+Allowed dependencies:
+
+- `crates/hotpath`
+- Tauri plugins
+- narrow shared Rust dependencies from root `Cargo.toml`
+
+### `services/agent`
+
+Owns:
+
+- FastAPI app and versioned API routes
+- agent orchestration loop
+- planner behavior
+- Ask/Agent/Plan/Debug backend behavior
+- tool registry and tool execution
+- provider registry and provider adapters
+- persistence and sessions
+- approvals and permissions
+- events/SSE stream
+- indexing and recall
+- project rules
+- checkpoints and workspace diff
+- backend tests
+
+Must not own:
+
+- frontend rendering choices
+- Tauri-native window behavior
+- shared schema TypeScript generation output as source of truth
+- release packaging outside sidecar concerns
+
+Allowed dependencies:
+
+- `packages/shared-types/python`
+- internal agent modules
+- hotpath through the CLI bridge
+- provider libraries
+
+### `crates/hotpath`
+
+Owns:
+
+- Rust helper library and CLI
+- PTY helpers
+- file watching
+- fast search
+- chunking
+- patch helpers
+- native indexing helpers
+
+Must not own:
+
+- frontend UI
+- Python API routes
+- agent prompts
+- product workflow state
+
+Allowed dependencies:
+
+- Rust workspace dependencies
+- no frontend or Python imports
+
+### `packages/shared-types`
+
+Owns:
+
+- cross-language API and event contracts
+- Pydantic schema source of truth
+- generated TypeScript type surface
+- schema generation scripts
+
+Must not own:
+
+- frontend UI behavior
+- backend business logic
+- desktop IPC implementation
+- provider logic
+
+Rule:
+
+```text
+Python Pydantic models first -> generated TypeScript types second
+```
+
+### Future `packages/ui`
+
+Create only if:
+
+- more than one app needs the same UI primitives
+- components are free of app-specific store state
+- styles are token-driven
+- package can have its own tests/stories
+
+Do not move `features/*` into `packages/ui`.
+
+Candidate contents:
+
+- pure button/card/dialog wrappers
+- design tokens
+- typography primitives
+- icon-button patterns
+- reusable empty/loading/error states
+
+### Future `packages/core`
+
+Create only if:
+
+- pure TypeScript logic is reused by multiple apps/packages
+- code has no React, Tauri, browser-only, or backend-only dependency
+- test coverage can be package-local
+
+Candidate contents:
+
+- path helpers
+- pure diff utilities
+- command metadata types
+- validation helpers
+- pure state machines
+
+### Future `packages/config`
+
+Create only if:
+
+- lint, TypeScript, Tailwind, Vite, or test config is duplicated
+- config can be shared without hiding important per-app differences
+
+Candidate contents:
+
+- shared ESLint config
+- shared TS config base
+- shared Prettier config
+- shared test config helpers
+
+### `scripts` and future `tools`
+
+`scripts` owns small command-line automation.
+
+Create `tools` only if:
+
+- build/release/dev tooling becomes too large for scripts
+- tooling needs tests
+- tooling becomes a real package or CLI
+
+Do not create `tools` for one-off shell scripts.
+
+### `doc`
+
+Owns:
+
+- architecture plans
+- roadmap documents
+- implementation notes
+- security/trust docs
+- feature design docs
+
+Recommended doc split:
+
+```text
+doc/
+- *.me                 # broad planning and project strategy
+- dev/                 # feature implementation docs
+- architecture/        # future optional architecture decisions
+```
+
+### `testsprite_tests` and future `e2e`
+
+`testsprite_tests` owns generated or imported product tests.
+
+Create `e2e` only if:
+
+- tests are curated and maintained by the project
+- tests run as part of normal CI
+- tests are not temporary generated artifacts
+
+---
+
+## 6. Dependency Direction Rules
+
+Hard rules:
+
+- `packages/shared-types` must not depend on `apps`.
+- `packages/shared-types` must not depend on `services`.
+- `apps/frontend` must use backend APIs through typed contracts.
+- `apps/frontend` must not import Python internals.
+- `apps/desktop` must expose narrow IPC commands only.
+- `apps/desktop` must not become a general backend.
+- `services/agent` owns orchestration, providers, tools, and persistence.
+- `crates/hotpath` stays native/performance-focused.
+- `scripts` must not become runtime product code.
+
+Preferred direction:
+
+```text
+packages/shared-types/python
+  -> packages/shared-types/typescript
+  -> apps/frontend
+
+services/agent
+  -> packages/shared-types/python
+  -> providers/tools/persistence/events
+
+apps/frontend
+  -> packages/shared-types/typescript
+  -> services/agent over HTTP/SSE
+  -> apps/desktop through Tauri IPC bridge
+
+apps/desktop
+  -> crates/hotpath
+  -> bundled services/agent sidecar binary
+
+crates/hotpath
+  -> standalone Rust helper library/CLI
+```
+
+Disallowed direction:
+
+```text
+packages/shared-types -> apps/frontend
+packages/shared-types -> services/agent runtime logic
+crates/hotpath -> apps/frontend
+services/agent -> apps/frontend
+apps/desktop -> apps/frontend/src internals
+scripts -> runtime imports
+```
+
+---
+
+## 7. Generated Artifact Rules
+
+Generated artifacts must be obvious.
+
+Allowed generated/binary areas today:
+
+- `apps/desktop/binaries`
+- `apps/desktop/gen`
+- `packages/shared-types/typescript/src/index.ts`
+- test reports under temp/report folders
+- build outputs such as `dist`, `target`, cache folders
+
+Rules:
+
+- Generated source that is committed must say where it comes from.
+- Generated source must have a command that regenerates it.
+- Generated source must not be hand-edited unless explicitly documented.
+- Cache folders must not be used as source.
+- Build outputs must not be architecture inputs.
+- Temporary test output must stay out of source planning.
+
+Recommended future generated layout:
+
+```text
+generated/
+- reports/
+- screenshots/
+- schema/
+- test-output/
+```
+
+Only create this folder if generated outputs keep spreading.
+
+---
+
+## 8. Migration Roadmap
+
+### Phase 1: Audit Current Boundaries
+
+Goal:
+
+- Understand which files belong to which owner before moving anything.
+
+Actions:
+
+- Use `MONOREPO_ARCHITECTURE.md` as the current structure map.
+- Mark every major folder as source, generated, cache, docs, tests, or assets.
+- Identify duplicated logic across frontend `lib`, backend agent modules, and
+  shared schema.
+- Identify files that are in the right folder but need stronger ownership docs.
+- Identify files that appear stale, cache-only, or unclear.
+
+Done when:
+
+- Every top-level folder has a documented owner.
+- Every package has clear allowed dependencies.
+- Ambiguous folders have an explicit keep/move/delete recommendation.
+
+### Phase 2: Stabilize Shared Schema And API Contracts
+
+Goal:
+
+- Make API and event contracts stable before extracting more packages.
+
+Actions:
+
+- Keep Pydantic models as source of truth.
+- Regenerate TypeScript types only through the schema generator.
+- Document schema drift checks.
+- Ensure frontend API clients consume shared types instead of ad hoc shapes.
+- Avoid adding request/response types directly inside UI components.
+
+Done when:
+
+- Shared API/event models have one source of truth.
+- Frontend and backend agree on generated contracts.
+- Schema changes have clear validation steps.
+
+### Phase 3: Split Frontend Shared Logic Only When Reused
+
+Goal:
+
+- Avoid creating weak packages too early.
+
+Actions:
+
+- Keep feature-specific logic in `apps/frontend/src/features`.
+- Keep app-local shared logic in `apps/frontend/src/lib`.
+- Move code to future `packages/core` only when reused outside frontend.
+- Move UI primitives to future `packages/ui` only when another app needs them.
+- Keep store-connected UI out of shared packages.
+
+Done when:
+
+- No package exists without a real consumer.
+- Extracted packages are pure and independently testable.
+- Feature code stays near the feature that owns it.
+
+### Phase 4: Separate Generated Assets, Cache, And Build Outputs
+
+Goal:
+
+- Make source tree audits reliable.
+
+Actions:
+
+- Keep dependency folders out of architecture maps.
+- Keep caches ignored and undocumented as source.
+- Keep binary bundles documented as generated/release artifacts.
+- Move or clearly label generated reports and screenshots if they grow.
+- Add cleanup rules to docs if temporary output becomes noisy.
+
+Done when:
+
+- A new agent can distinguish source from generated output quickly.
+- Architecture docs do not list cache/build output as product source.
+- Generated committed artifacts have regeneration commands.
+
+### Phase 5: Add Ownership Rules Per Folder
+
+Goal:
+
+- Make future additions predictable.
+
+Actions:
+
+- Add ownership notes to architecture docs.
+- Use package README files only when a folder becomes complex enough.
+- Add "where new code goes" rules for frontend, agent, desktop, hotpath,
+  scripts, docs, assets, tests, and shared schema.
+- Document anti-patterns for each zone.
+
+Done when:
+
+- New files have an obvious home.
+- Future agents do not need to guess where to place code.
+- Reviewers can reject misplaced code with a documented rule.
+
+### Phase 6: Make Each Area Independently Testable
+
+Goal:
+
+- Each architecture zone can validate its own behavior.
+
+Actions:
+
+- Frontend tests stay under `apps/frontend/src`.
+- Agent tests stay under `services/agent/tests`.
+- Rust tests stay under Rust crates.
+- Shared schema tests/checks live with shared schema or root check command.
+- Product E2E tests are separated from generated/imported test artifacts.
+
+Done when:
+
+- Each package has a clear validation command.
+- Root `check` still coordinates all package checks.
+- Tests do not require unrelated packages unless integration behavior is being
+  tested.
+
+### Phase 7: Prepare Optional Future Extraction
+
+Goal:
+
+- Make future repo splitting possible without doing it now.
+
+Actions:
+
+- Keep public package boundaries clean.
+- Keep dependency direction stable.
+- Keep shared contracts versionable.
+- Keep package-local tests passing.
+- Avoid hidden imports across app/service/crate boundaries.
+- Document extraction candidates.
+
+Done when:
+
+- Any future extraction has a known dependency list.
+- Shared packages have stable public surfaces.
+- Product release still works from one repo.
+
+---
+
+## 9. Future Extraction Candidates
+
+Do not extract now. Prepare only.
+
+### Candidate: `packages/shared-types`
+
+Possible future repo:
+
+```text
+zoc-shared-schema
+```
+
+Extract only if:
+
+- multiple products consume the same schema
+- schema versioning is stable
+- generated TS/Python packages can be released independently
+
+### Candidate: `crates/hotpath`
+
+Possible future repo:
+
+```text
+zoc-hotpath
+```
+
+Extract only if:
+
+- hotpath becomes useful outside Zoc AI
+- CLI has stable JSON I/O
+- Rust release pipeline is independent
+
+### Candidate: `services/agent`
+
+Possible future repo:
+
+```text
+zoc-agent-sidecar
+```
+
+Extract only if:
+
+- API contracts are versioned
+- sidecar can release independently
+- desktop can consume sidecar versions safely
+
+### Candidate: `apps/frontend`
+
+Possible future repo:
+
+```text
+zoc-frontend
+```
+
+Extract only if:
+
+- frontend can build against published shared packages
+- desktop shell can consume a frontend build artifact
+- local development remains easy
+
+### Candidate: `apps/desktop`
+
+Possible future repo:
+
+```text
+zoc-desktop-shell
+```
+
+Extract only if:
+
+- bundled sidecar and hotpath versions are published artifacts
+- Tauri release pipeline is independent
+- frontend build artifact is published or injected
+
+---
+
+## 10. Target Package Boundary Rules
+
+### Add a file to `apps/frontend` when:
+
+- it renders UI
+- it manages frontend state
+- it talks to Tauri IPC
+- it talks to FastAPI over HTTP/SSE
+- it is only used by the frontend app
+
+### Add a file to `services/agent` when:
+
+- it handles API routes
+- it implements agent behavior
+- it talks to providers
+- it executes tools
+- it persists sessions/events
+- it owns permissions or approvals
+
+### Add a file to `apps/desktop` when:
+
+- it is native desktop shell logic
+- it registers Tauri commands
+- it manages secure local storage
+- it supervises bundled binaries
+- it enforces workspace scope at the native boundary
+
+### Add a file to `crates/hotpath` when:
+
+- it is native-performance logic
+- it is reusable from Rust CLI/library
+- it is not product UI or API orchestration
+
+### Add a file to `packages/shared-types` when:
+
+- it describes a public API/event/data contract
+- both frontend and backend need the shape
+- schema generation can keep language outputs aligned
+
+### Add a file to `scripts` when:
+
+- it is build/release/dev automation
+- it is not runtime application code
+- it is not a long-lived service
+
+### Add a file to `doc` when:
+
+- it is planning
+- it is architecture
+- it is feature design
+- it is implementation notes
+- it guides future agents or engineers
+
+### Add a file to `testsprite_tests` when:
+
+- it is generated by TestSprite or similar tooling
+- it is an imported product test artifact
+- it is not yet curated as normal CI E2E
+
+---
+
+## 11. Anti-Patterns
+
+Avoid:
+
+- creating `packages/*` just to make the repo look more modular
+- moving feature code away from its owning feature too early
+- importing backend internals into frontend code
+- importing frontend state into shared packages
+- making desktop IPC broad enough to bypass permission/trust rules
+- treating generated caches as source
+- putting long-lived product logic in `scripts`
+- duplicating API shape definitions in frontend and backend
+- adding tests without clear owner package
+- hiding release-critical steps outside `scripts` or root commands
+
+---
+
+## 12. Suggested Future Target Tree
+
+This is the possible end-state after the migration phases. It is not an
+immediate implementation request.
+
+```text
+Archivezip/
+- apps/
+  - desktop/
+    - src/
+    - capabilities/
+    - icons/
+    - binaries/
+    - gen/
+  - frontend/
+    - src/
+      - components/
+      - features/
+      - lib/
+      - styles/
+      - __tests__/
+- services/
+  - agent/
+    - src/
+    - tests/
+- packages/
+  - shared-types/
+    - python/
+    - typescript/
+    - scripts/
+  - core/                # future optional
+  - ui/                  # future optional
+  - config/              # future optional
+  - testing/             # future optional
+- crates/
+  - hotpath/
+  - shared-native/       # future optional
+- scripts/
+- tools/                 # future optional
+- doc/
+  - dev/
+  - architecture/        # future optional
+  - hybrid.me
+  - project.me
+- testsprite_tests/
+- e2e/                   # future optional
+- attached_assets/
+- generated/             # future optional
+- README.md
+- MONOREPO_ARCHITECTURE.md
+- develop.md
+- package.json
+- pyproject.toml
+- Cargo.toml
+- pnpm-workspace.yaml
+- Makefile
+```
+
+---
+
+## 13. Validation Commands By Zone
+
+Frontend:
+
+```bash
+pnpm --filter @llama-studio/frontend typecheck
+pnpm --filter @llama-studio/frontend test
+pnpm --filter @llama-studio/frontend lint
+```
+
+Python agent:
+
+```bash
+pytest services/agent/tests
+```
+
+Rust:
+
+```bash
+cargo check --workspace
+cargo test --workspace
+```
+
+Shared schema:
+
+```bash
+pnpm schema:generate
+pnpm --filter @llama-studio/shared-types typecheck
+```
+
+Whole repo:
+
+```bash
+make check
+pnpm check
+```
+
+Documentation-only changes:
+
+```bash
+test -f doc/hybrid.me
+```
+
+---
+
+## 14. Acceptance Checklist For Future Agents
+
+Before adding or moving architecture files:
+
+- Read `MONOREPO_ARCHITECTURE.md`.
+- Read this file.
+- Identify the owner zone.
+- Confirm the change follows dependency direction rules.
+- Confirm source and generated artifacts are not mixed.
+- Confirm new shared packages have real reuse.
+- Confirm no public API shape is duplicated across languages.
+- Confirm package-local tests are added when behavior changes.
+- Confirm root checks still work for cross-package changes.
+
+Before creating a new package:
+
+- It has at least one real consumer.
+- It has a stable public surface.
+- It has a package-local validation command.
+- It does not import app-specific state.
+- It does not hide ownership from the original feature.
+
+Before extracting to a separate repo:
+
+- The package has stable versioning.
+- The package has independent CI.
+- The package has clear release artifacts.
+- The current monorepo release can consume those artifacts.
+- The extraction reduces complexity instead of increasing it.
+
+---
+
+## 15. Immediate Recommendation
+
+Do not restructure folders yet.
+
+Next best steps:
+
+1. Keep current monorepo.
+2. Treat `MONOREPO_ARCHITECTURE.md` as the current source map.
+3. Treat this file as the future architecture roadmap.
+4. Add ownership and dependency checks to future implementation plans.
+5. Only create new packages when code reuse proves the need.
+6. Keep generated artifacts clearly labeled.
+7. Make Ask/Agent/Plan/Debug behavior stay aligned across frontend, backend,
+   shared types, and tests before any major repo restructuring.
+
+Final target:
+
+```text
+One repo.
+Many clear zones.
+Strong contracts.
+Independent validation.
+Future extraction ready.
+No premature split.
+```

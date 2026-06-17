@@ -39,7 +39,7 @@ export function AppearanceSection() {
       <Card>
         <CardHeader>
           <CardTitle>Theme</CardTitle>
-          <CardDescription>Dark is the default Llama Studio aesthetic.</CardDescription>
+          <CardDescription>Dark is the default Zoc AI aesthetic.</CardDescription>
         </CardHeader>
         <CardContent className="grid gap-3">
           <div className="grid grid-cols-[8rem_1fr] items-center gap-3">

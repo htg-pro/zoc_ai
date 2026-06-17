@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 from uuid import uuid4
 
@@ -297,7 +297,7 @@ async def test_approval_buffer_persistence_across_restart(tmp_path, monkeypatch)
         arguments={"path": "test.txt", "content": "test content"},
         status=ToolCallStatus.needs_approval,
         error="needs write_fs permission",
-        started_at=datetime.utcnow(),
+        started_at=datetime.now(UTC),
     )
     state1.repo.upsert_tool_call(session_id, call)
 

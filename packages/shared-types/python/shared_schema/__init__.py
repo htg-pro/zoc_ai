@@ -9,11 +9,11 @@ from .models import (
     AgentEvent,
     # Agent events
     AgentEventBase,
+    CheckpointInfo,
     CodeReviewFinding,
     CodeReviewReport,
+    ContextCandidate,
     ContextStatus,
-    CreateReplitPlanRequest,
-    CreateReplitTaskRequest,
     # API requests
     CreateSessionRequest,
     DiffEvent,
@@ -33,6 +33,7 @@ from .models import (
     IndexConfig,
     IndexQueryResult,
     IndexStatus,
+    InlineEditResult,
     LogEvent,
     # Memory and context
     MemoryStats,
@@ -50,18 +51,10 @@ from .models import (
     PlanStepEvent,
     PlanStepStatus,
     PostMessageRequest,
+    ProjectRulesInfo,
     ProviderDescriptor,
     # Provider types
     ProviderKind,
-    ReplitCheckpoint,
-    ReplitPlan,
-    ReplitPlanStatus,
-    ReplitTask,
-    ReplitTaskLog,
-    ReplitTaskPriority,
-    # Replit workflow
-    ReplitTaskStatus,
-    ReviseReplitPlanRequest,
     RunAgentRequest,
     RunSlashCommandRequest,
     Session,
@@ -91,11 +84,11 @@ __all__ = [
     "AgentEvent",
     # Agent events
     "AgentEventBase",
+    "CheckpointInfo",
     "CodeReviewFinding",
     "CodeReviewReport",
+    "ContextCandidate",
     "ContextStatus",
-    "CreateReplitPlanRequest",
-    "CreateReplitTaskRequest",
     # API requests
     "CreateSessionRequest",
     "DiffEvent",
@@ -115,6 +108,7 @@ __all__ = [
     "IndexConfig",
     "IndexQueryResult",
     "IndexStatus",
+    "InlineEditResult",
     "LogEvent",
     # Memory and context
     "MemoryStats",
@@ -132,18 +126,10 @@ __all__ = [
     "PlanStepEvent",
     "PlanStepStatus",
     "PostMessageRequest",
+    "ProjectRulesInfo",
     "ProviderDescriptor",
     # Provider types
     "ProviderKind",
-    "ReplitCheckpoint",
-    "ReplitPlan",
-    "ReplitPlanStatus",
-    "ReplitTask",
-    "ReplitTaskLog",
-    "ReplitTaskPriority",
-    # Replit workflow
-    "ReplitTaskStatus",
-    "ReviseReplitPlanRequest",
     "RunAgentRequest",
     "RunSlashCommandRequest",
     "Session",

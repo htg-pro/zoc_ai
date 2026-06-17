@@ -1,19 +1,16 @@
 import type { SlashCommandName } from "@llama-studio/shared-types";
 
 /**
- * Local command list shown by `SlashAutocomplete`. `name` is widened from
- * `SlashCommandName` to `string` because frontend-only commands like `/plan`
- * (routed to `createReplitPlan` inside `sendUserMessage`) aren't part of the
- * shared backend slash union.
+ * Local command list shown by `SlashAutocomplete`. `name` is the shared
+ * backend slash union.
  */
 export interface SlashCommand {
-  name: SlashCommandName | "plan";
+  name: SlashCommandName;
   summary: string;
   hint: string;
 }
 
 export const SLASH_COMMANDS: SlashCommand[] = [
-  { name: "plan", summary: "Plan a code change before applying", hint: "/plan <description>" },
   { name: "review", summary: "Review staged changes", hint: "/review [path]" },
   { name: "test", summary: "Generate or run tests", hint: "/test <target>" },
   { name: "explain", summary: "Explain code in plain English", hint: "/explain <selection>" },

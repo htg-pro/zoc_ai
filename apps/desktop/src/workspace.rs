@@ -2,7 +2,7 @@
 //!
 //! The frontend's onboarding flow asks the user to pick a workspace, then
 //! we persist that choice in `~/.llama-studio/desktop.json` and check the
-//! `legacy/` directory for an old Llama Studio config we can import.
+//! `legacy/` directory for an old Zoc AI config we can import.
 //!
 //! Additionally exposes a `WorkspaceState` shared via Tauri-managed state
 //! holding the currently-active workspace root. All filesystem and patch

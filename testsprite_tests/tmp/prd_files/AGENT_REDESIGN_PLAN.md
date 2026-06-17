@@ -1,4 +1,4 @@
-# Llama Studio Agent — Redesign Plan (Cursor / Claude Code Pattern)
+# Zoc AI Agent — Redesign Plan (Cursor / Claude Code Pattern)
 
 **Goal:** Replace the current "Plan CRUD entity + separate Orchestrator loop" design with a single, unified, streaming "Agent Run" — the same mental model Cursor's Agent Mode, Claude Code's `TodoWrite`, and Cline's task list all converged on.
 

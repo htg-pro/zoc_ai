@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import UTC, datetime
 
 from shared_schema.models import (
     Message,
@@ -45,7 +45,7 @@ def test_tool_calls_and_events(app_state, tmp_workspace):
     s = Session(title="t", workspace_root=str(tmp_workspace))
     app_state.repo.create_session(s)
     call = ToolCall(name="x", arguments={"a": 1}, status=ToolCallStatus.succeeded,
-                    started_at=datetime.utcnow(), finished_at=datetime.utcnow())
+                    started_at=datetime.now(UTC), finished_at=datetime.now(UTC))
     app_state.repo.upsert_tool_call(s.id, call)
     assert app_state.repo.list_tool_calls(s.id)[0].name == "x"
 

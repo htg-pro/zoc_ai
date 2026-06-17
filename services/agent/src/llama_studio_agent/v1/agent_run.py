@@ -5,24 +5,48 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import json
+from dataclasses import replace
 from pathlib import Path
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from shared_schema.models import (
+    CheckpointCreatedEvent,
+    CheckpointInfo,
+    DiffReadyEvent,
     MessageRole,
     ModelCapability,
     ModelDescriptor,
     PermissionScope,
     ProviderKind,
     RunAgentRequest,
+    RunLifecycleEvent,
     Session,
     ToolCallStatus,
 )
 
-from ..agent.orchestrator import AgentOrchestrator, OrchestratorConfig
+from ..agent.checkpoints import (
+    list_checkpoints as list_run_checkpoints,
+)
+from ..agent.checkpoints import (
+    restore_checkpoint as restore_run_checkpoint,
+)
+from ..agent.orchestrator import (
+    ASK_SYSTEM_PROMPT,
+    AgentOrchestrator,
+    OrchestratorConfig,
+)
+from ..agent.zoc_run import (
+    apply_isolated_run,
+    discard_isolated_run,
+    finalize_isolated_run,
+    prepare_isolated_run,
+)
+from ..agent.zoc_run import (
+    get_run as get_isolated_run,
+)
 from ..deps import get_session, get_state, make_orchestrator
 from ..providers.base import ProviderError
 from ..providers.openai import OpenAIProvider
@@ -118,6 +142,13 @@ async def run_agent(
     if not workspace_path.exists() or not workspace_path.is_dir():
         raise HTTPException(status_code=400, detail=f"No workspace selected: {workspace_root}")
 
+    # Mint a run id for EVERY run (not just isolated/review runs) so the
+    # frontend can bind this run to the message it answers and discard events
+    # from a superseded run. A client may supply its own id; otherwise we
+    # generate one. The same id is reused for the isolated-run path below and
+    # returned in the JSON response.
+    run_id = payload.run_id or uuid4().hex
+
     effective_session = session
     if str(workspace_path) != session.workspace_root:
         state.repo.update_workspace_root(session.id, str(workspace_path))
@@ -157,14 +188,44 @@ async def run_agent(
         note="Workspace read access for agent context.",
     )
 
+    # Review-before-apply (redesign Part 2.5): an Agent-mode run can execute
+    # in an isolated copy of the workspace so the real project is untouched
+    # until the user clicks Apply. Opt-in via `review_changes` so existing
+    # direct-write behavior is preserved when the flag is absent.
+    isolated_run = None
+    run_workspace = workspace_path
+    if payload.review_changes and (payload.mode or "agent") == "agent":
+        isolated_run = prepare_isolated_run(
+            data_dir=state.settings.data_dir,
+            run_id=run_id,
+            session_id=effective_session.id,
+            source_root=workspace_path,
+        )
+        run_workspace = isolated_run.workspace
+        # Announce the checkpoint (the pristine isolated snapshot) so the UI
+        # can show "checkpoint set" and offer rollback.
+        seq = state.bus.next_seq(effective_session.id)
+        checkpoint_event = CheckpointCreatedEvent(
+            session_id=effective_session.id,
+            seq=seq,
+            run_id=run_id,
+            checkpoint_id=run_id,
+            label="Workspace snapshot before changes",
+        )
+        state.repo.append_event(
+            effective_session.id, seq, checkpoint_event.type, checkpoint_event.model_dump(mode="json")
+        )
+        await state.bus.publish(checkpoint_event)
+
     workspace_context = {
-        "workspace_path": str(workspace_path),
+        "workspace_path": str(run_workspace),
         "active_file": payload.active_file,
         "open_files": [f.model_dump(mode="json") for f in payload.open_files],
         "selected_text": payload.selected_text,
         "editor_content": payload.editor_content,
         "mode": payload.mode,
         "model": payload.model,
+        "run_id": run_id,
     }
 
     orch = (
@@ -183,22 +244,34 @@ async def run_agent(
     # the registry drops the liveness in its `finally`, letting the resolve
     # path treat any still-suspended approval as orphaned.
     with state.runs.track(session.id):
+        is_ask = payload.mode == "ask"
+        ask_config = OrchestratorConfig(
+            max_iterations=payload.max_iterations,
+            max_repair_attempts=payload.max_repair_attempts,
+            allowed_tools=ASK_MODE_TOOLS if is_ask else None,
+            skip_planner=is_ask,
+            enable_todos=not is_ask,
+            presentation_mode="ask" if is_ask else (payload.mode or "agent"),
+        )
+        if is_ask:
+            # Read-only Q&A: swap in the Ask system prompt so the model answers
+            # directly, never plans, never writes a to-do, and never claims it
+            # changed files.
+            ask_config = replace(ask_config, system_prompt=ASK_SYSTEM_PROMPT)
         try:
             result = await asyncio.wait_for(
                 orch.run(
                     session_id=effective_session.id,
-                    workspace_root=str(workspace_path),
+                    workspace_root=str(run_workspace),
                     prompt=prompt,
                     workspace_context=workspace_context,
-                    config=OrchestratorConfig(
-                        max_iterations=payload.max_iterations,
-                        max_repair_attempts=payload.max_repair_attempts,
-                        allowed_tools=ASK_MODE_TOOLS if payload.mode == "ask" else None,
-                    ),
+                    config=ask_config,
                 ),
                 timeout=AGENT_RUN_TIMEOUT_S,
             )
         except TimeoutError as exc:
+            if isolated_run is not None:
+                discard_isolated_run(isolated_run)
             raise HTTPException(
                 status_code=504,
                 detail=(
@@ -206,10 +279,80 @@ async def run_agent(
                     "the underlying provider may be stalled."
                 ),
             ) from exc
+        except BaseException:
+            # Any other abnormal termination — a provider/tool error, or the
+            # request coroutine being cancelled when the client disconnects
+            # mid-flight — must not leak the isolated copy (temp dir on disk +
+            # registry entry). Discard it and re-raise so the original error
+            # (including CancelledError) propagates unchanged.
+            if isolated_run is not None:
+                discard_isolated_run(isolated_run)
+            raise
+
+    # For an isolated run, compute the real diff/validation against the source
+    # and register it so the apply/discard endpoints can resolve it.
+    review = None
+    if isolated_run is not None:
+        finalize_isolated_run(isolated_run)
+        review = {
+            "run_id": isolated_run.run_id,
+            "status": isolated_run.status,
+            "changed_files": isolated_run.changed,
+            "validation": isolated_run.validation,
+        }
+        # Surface the run_id + terminal lifecycle to the SSE stream so the
+        # frontend (which only sees events, not this JSON body) can wire its
+        # Apply/Discard controls to the run.
+        seq = state.bus.next_seq(effective_session.id)
+        if isolated_run.status == "awaiting_review":
+            review_event = RunLifecycleEvent(
+                session_id=effective_session.id,
+                seq=seq,
+                type="run.awaiting_review",
+                run_id=isolated_run.run_id,
+                mode="agent",
+                changed_files=len(isolated_run.changed),
+            )
+            state.repo.append_event(
+                effective_session.id, seq, review_event.type, review_event.model_dump(mode="json")
+            )
+            await state.bus.publish(review_event)
+            # Surface the end-of-run validation results (typecheck / build /
+            # tests run against the isolated copy) so the review card can show
+            # pass/fail badges. Patches are left empty — the UI already builds
+            # them from the per-write `diff` events.
+            seq2 = state.bus.next_seq(effective_session.id)
+            diff_event = DiffReadyEvent(
+                session_id=effective_session.id,
+                seq=seq2,
+                run_id=isolated_run.run_id,
+                patches=[],
+                validation=isolated_run.validation,
+            )
+            state.repo.append_event(
+                effective_session.id, seq2, diff_event.type, diff_event.model_dump(mode="json")
+            )
+            await state.bus.publish(diff_event)
+        else:
+            # No changes — nothing to review; the isolated copy was cleaned up.
+            review_event = RunLifecycleEvent(
+                session_id=effective_session.id,
+                seq=seq,
+                type="run.applied",
+                run_id=isolated_run.run_id,
+                mode="agent",
+                changed_files=0,
+            )
+            state.repo.append_event(
+                effective_session.id, seq, review_event.type, review_event.model_dump(mode="json")
+            )
+            await state.bus.publish(review_event)
     return {
+        "run_id": run_id,
         "final_text": result.final_text,
         "iterations": result.iterations,
         "repaired": result.repaired,
+        "review": review,
         "plan": result.plan.model_dump(mode="json") if result.plan else None,
         "tool_calls": [tc.model_dump(mode="json") for tc in result.tool_calls],
         "memory_stats": (
@@ -225,6 +368,123 @@ async def run_agent(
             else None
         ),
     }
+
+
+@router.post("/runs/{run_id}/apply")
+async def apply_run(
+    run_id: str,
+    session: Session = Depends(get_session),
+    state: AppState = Depends(get_state),
+) -> dict:
+    """Apply an isolated run's changes onto the real workspace. This is the
+    single explicit approval gate — only this endpoint mutates the real
+    project as a result of agent output."""
+    run = get_isolated_run(run_id, session.id)
+    if run is None:
+        raise HTTPException(status_code=404, detail="run not found")
+    if run.status not in ("awaiting_review", "applying"):
+        raise HTTPException(status_code=409, detail=f"run is '{run.status}', not awaiting review")
+    applied = apply_isolated_run(run)
+    failed = run.failed
+    seq = state.bus.next_seq(session.id)
+    event = RunLifecycleEvent(
+        session_id=session.id,
+        seq=seq,
+        type="run.applied",
+        run_id=run_id,
+        mode="agent",
+        changed_files=len(applied),
+    )
+    state.repo.append_event(session.id, seq, event.type, event.model_dump(mode="json"))
+    await state.bus.publish(event)
+    # If nothing applied but changes were expected, that's a hard failure.
+    if failed and not applied:
+        raise HTTPException(
+            status_code=500,
+            detail=f"failed to apply any of {len(failed)} changed file(s) to the workspace",
+        )
+    return {
+        "run_id": run_id,
+        "status": run.status,
+        "applied_files": applied,
+        "failed_files": failed,
+        # A checkpoint of the pre-apply state was captured (when anything was
+        # applied), so the run can be undone via /runs/{id}/restore.
+        "checkpoint_id": run_id if applied else None,
+    }
+
+
+@router.post("/runs/{run_id}/discard")
+async def discard_run(
+    run_id: str,
+    session: Session = Depends(get_session),
+    state: AppState = Depends(get_state),
+) -> dict:
+    """Throw away an isolated run's copy — the real workspace is untouched."""
+    run = get_isolated_run(run_id, session.id)
+    if run is None:
+        raise HTTPException(status_code=404, detail="run not found")
+    discard_isolated_run(run)
+    seq = state.bus.next_seq(session.id)
+    event = RunLifecycleEvent(
+        session_id=session.id,
+        seq=seq,
+        type="run.discarded",
+        run_id=run_id,
+        mode="agent",
+    )
+    state.repo.append_event(session.id, seq, event.type, event.model_dump(mode="json"))
+    await state.bus.publish(event)
+    return {"run_id": run_id, "status": "discarded"}
+
+
+@router.post("/runs/{run_id}/restore")
+async def restore_run(
+    run_id: str,
+    session: Session = Depends(get_session),
+    state: AppState = Depends(get_state),
+) -> dict:
+    """Undo a previously-applied run by restoring the pre-apply checkpoint —
+    reverts modified files, deletes files the run created, and recreates files
+    the run deleted. The one-click "undo the agent's changes" gate."""
+    try:
+        restored = restore_run_checkpoint(
+            data_dir=state.settings.data_dir,
+            run_id=run_id,
+            session_id=session.id,
+        )
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="checkpoint not found") from exc
+    seq = state.bus.next_seq(session.id)
+    event = RunLifecycleEvent(
+        session_id=session.id,
+        seq=seq,
+        type="run.discarded",
+        run_id=run_id,
+        mode="agent",
+        changed_files=len(restored),
+    )
+    state.repo.append_event(session.id, seq, event.type, event.model_dump(mode="json"))
+    await state.bus.publish(event)
+    return {"run_id": run_id, "status": "restored", "restored_files": restored}
+
+
+@router.get("/checkpoints", response_model=list[CheckpointInfo])
+async def agent_checkpoints(
+    session: Session = Depends(get_session),
+    state: AppState = Depends(get_state),
+) -> list[CheckpointInfo]:
+    """List restorable checkpoints for the session, newest first."""
+    cps = list_run_checkpoints(state.settings.data_dir, session.id)
+    return [
+        CheckpointInfo(
+            run_id=c.run_id,
+            label=c.label,
+            created_at=c.created_at,
+            files=c.files,
+        )
+        for c in cps
+    ]
 
 
 @router.get("/events")

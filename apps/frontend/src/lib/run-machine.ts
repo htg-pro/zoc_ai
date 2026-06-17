@@ -42,9 +42,22 @@ export const DEFAULT_RUN_CONFIG: RunConfig = {
 
 export interface RunState {
   lifecycle: RunLifecycle;
+  /** The BACKEND-issued run id of the active run (was client-only) (R1.3). */
   runId: string | null;
+  /**
+   * The user `Message.id` this run answers, recorded on `start` (R1.1).
+   * Preserved through terminal transitions so a completed run record still
+   * carries the message it was bound to.
+   */
+  boundMessageId: string | null;
   startedAt: number | null;
   config: RunConfig;
+  /**
+   * Retained field, but the authoritative seq floor now lives in the shared
+   * `SeqCursor` (Component 3 / `seq-cursor.ts`). The reducer no longer resets
+   * this on `start`, so a fresh run cannot strand a prior run's stale events
+   * as "new".
+   */
   highestSeq: number;
   error: string | null;
   /** Single pending message held while a run is active (R4.11). */
@@ -54,6 +67,7 @@ export interface RunState {
 export const INITIAL_RUN_STATE: RunState = {
   lifecycle: "idle",
   runId: null,
+  boundMessageId: null,
   startedAt: null,
   config: { ...DEFAULT_RUN_CONFIG },
   highestSeq: 0,
@@ -62,7 +76,13 @@ export const INITIAL_RUN_STATE: RunState = {
 };
 
 export type RunAction =
-  | { type: "start"; runId: string; at: number; config?: Partial<RunConfig> }
+  | {
+      type: "start";
+      runId: string;
+      boundMessageId: string;
+      at: number;
+      config?: Partial<RunConfig>;
+    }
   | { type: "start-failed"; detail: string }
   | { type: "pause" }
   | { type: "resume" }
@@ -106,13 +126,23 @@ function enterTerminal(
 export function runReducer(state: RunState, action: RunAction): RunState {
   switch (action.type) {
     case "start":
-      // Start from any state yields exactly one active run with a fresh id.
+      // R1.8: a run cannot start without a bound user message. The caller
+      // (store, task 9.1) is responsible for resolving the bound message id;
+      // the reducer must not invent a binding. If none is supplied, stay put
+      // and retain the prior run/message association unchanged.
+      if (!action.boundMessageId) {
+        return state;
+      }
+      // Start from any state yields exactly one active run with a fresh id
+      // bound to the triggering message. The seq floor is owned by the shared
+      // cursor (Component 3), so we deliberately do NOT reset `highestSeq`
+      // here — resetting it would strand a prior run's stale events as "new".
       return {
         ...state,
         lifecycle: "running",
         runId: action.runId,
+        boundMessageId: action.boundMessageId,
         startedAt: action.at,
-        highestSeq: 0,
         error: null,
         config: action.config
           ? { ...state.config, ...action.config }

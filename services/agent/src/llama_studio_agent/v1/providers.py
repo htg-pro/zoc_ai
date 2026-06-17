@@ -46,7 +46,7 @@ async def discover_models(payload: DiscoverModelsRequest) -> DiscoverModelsRespo
     provider = OpenAIProvider(api_key=payload.api_key, base_url=base_url)
     try:
         ids = await provider.list_remote_models()
-    except Exception as exc:  # noqa: BLE001 — surface any failure as a 502
+    except Exception as exc:
         raise HTTPException(
             status_code=502,
             detail=f"Could not fetch models from {base_url}: {exc}",

@@ -95,7 +95,7 @@ export function OnboardingWizard({ onComplete }: Props) {
           <section className="space-y-3">
             <div className="flex items-center gap-2">
               <Sparkles className="h-5 w-5 text-primary" />
-              <h2 className="text-lg font-semibold">Welcome to Llama Studio</h2>
+              <h2 className="text-lg font-semibold">Welcome to Zoc AI</h2>
             </div>
             <p className="text-sm text-muted-foreground">
               A local-first agentic coding workspace. We&apos;ll get you set up in four short steps.
@@ -120,7 +120,7 @@ export function OnboardingWizard({ onComplete }: Props) {
               <h2 className="text-lg font-semibold">Pick your workspace</h2>
             </div>
             <p className="text-sm text-muted-foreground">
-              Llama Studio will index this folder and run agents inside it. You can change this later in Settings.
+              Zoc AI will index this folder and run agents inside it. You can change this later in Settings.
             </p>
             <div className="space-y-1">
               <Label htmlFor="ws">Workspace path</Label>
@@ -168,13 +168,13 @@ export function OnboardingWizard({ onComplete }: Props) {
             </div>
             {legacy?.present ? (
               <p className="text-sm text-muted-foreground">
-                Found a previous Llama Studio install at{" "}
+                Found a previous Zoc AI install at{" "}
                 <code className="font-mono">{legacy.path}</code> with {legacy.session_count} session(s).
                 Import them now?
               </p>
             ) : (
               <p className="text-sm text-muted-foreground">
-                No legacy Llama Studio install detected. You can skip this step.
+                No legacy Zoc AI install detected. You can skip this step.
               </p>
             )}
             {importedCount !== null && (
@@ -237,7 +237,7 @@ export function OnboardingWizard({ onComplete }: Props) {
             <CheckCircle2 className="mx-auto h-10 w-10 text-emerald-400" />
             <h2 className="text-lg font-semibold">You&apos;re set</h2>
             <p className="text-sm text-muted-foreground">Happy hacking.</p>
-            <Button onClick={() => onComplete?.()}>Open Llama Studio</Button>
+            <Button onClick={() => onComplete?.()}>Open Zoc AI</Button>
           </section>
         )}
       </div>

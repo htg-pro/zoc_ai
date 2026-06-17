@@ -24,7 +24,7 @@ for arg in "$@"; do
 done
 
 VERSION="$(cat VERSION | tr -d '[:space:]')"
-echo "==> Llama Studio release ${VERSION} (mode: ${MODE})"
+echo "==> Zoc AI release ${VERSION} (mode: ${MODE})"
 
 # 0. Stamp version everywhere.
 echo "==> Stamping version manifests"
@@ -83,7 +83,10 @@ if ! (command -v cargo-tauri >/dev/null 2>&1 \
 EOF
   exit 1
 fi
-pnpm --filter @llama-studio/desktop build
+# We just built the frontend, hotpath, and sidecar above, so tell Tauri's
+# beforeBuildCommand (scripts/prepare_tauri_build.sh) to skip — otherwise it
+# would redo the slow sidecar bundle a second time.
+LLAMA_STUDIO_SKIP_PREPARE=1 pnpm --filter @llama-studio/desktop build
 
 # 5. Collect artifacts into dist/.
 echo "==> Preparing dist/installers/"

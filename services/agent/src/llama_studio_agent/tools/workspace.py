@@ -342,7 +342,7 @@ class RunTestsTool(Tool[RunTestsInput, dict[str, Any]]):
     sandbox_limits = SandboxLimits.RUN_COMMAND
 
     async def run(self, ctx: ToolContext, args: RunTestsInput) -> dict[str, Any]:
-        from ..agent.replit_workflow import discover_validation_commands
+        from ..agent.validation import discover_validation_commands
 
         root = Path(ctx.workspace_root).expanduser().resolve()
         commands = discover_validation_commands(root)[: args.max_commands]

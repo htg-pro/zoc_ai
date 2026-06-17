@@ -21,7 +21,7 @@ _log = structlog.get_logger(__name__)
 
 HELP_TEXT = """llama-studio-agent
 
-Start the Llama Studio FastAPI sidecar on a loopback port and print
+Start the Zoc AI FastAPI sidecar on a loopback port and print
 LLAMA_STUDIO_AGENT_PORT=<port> for the desktop shell.
 
 Configuration is read from LLAMA_STUDIO_* environment variables.

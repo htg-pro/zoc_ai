@@ -6,12 +6,14 @@ from fastapi import APIRouter
 
 from .agent_run import router as agent_router
 from .commands import router as commands_router
+from .context import router as context_router
 from .indexer import router as indexer_router
+from .inline_edit import router as inline_edit_router
 from .memory import router as memory_router
 from .messages import router as messages_router
 from .providers import router as providers_router
-from .replit_workflow import router as replit_workflow_router
 from .review import router as review_router
+from .rules import router as rules_router
 from .sessions import router as sessions_router
 from .settings import router as settings_router
 from .terminal import router as terminal_router
@@ -34,6 +36,8 @@ router.include_router(providers_router)
 router.include_router(indexer_router)
 router.include_router(terminal_router)
 router.include_router(review_router)
-router.include_router(replit_workflow_router)
+router.include_router(inline_edit_router)
+router.include_router(rules_router)
+router.include_router(context_router)
 router.include_router(settings_router)
 router.include_router(memory_router)

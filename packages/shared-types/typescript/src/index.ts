@@ -1,5 +1,5 @@
 /**
- * Shared TypeScript types for Llama Studio.
+ * Shared TypeScript types for Zoc AI.
  *
  * AUTO-GENERATED from Python Pydantic models.
  * DO NOT EDIT MANUALLY - changes will be overwritten.
@@ -54,26 +54,6 @@ export type ProviderKind =
   | "gemini"
   | "mock";
 
-export type ReplitPlanStatus =
-  | "draft"
-  | "approved"
-  | "archived";
-
-export type ReplitTaskPriority =
-  | "low"
-  | "medium"
-  | "high";
-
-export type ReplitTaskStatus =
-  | "draft"
-  | "queued"
-  | "active"
-  | "ready"
-  | "failed"
-  | "done"
-  | "dismissed"
-  | "cancelled";
-
 export type SessionStatus =
   | "active"
   | "idle"
@@ -92,6 +72,11 @@ export type TerminalSessionStatus =
   | "running"
   | "exited";
 
+export type TodoStatus =
+  | "pending"
+  | "in_progress"
+  | "completed";
+
 export type ToolCallStatus =
   | "pending"
   | "running"
@@ -106,17 +91,27 @@ export interface AgentEventBase {
   session_id: string;
   seq: number;
   at: string;
+  run_id?: string | null;
 }
 
 export interface AgentLifecycleEvent extends AgentEventBase {
-  type:
-    | "agent.started"
-    | "agent.context.loading"
-    | "agent.context.ready"
-    | "agent.completed"
-    | "agent.error";
+  type: "agent.started" | "agent.context.loading" | "agent.context.ready" | "agent.completed" | "agent.error";
   message?: string | null;
   detail?: string | null;
+}
+
+export interface CheckpointCreatedEvent extends AgentEventBase {
+  type: "checkpoint.created";
+  run_id?: string | null;
+  checkpoint_id: string;
+  label?: string | null;
+}
+
+export interface CheckpointInfo {
+  run_id: string;
+  label: string;
+  created_at: string;
+  files: string[];
 }
 
 export interface CodeReviewFinding {
@@ -133,25 +128,20 @@ export interface CodeReviewReport {
   summary?: string | null;
 }
 
+export interface ContextCandidate {
+  kind: "file" | "folder" | "symbol";
+  label: string;
+  path: string;
+  detail?: string | null;
+  line?: number | null;
+}
+
 export interface ContextStatus extends MemoryStats {
   model: string;
   recommended_model?: string | null;
   can_continue: boolean;
   compaction_available: boolean;
   usage_percent: number;
-}
-
-export interface CreateReplitPlanRequest {
-  prompt: string;
-}
-
-export interface CreateReplitTaskRequest {
-  title: string;
-  summary: string;
-  priority: ReplitTaskPriority;
-  files_likely_changed: string[];
-  done_looks_like: string[];
-  test_plan: string[];
 }
 
 export interface CreateSessionRequest {
@@ -171,6 +161,13 @@ export interface DiffPatch {
   file_path: string;
   unified_diff: string;
   summary?: string | null;
+}
+
+export interface DiffReadyEvent extends AgentEventBase {
+  type: "diff.ready";
+  run_id?: string | null;
+  patches: DiffPatch[];
+  validation: Record<string, string>;
 }
 
 export interface DoneEvent extends AgentEventBase {
@@ -231,9 +228,13 @@ export interface IndexStatus {
   embedder?: EmbedderInfo | null;
 }
 
+export interface InlineEditResult {
+  edited: string;
+}
+
 export interface LogEvent extends AgentEventBase {
   type: "log";
-  level: string;
+  level: "debug" | "info" | "warning" | "error";
   message: string;
 }
 
@@ -333,6 +334,12 @@ export interface PostMessageRequest {
   role: MessageRole;
 }
 
+export interface ProjectRulesInfo {
+  active: boolean;
+  sources: string[];
+  rules: string;
+}
+
 export interface ProviderDescriptor {
   kind: ProviderKind;
   display_name: string;
@@ -341,80 +348,40 @@ export interface ProviderDescriptor {
   models: ModelDescriptor[];
 }
 
-export interface ReplitCheckpoint {
-  id: string;
-  session_id: string;
-  task_id?: string | null;
-  label: string;
-  snapshot_path: string;
-  files: string[];
-  created_at: string;
-}
-
-export interface ReplitPlan {
-  id: string;
-  session_id: string;
-  title: string;
-  summary: string;
-  status: ReplitPlanStatus;
-  tasks: ReplitTask[];
-  created_at: string;
-  updated_at: string;
-}
-
-export interface ReplitTask {
-  id: string;
-  session_id: string;
-  plan_id?: string | null;
-  title: string;
-  summary: string;
-  status: ReplitTaskStatus;
-  priority: ReplitTaskPriority;
-  depends_on: string[];
-  files_likely_changed: string[];
-  done_looks_like: string[];
-  test_plan: string[];
-  workspace_path?: string | null;
-  diff?: string | null;
-  test_output?: string | null;
-  error?: string | null;
-  validation_attempts: number;
-  created_at: string;
-  updated_at: string;
-}
-
-export interface ReplitTaskLog {
-  id: string;
-  task_id: string;
-  level: string;
-  message: string;
-  created_at: string;
-}
-
-export interface ReviseReplitPlanRequest {
-  prompt: string;
-}
-
 export interface RunAgentRequest {
   prompt?: string | null;
   message?: string | null;
+  /**
+   * Client-supplied run id (R1.2, R1.7). When set, the backend reuses it as
+   * the run's authoritative id and echoes it on every emitted event, so the
+   * frontend can bind the run to the message it answers and discard events
+   * from a superseded run. When absent the backend mints one. Sent as `runId`
+   * (the backend model aliases `run_id` ⇄ `runId`).
+   */
+  runId?: string | null;
   sessionId?: string | null;
   workspacePath?: string | null;
   activeFile?: string | null;
   openFiles?: OpenFileContext[];
   selectedText?: string | null;
   editorContent?: string | null;
-  mode?: string | null;
+  mode: string | null;
   model?: string | null;
   provider?: string | null;
   apiKey?: string | null;
-  api_key?: string | null;
   baseUrl?: string | null;
-  base_url?: string | null;
+  reviewChanges?: boolean;
   maxIterations?: number;
-  max_iterations?: number;
   maxRepairAttempts?: number;
-  max_repair_attempts?: number;
+}
+
+export interface RunLifecycleEvent extends AgentEventBase {
+  type: "run.started" | "run.context_ready" | "run.awaiting_review" | "run.applied" | "run.discarded" | "run.error";
+  run_id?: string | null;
+  mode?: string | null;
+  message?: string | null;
+  detail?: string | null;
+  changed_files?: number | null;
 }
 
 export interface RunSlashCommandRequest {
@@ -446,50 +413,6 @@ export interface SlashCommandDescriptor {
   args_schema: Record<string, unknown>;
 }
 
-export interface TaskCreatedEvent extends AgentEventBase {
-  type: "task.created";
-  task: ReplitTask;
-}
-
-export type TodoStatus = "pending" | "in_progress" | "completed";
-
-export interface TodoItem {
-  id: string;
-  content: string;
-  status: TodoStatus;
-}
-
-export interface TodoUpdateEvent extends AgentEventBase {
-  type: "todo_update";
-  todos: TodoItem[];
-}
-
-// ── Unified run lifecycle events (redesign Part 4) ─────────────────────
-export interface RunLifecycleEvent extends AgentEventBase {
-  type:
-    | "run.started"
-    | "run.context_ready"
-    | "run.awaiting_review"
-    | "run.applied"
-    | "run.discarded"
-    | "run.error";
-  mode?: string | null;
-  message?: string | null;
-  detail?: string | null;
-  changed_files?: number | null;
-}
-
-export interface CheckpointCreatedEvent extends AgentEventBase {
-  type: "checkpoint.created";
-  checkpoint_id: string;
-  label?: string | null;
-}
-
-export interface DiffReadyEvent extends AgentEventBase {
-  type: "diff.ready";
-  patches: DiffPatch[];
-}
-
 export interface TerminalSession {
   id: string;
   cmd: string;
@@ -516,6 +439,17 @@ export interface TestLifecycleEvent extends AgentEventBase {
   command?: string | null;
   ok?: boolean | null;
   output?: string | null;
+}
+
+export interface TodoItem {
+  id: string;
+  content: string;
+  status: TodoStatus;
+}
+
+export interface TodoUpdateEvent extends AgentEventBase {
+  type: "todo_update";
+  todos: TodoItem[];
 }
 
 export interface TokenEvent extends AgentEventBase {
@@ -594,7 +528,6 @@ export type AgentEvent =
   | ToolStartedEvent
   | ToolCompletedEvent
   | ToolCallEvent
-  | TaskCreatedEvent
   | TodoUpdateEvent
   | RunLifecycleEvent
   | CheckpointCreatedEvent

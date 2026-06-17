@@ -1,4 +1,4 @@
-.PHONY: install dev build check lint typecheck fmt test schema clean clean-all doctor version sidecar release zip
+.PHONY: install dev build check lint typecheck fmt test schema scan-secrets clean clean-all doctor version sidecar release zip
 
 install:
 	pnpm install
@@ -6,7 +6,7 @@ install:
 	cargo fetch
 
 doctor:
-	@echo "==> Llama Studio dev environment doctor"
+	@echo "==> Zoc AI dev environment doctor"
 	@echo ""
 	@printf "node      : "; node --version 2>/dev/null || echo "MISSING (need >=20)"
 	@printf "pnpm      : "; pnpm --version 2>/dev/null || echo "MISSING (need >=9)"
@@ -21,7 +21,7 @@ doctor:
 	@dpkg-query -W -f='  %p %v\n' libwebkit2gtk-4.1-0 libgtk-3-0 libssl3 libxdo3 2>/dev/null || echo "  (not on a dpkg system, skip)"
 
 dev:
-	python3 scripts/stage_dev_binaries.py
+	uv run python3 scripts/stage_dev_binaries.py
 	pnpm dev
 
 build:
@@ -50,7 +50,11 @@ test:
 schema:
 	uv run python packages/shared-types/scripts/generate_ts.py
 
-check: lint typecheck test
+scan-secrets:
+	python3 scripts/scan_secrets.py
+	python3 scripts/scan_secrets.py --history
+
+check: scan-secrets lint typecheck test
 
 # --- release pipeline ----------------------------------------------------
 
@@ -58,7 +62,7 @@ version:
 	python3 scripts/stamp_version.py
 
 sidecar:
-	python3 scripts/bundle_sidecar.py
+	uv run python3 scripts/bundle_sidecar.py
 
 release: version
 	bash scripts/release.sh

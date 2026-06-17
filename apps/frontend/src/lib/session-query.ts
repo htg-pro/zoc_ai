@@ -34,10 +34,21 @@ export interface SessionStats {
 const MS_PER_DAY = 86_400_000;
 const WEEK_MS = 7 * MS_PER_DAY;
 
-/** UTC day index for an ISO timestamp (days since epoch). */
-function dayIndex(iso: string): number {
+/**
+ * Local (display-timezone) day index for an ISO timestamp (days since epoch in
+ * the display calendar). The timezone offset is injected in minutes (e.g.
+ * `-new Date().getTimezoneOffset()`) so this function never reads the host
+ * clock or environment timezone and stays pure/deterministic (R3.1).
+ *
+ * Each local calendar day spans the half-open interval
+ * `[00:00:00.000, 24:00:00.000)`; a timestamp exactly at local midnight is the
+ * first instant of the day it begins. An unparseable `iso` yields
+ * `Number.NEGATIVE_INFINITY` so it sorts into the "Earlier" bucket (R3.4).
+ */
+export function localDayIndex(iso: string, tzOffsetMinutes: number): number {
   const t = Date.parse(iso);
-  return Number.isNaN(t) ? Number.NEGATIVE_INFINITY : Math.floor(t / MS_PER_DAY);
+  if (Number.isNaN(t)) return Number.NEGATIVE_INFINITY;
+  return Math.floor((t - tzOffsetMinutes * 60_000) / MS_PER_DAY);
 }
 
 function isPinned(pinned: ReadonlySet<string>, id: string): boolean {
@@ -48,13 +59,20 @@ function isPinned(pinned: ReadonlySet<string>, id: string): boolean {
  * Group sessions into the four ordered buckets. Every bucket is always present
  * (even when empty). A pinned session appears only in `pinned`; every other
  * session appears in exactly one recency bucket (R2.2, R2.3).
+ *
+ * Day bucketing is computed in the display timezone: both `now` and each
+ * session's `updated_at` are shifted by the same injected `tzOffsetMinutes`
+ * before flooring to a calendar day, so Today/Yesterday/Earlier are consistent
+ * with the wall clock shown to the user (R3.1-R3.3). The offset is injected
+ * (not read from `Date` here) to keep this function pure and deterministic.
  */
 export function groupSessions(
   sessions: Session[],
   pinned: ReadonlySet<string>,
   now: number,
+  tzOffsetMinutes: number,
 ): SessionGroups {
-  const nowDay = Math.floor(now / MS_PER_DAY);
+  const nowDay = Math.floor((now - tzOffsetMinutes * 60_000) / MS_PER_DAY);
   const groups: SessionGroups = {
     pinned: [],
     today: [],
@@ -66,7 +84,7 @@ export function groupSessions(
       groups.pinned.push(s);
       continue;
     }
-    const day = dayIndex(s.updated_at);
+    const day = localDayIndex(s.updated_at, tzOffsetMinutes);
     if (day === nowDay) groups.today.push(s);
     else if (day === nowDay - 1) groups.yesterday.push(s);
     else groups.earlier.push(s);

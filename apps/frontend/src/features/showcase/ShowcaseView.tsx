@@ -146,7 +146,7 @@ export function ShowcaseView() {
 
         <Separator />
         <footer className="pb-6 text-[11px] text-muted-foreground">
-          Llama Studio · Phase 3 UI · light + dark themes share semantic tokens
+          Zoc AI · Phase 3 UI · light + dark themes share semantic tokens
         </footer>
       </div>
     </ScrollArea>

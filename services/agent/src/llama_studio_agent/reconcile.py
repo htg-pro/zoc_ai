@@ -14,7 +14,7 @@ persisted ``needs_approval`` call is definitively orphaned. We mark each one
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
 from uuid import UUID
@@ -59,7 +59,7 @@ async def cancel_orphaned_approval(
 
     call.status = ToolCallStatus.cancelled
     call.error = ORPHANED_APPROVAL_MESSAGE
-    call.finished_at = datetime.utcnow()
+    call.finished_at = datetime.now(UTC)
     repo.upsert_tool_call(session_id, call)
     await _emit(
         repo,

@@ -4,6 +4,54 @@
 @tailwind components;
 @tailwind utilities;
 
+/* ── "Zoc Spark" design tokens (Zoc AI rebrand) ─────────────────
+ * Additive brand layer used by the redesigned agent panel. These sit
+ * alongside the existing hsl(var(--*)) system so the rest of the app is
+ * untouched; only features/agent components reference --zoc-*.
+ */
+:root {
+  --zoc-ember: #fb923c;       /* brand accent · running */
+  --zoc-agent: #8b7cf6;       /* agent-authored content */
+  --zoc-info: #60a5fa;        /* tool calls / reads / Ask mode */
+  --zoc-success: #4ade80;     /* completed / applied / pass */
+  --zoc-error: #f87171;       /* errors / validation fail */
+
+  /* Neutral surface + text scale. Aligned to the app's existing dark
+   * palette (#101014 / #131318 / #26262B / #FAFAFA …) so the redesigned
+   * agent cards blend with the rest of the shell instead of rendering with
+   * undefined (transparent) colors. */
+  --zoc-bg: #0b0e14;          /* panel background (near-black, blue cast) */
+  --zoc-panel: #131318;       /* run card / panel surface */
+  --zoc-border: #26262b;      /* hairlines */
+  --zoc-row-bg: #15151a;      /* nested rows (to-do, activity, diff) */
+  --zoc-row-border: #26262b;  /* nested row hairlines */
+  --zoc-text: #fafafa;        /* primary text */
+  --zoc-text-secondary: #c8c8ce; /* tool labels, file paths */
+  --zoc-text-muted: #a1a1aa;  /* secondary text, timestamps, badges */
+  --zoc-text-faint: #71717a;  /* icons, empty states, section labels */
+}
+
+@keyframes zoc-pulse {
+  0%, 100% { transform: scale(1);    opacity: 1; }
+  50%      { transform: scale(1.25); opacity: 0.6; }
+}
+@keyframes zoc-check-pop {
+  0%   { transform: scale(0.5); opacity: 0; }
+  60%  { transform: scale(1.15); }
+  100% { transform: scale(1); opacity: 1; }
+}
+@keyframes zoc-success-flash {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(74, 222, 128, 0); }
+  50%      { box-shadow: 0 0 0 3px rgba(74, 222, 128, 0.35); }
+}
+
+@layer utilities {
+  .zoc-pulse-dot     { animation: zoc-pulse 1.4s ease-in-out infinite; }
+  .zoc-check-pop     { animation: zoc-check-pop 0.18s ease-out both; }
+  .zoc-success-flash { animation: zoc-success-flash 0.5s ease-in-out 1; }
+  .zoc-rail-fill     { transition: height 320ms cubic-bezier(0.22, 1, 0.36, 1); }
+}
+
 /* ── Custom animations ───────────────────────────────────────── */
 @keyframes orb-breathe {
   0%, 100% {
@@ -204,6 +252,10 @@
 }
 .agent-edit-glyph {
   background: radial-gradient(circle at center, #9b6af1 0 40%, transparent 45%);
+}
+.zoc-breakpoint-glyph {
+  background: radial-gradient(circle at center, #e51400 0 42%, transparent 47%);
+  cursor: pointer;
 }
 .monaco-agent-caret {
   display: inline-block;

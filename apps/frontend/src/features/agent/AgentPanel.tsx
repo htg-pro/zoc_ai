@@ -1,5 +1,5 @@
 import { Component, useState, useEffect, type ErrorInfo, type ReactNode } from "react";
-import { Sparkles, Pause, Play, Square } from "lucide-react";
+import { Zap, Pause, Play, Square } from "lucide-react";
 import { useApp } from "@/lib/store";
 import { cn } from "@/lib/utils";
 import { formatElapsed } from "@/lib/format-elapsed";
@@ -14,10 +14,10 @@ import { ModelPicker } from "./ModelPicker";
 export function AgentPanel() {
   const contextStatus = useApp((s) => s.contextStatus);
   const streaming = useApp((s) => s.streaming);
-  const workflowLoading = useApp((s) => s.replitWorkflowLoading);
+  const agentMode = useApp((s) => s.agentMode);
   const reviewRunning = useApp((s) => s.reviewRunning);
   const testRunning = useApp((s) => s.testGenRunning || s.testRunRunning);
-  const runActive = streaming || workflowLoading || reviewRunning || testRunning;
+  const runActive = streaming || reviewRunning || testRunning;
   const cancelStream = useApp((s) => s.cancelStream);
   const selectedModel = useApp((s) => s.selectedModel);
   const autonomy = useApp((s) => s.autonomy);
@@ -46,18 +46,31 @@ export function AgentPanel() {
 
   const elapsedTime = formatElapsed(elapsedMs);
 
+  const isAsk = agentMode === "ask";
+  const headerWord = isAsk ? "Ask" : "Agent";
+  const subtitle = isAsk
+    ? runActive
+      ? "Answering…"
+      : "Read-only answers"
+    : runActive
+      ? "Auto run · isolated changes"
+      : "Auto run";
+
   return (
     <div className="grid h-full min-h-0 min-w-0 grid-cols-1 grid-rows-[auto_auto_minmax(0,1fr)_auto] bg-background">
       <div className="shrink-0 flex min-w-0 flex-col border-b border-[#1E1E23] bg-[#101014] row-start-1">
         {/* Top bar info */}
         <div className="flex min-h-[44px] items-center gap-2.5 px-3 py-1.5">
-          <span className="w-7 h-7 rounded-lg bg-[rgba(155,106,241,0.12)] border border-[rgba(155,106,241,0.25)] flex items-center justify-center text-[#9B6AF1] shrink-0">
-            <Sparkles className="h-3.5 w-3.5" />
+          <span className="w-7 h-7 rounded-lg bg-[rgba(251,146,60,0.12)] border border-[rgba(251,146,60,0.28)] flex items-center justify-center text-[var(--zoc-ember)] shrink-0">
+            <Zap className="h-3.5 w-3.5" />
           </span>
           <div className="min-w-0">
-            <div className="text-[13px] font-semibold text-[#FAFAFA] leading-tight">Agent</div>
+            <div className="text-[13px] font-semibold leading-tight">
+              <span className="text-[#FAFAFA]">Zoc</span>{" "}
+              <span className="text-[var(--zoc-ember)]">{headerWord}</span>
+            </div>
             <div className="text-[11px] text-[#71717A] leading-tight mt-0.5">
-              {runActive ? "Auto run · isolated changes" : "Auto run"}
+              {subtitle}
             </div>
           </div>
 
@@ -65,7 +78,7 @@ export function AgentPanel() {
             <span className="ml-auto flex items-center gap-1.5 h-[22px] px-2 rounded-full bg-[hsl(var(--primary)/0.12)] border border-[hsl(var(--primary)/0.3)] shrink-0">
               <span className={cn("w-1.5 h-1.5 rounded-full bg-primary", !agentPaused && "animate-pulse-dot")}></span>
               <span className="text-[11px] font-medium text-primary/85">
-                {agentPaused ? "Paused" : workflowLoading ? "Planning…" : "Building…"}
+                {agentPaused ? "Paused" : isAsk ? "Answering…" : "Building…"}
               </span>
             </span>
           ) : (

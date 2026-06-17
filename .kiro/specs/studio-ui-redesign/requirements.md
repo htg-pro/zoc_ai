@@ -2,7 +2,7 @@
 
 ## Introduction
 
-This feature redesigns the Llama Studio frontend (`apps/frontend`, a React + Vite + TypeScript + Tailwind + shadcn/ui app) to implement the three Kombai design canvases, and hardens the agent workflow that those canvases depict.
+This feature redesigns the Zoc AI frontend (`apps/frontend`, a React + Vite + TypeScript + Tailwind + shadcn/ui app) to implement the three Kombai design canvases, and hardens the agent workflow that those canvases depict.
 
 The three canvases describe a single cohesive product across three primary states:
 
@@ -16,7 +16,7 @@ This document defines **what** the redesigned application must do. Implementatio
 
 ## Glossary
 
-- **Studio_UI**: The Llama Studio frontend application rendered in `apps/frontend`.
+- **Studio_UI**: The Zoc AI frontend application rendered in `apps/frontend`.
 - **Title_Bar**: The top chrome row containing window controls, branding, workspace path, git branch, the command palette entry, panel toggles, and the Run/Running control.
 - **Activity_Bar**: The vertical icon rail on the far left (Explorer, Search, Indexer, Sessions, Tasks, Appearance, Settings).
 - **Sessions_Sidebar**: The left panel listing conversation sessions grouped by recency (Pinned, Today, Yesterday, Earlier this week).
@@ -44,19 +44,19 @@ This document defines **what** the redesigned application must do. Implementatio
 
 ### Requirement 1: Design system and tokens
 
-**User Story:** As a Llama Studio user, I want a consistent dark visual system across every screen, so that the application feels like one cohesive, polished product.
+**User Story:** As a Zoc AI user, I want a consistent dark visual system across every screen, so that the application feels like one cohesive, polished product.
 
 #### Acceptance Criteria
 
 1. THE Studio_UI SHALL render every screen using the dark Design_Tokens defined in the canvases: background `#0E0E11`, panel surfaces `#101014` and `#15151A`, borders `#1E1E23` and `#26262B`, primary text `#FAFAFA`, secondary text `#A1A1AA`, tertiary text `#71717A`, accent purple `#9B6AF1` and `#7C3AED`, success green `#34D399`, warning amber `#FBBF24`, and danger red `#F87171`.
 2. THE Studio_UI SHALL apply the `Inter` font family to user-interface text, falling back to `system-ui` then the platform sans-serif default, and the `JetBrains Mono` font family to code, file paths, and metric values, falling back to `ui-monospace` then the platform monospace default.
 3. WHERE a color, radius, or typography value is required by a component, THE Studio_UI SHALL resolve that value to a named shared Design_Token, and SHALL NOT use a color, radius, or typography literal that does not match a defined Design_Token value.
-4. THE Studio_UI SHALL render the Title_Bar at a fixed height of 38 pixels containing window controls, the Llama Studio brand mark, the workspace path, the git branch indicator, the centered command-palette entry, panel toggles, and the Run or Running control.
+4. THE Studio_UI SHALL render the Title_Bar at a fixed height of 38 pixels containing window controls, the Zoc AI brand mark, the workspace path, the git branch indicator, the centered command-palette entry, panel toggles, and the Run or Running control.
 5. WHILE the workspace path is wider than its allotted Title_Bar region, THE Studio_UI SHALL truncate the workspace path text and keep the git branch indicator, command-palette entry, panel toggles, and Run or Running control fully visible.
 
 ### Requirement 2: Sessions view
 
-**User Story:** As a user returning to Llama Studio, I want to browse and resume past sessions, so that I can continue previous conversations and runs.
+**User Story:** As a user returning to Zoc AI, I want to browse and resume past sessions, so that I can continue previous conversations and runs.
 
 #### Acceptance Criteria
 

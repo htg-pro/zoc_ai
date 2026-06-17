@@ -10,23 +10,21 @@
  */
 import type {
   AgentEvent,
+  CheckpointInfo,
   CodeReviewReport,
+  ContextCandidate,
   ContextStatus,
   CreateSessionRequest,
-  CreateReplitTaskRequest,
-  ReviseReplitPlanRequest,
-  ReplitCheckpoint,
-  ReplitPlan,
-  ReplitTask,
-  ReplitTaskLog,
   HealthResponse,
   IndexConfig,
   IndexQueryResult,
   IndexStatus,
+  InlineEditResult,
   MemoryStats,
   Message,
   PermissionGrant,
   PostMessageRequest,
+  ProjectRulesInfo,
   ProviderDescriptor,
   RunAgentRequest,
   RunSlashCommandRequest,
@@ -43,6 +41,20 @@ import type {
 
 import { sseJson } from "./sse";
 import { agentPort, agentStatus, isTauri } from "./tauri-bridge";
+import { nextReconnect } from "./reconnect";
+import { advance, initialCursor, subscribeCursor, type SeqCursor } from "./seq-cursor";
+
+/**
+ * Thrown when the agent event stream is interrupted and cannot be
+ * re-established within the bounded number of reconnection attempts (R8.9).
+ * The store consumes this as an `error` lifecycle transition.
+ */
+export class StreamLostError extends Error {
+  constructor(detail: string) {
+    super(detail);
+    this.name = "StreamLostError";
+  }
+}
 
 let cached: AgentClient | null = null;
 let cachedPort: number | null = null;
@@ -51,19 +63,28 @@ const DESKTOP_AGENT_PORT_POLL_MS = 250;
 const DESKTOP_AGENT_HEALTH_WAIT_MS = 10_000;
 
 /**
- * Per-session highest seen agent-event sequence number. Used to suppress
- * replay of historical events when (re)subscribing to `/agent/events`
- * after a previous run on the same session. Exported for tests.
+ * Per-session sequence cursor — the single seq authority (R1.4, R1.5) shared
+ * with ingestion and the run machine. Used to suppress replay of historical
+ * events when (re)subscribing to `/agent/events` after a previous run on the
+ * same session: the `since_seq` resubscribe cursor is sourced from
+ * `subscribeCursor(cursor)` so it always matches what ingestion has applied,
+ * and the floor is preserved across run starts (never reset to 0). Exported
+ * for tests via the `__setLastSeq`/`__resetLastSeq` hooks.
  */
-const lastSeq = new Map<string, number>();
+const cursors = new Map<string, SeqCursor>();
+
+function getCursor(sessionId: string): SeqCursor {
+  return cursors.get(sessionId) ?? initialCursor();
+}
 
 export function __setLastSeq(sessionId: string, seq: number): void {
-  lastSeq.set(sessionId, seq);
+  const cursor = getCursor(sessionId);
+  cursors.set(sessionId, advance(cursor, seq));
 }
 
 export function __resetLastSeq(sessionId?: string): void {
-  if (sessionId) lastSeq.delete(sessionId);
-  else lastSeq.clear();
+  if (sessionId) cursors.delete(sessionId);
+  else cursors.clear();
 }
 
 export interface SpawnTerminalOpts {
@@ -76,6 +97,35 @@ export interface SpawnTerminalOpts {
 export interface CodeReviewRequest {
   diff?: string | null;
   excerpts?: Array<[string, string]> | null;
+}
+
+export interface InlineEditRequest {
+  selection: string;
+  instruction: string;
+  language?: string | null;
+  prefix?: string;
+  suffix?: string;
+  /** Optional model + bring-your-own cloud creds (same shape as run). */
+  model?: string | null;
+  provider?: string | null;
+  apiKey?: string | null;
+  baseUrl?: string | null;
+}
+
+export interface ApplyRunResult {
+  run_id: string;
+  status: string;
+  applied_files: string[];
+  /** Files that couldn't be written to the real workspace (partial apply). */
+  failed_files?: string[];
+  /** Run id of the captured pre-apply checkpoint (null if nothing applied). */
+  checkpoint_id?: string | null;
+}
+
+export interface RestoreRunResult {
+  run_id: string;
+  status: string;
+  restored_files: string[];
 }
 
 export interface TestGenRequest {
@@ -104,6 +154,17 @@ export interface AgentClient {
   listMessages(sessionId: string): Promise<Message[]>;
   postMessage(sessionId: string, req: PostMessageRequest): Promise<Message>;
   runAgent(sessionId: string, req: RunAgentRequest, signal?: AbortSignal): AsyncIterable<AgentEvent>;
+  /** Apply an isolated (review-before-apply) run's changes onto the real
+   *  workspace. The single explicit approval gate for agent-authored edits. */
+  applyRun(sessionId: string, runId: string): Promise<ApplyRunResult>;
+  /** Undo a previously-applied run, restoring the pre-apply checkpoint. */
+  restoreRun(sessionId: string, runId: string): Promise<RestoreRunResult>;
+  /** List restorable checkpoints for the session, newest first. */
+  listCheckpoints(sessionId: string): Promise<CheckpointInfo[]>;
+  /** Search workspace files/folders/symbols for the `@` context picker. */
+  searchContext(sessionId: string, query: string, limit?: number): Promise<ContextCandidate[]>;
+  /** Discard an isolated run's changes — the real workspace stays untouched. */
+  discardRun(sessionId: string, runId: string): Promise<{ run_id: string; status: string }>;
   listSlashCommands(): Promise<SlashCommandDescriptor[]>;
   runSlashCommand(
     sessionId: string,
@@ -111,6 +172,10 @@ export interface AgentClient {
     signal?: AbortSignal,
   ): AsyncIterable<AgentEvent>;
   codeReview(sessionId: string, req: CodeReviewRequest): Promise<CodeReviewReport>;
+  /** Inline edit (Cmd-K): rewrite a selection per an instruction. */
+  inlineEdit(sessionId: string, req: InlineEditRequest): Promise<InlineEditResult>;
+  /** Project rules (.zoc/rules) active for the session's workspace. */
+  getProjectRules(sessionId: string): Promise<ProjectRulesInfo>;
   testGen(sessionId: string, req: TestGenRequest): Promise<TestGenerationResult>;
   testRun(sessionId: string, req: TestRunRequest): Promise<TestGenerationResult>;
   listPermissions(sessionId: string): Promise<PermissionGrant[]>;
@@ -135,23 +200,6 @@ export interface AgentClient {
   resizeTerminal(id: string, cols: number, rows: number): Promise<void>;
   terminalStream(id: string, signal?: AbortSignal): AsyncIterable<TerminalStreamEvent>;
 
-  createReplitPlan(sessionId: string, prompt: string): Promise<ReplitPlan>;
-  listReplitPlans(sessionId: string): Promise<ReplitPlan[]>;
-  reviseReplitPlan(sessionId: string, planId: string, req: ReviseReplitPlanRequest): Promise<ReplitPlan>;
-  approveReplitPlan(sessionId: string, planId: string): Promise<ReplitPlan>;
-  listReplitTasks(sessionId: string): Promise<ReplitTask[]>;
-  createReplitTask(sessionId: string, req: CreateReplitTaskRequest): Promise<ReplitTask>;
-  queueReplitTask(sessionId: string, taskId: string): Promise<ReplitTask>;
-  startReplitTask(sessionId: string, taskId: string): Promise<ReplitTask>;
-  markReplitTaskReady(sessionId: string, taskId: string): Promise<ReplitTask>;
-  applyReplitTask(sessionId: string, taskId: string): Promise<ReplitTask>;
-  dismissReplitTask(sessionId: string, taskId: string): Promise<ReplitTask>;
-  cancelReplitTask(sessionId: string, taskId: string): Promise<ReplitTask>;
-  replitTaskLogs(sessionId: string, taskId: string): Promise<ReplitTaskLog[]>;
-  replitTaskDiff(sessionId: string, taskId: string): Promise<{ diff: string }>;
-  replitTaskTestResults(sessionId: string, taskId: string): Promise<{ output: string }>;
-  listReplitCheckpoints(sessionId: string): Promise<ReplitCheckpoint[]>;
-  rollbackReplitCheckpoint(sessionId: string, checkpointId: string): Promise<ReplitCheckpoint>;
   memoryStats(sessionId: string): Promise<MemoryStats>;
   compactMemory(sessionId: string): Promise<MemoryStats>;
   contextStatus(sessionId: string): Promise<ContextStatus>;
@@ -269,51 +317,37 @@ async function jsonFetch<T>(url: string, init: RequestInit = {}): Promise<T> {
  *      `done` from a prior run could close the iterator before the new
  *      run emits anything.
  */
-async function* eventStream(
+/** Open the `/agent/events` SSE subscription from the current resume cursor. */
+async function openEventsSse(
   v1: string,
   sessionId: string,
-  trigger: { url: string; body: unknown },
   signal?: AbortSignal,
-): AsyncIterable<AgentEvent> {
-  if (!sessionId) {
-    throw new Error("Cannot open event stream: no active session. Create or select a session first.");
-  }
-  const since = lastSeq.get(sessionId) ?? 0;
+): Promise<Response> {
+  const since = subscribeCursor(getCursor(sessionId));
   const eventsUrl = `${v1}/sessions/${sessionId}/agent/events?since_seq=${since}`;
   const eventsHeaders = new Headers({ Accept: "text/event-stream" });
-  // Send Last-Event-ID header for SSE reconnection support
+  // Send Last-Event-ID header for SSE reconnection support.
   if (since > 0) {
     eventsHeaders.set("Last-Event-ID", String(since));
   }
-  // 1. Establish the SSE connection (headers received) before triggering.
   const res = await fetch(eventsUrl, { headers: eventsHeaders, signal });
   if (!res.ok || !res.body) {
     throw new Error(`SSE ${eventsUrl} → http ${res.status}`);
   }
+  return res;
+}
 
-  // 2. Fire the trigger; we'll observe `triggerSettled` to gate stream end.
-  let triggerError: Error | null = null;
-  let triggerSettled = false;
-  const triggerPromise = jsonFetch(trigger.url, {
-    method: "POST",
-    body: JSON.stringify(trigger.body),
-    signal,
-  })
-    .catch((err: Error) => {
-      triggerError = err;
-    })
-    .finally(() => {
-      triggerSettled = true;
-    });
-
-  // 3. Parse SSE inline (so we control the reader lifecycle alongside the
-  //    trigger) and yield typed events.
-  const reader = res.body.getReader();
-  void triggerPromise.then(() => {
-    if (triggerError) {
-      void reader.cancel();
-    }
-  });
+/**
+ * Parse an open SSE response body into typed events, advancing the per-session
+ * `SeqCursor` (so a reconnect resumes after the last processed event).
+ * Terminates the stream on `error`, or on `done` once `shouldEndOnDone()` is
+ * true. The reader is always cancelled on exit.
+ */
+async function* pumpSse(
+  reader: ReadableStreamDefaultReader<Uint8Array>,
+  sessionId: string,
+  shouldEndOnDone: () => boolean,
+): AsyncIterable<AgentEvent> {
   const decoder = new TextDecoder("utf-8");
   let buffer = "";
   try {
@@ -331,17 +365,15 @@ async function* eventStream(
         if (parsed.id !== undefined) {
           const seq = parseInt(parsed.id, 10);
           if (!isNaN(seq)) {
-            const prev = lastSeq.get(sessionId) ?? 0;
-            if (seq > prev) lastSeq.set(sessionId, seq);
+            cursors.set(sessionId, advance(getCursor(sessionId), seq));
           }
         }
         if (typeof ev.seq === "number") {
-          const prev = lastSeq.get(sessionId) ?? 0;
-          if (ev.seq > prev) lastSeq.set(sessionId, ev.seq);
+          cursors.set(sessionId, advance(getCursor(sessionId), ev.seq));
         }
         yield ev;
         if (ev.type === "error") break outer;
-        if (ev.type === "done" && triggerSettled) break outer;
+        if (ev.type === "done" && shouldEndOnDone()) break outer;
       }
     }
   } finally {
@@ -351,8 +383,98 @@ async function* eventStream(
       /* ignore */
     }
   }
+}
+
+async function* eventStream(
+  v1: string,
+  sessionId: string,
+  trigger: { url: string; body: unknown },
+  signal?: AbortSignal,
+): AsyncIterable<AgentEvent> {
+  if (!sessionId) {
+    throw new Error("Cannot open event stream: no active session. Create or select a session first.");
+  }
+  // 1. Establish the SSE connection (headers received) before triggering.
+  const res = await openEventsSse(v1, sessionId, signal);
+
+  // 2. Fire the trigger; we'll observe `triggerSettled` to gate stream end.
+  let triggerError: Error | null = null;
+  let triggerSettled = false;
+  const triggerPromise = jsonFetch(trigger.url, {
+    method: "POST",
+    body: JSON.stringify(trigger.body),
+    signal,
+  })
+    .catch((err: Error) => {
+      triggerError = err;
+    })
+    .finally(() => {
+      triggerSettled = true;
+    });
+
+  // 3. Parse SSE and yield typed events; cancel the reader if the trigger fails.
+  const reader = res.body!.getReader();
+  void triggerPromise.then(() => {
+    if (triggerError) {
+      void reader.cancel();
+    }
+  });
+  yield* pumpSse(reader, sessionId, () => triggerSettled);
   await triggerPromise;
   if (triggerError) throw triggerError;
+}
+
+/**
+ * Re-subscribe to `/agent/events` WITHOUT re-firing a trigger — used on
+ * reconnect, when the run is already in flight on the backend. A `done` event
+ * always terminates here.
+ */
+async function* subscribeOnlyStream(
+  v1: string,
+  sessionId: string,
+  signal?: AbortSignal,
+): AsyncIterable<AgentEvent> {
+  const res = await openEventsSse(v1, sessionId, signal);
+  yield* pumpSse(res.body!.getReader(), sessionId, () => true);
+}
+
+/**
+ * Resilient wrapper (R7.4, R8.6, R8.9): runs the triggered `eventStream`, and
+ * if the connection drops *before* a terminal event, re-subscribes from the
+ * shared `SeqCursor` for up to `MAX_RECONNECTS` attempts (no re-trigger). When
+ * reconnection is exhausted it throws `StreamLostError`. A legacy-schema
+ * validation error on the first attempt is re-thrown unchanged so the caller's
+ * legacy-body fallback can handle it.
+ */
+async function* resilientEventStream(
+  v1: string,
+  sessionId: string,
+  trigger: { url: string; body: unknown },
+  signal?: AbortSignal,
+): AsyncIterable<AgentEvent> {
+  let attempts = 0;
+  let firstAttempt = true;
+  while (true) {
+    try {
+      if (firstAttempt) {
+        yield* eventStream(v1, sessionId, trigger, signal);
+      } else {
+        yield* subscribeOnlyStream(v1, sessionId, signal);
+      }
+      return; // normal terminal completion — no reconnect
+    } catch (err) {
+      if (signal?.aborted) throw err;
+      // Let the caller's legacy-body fallback handle a schema rejection.
+      if (firstAttempt && isLegacyRunAgentValidationError(err)) throw err;
+      const decision = nextReconnect(subscribeCursor(getCursor(sessionId)), attempts);
+      if (decision.kind === "give-up") {
+        throw new StreamLostError(decision.detail);
+      }
+      attempts = decision.attempt;
+      firstAttempt = false;
+      await new Promise((resolve) => setTimeout(resolve, Math.min(1000, 200 * attempts)));
+    }
+  }
 }
 
 async function* runAgentStream(
@@ -363,14 +485,14 @@ async function* runAgentStream(
 ): AsyncIterable<AgentEvent> {
   const url = `${v1}/sessions/${sessionId}/agent/run`;
   try {
-    for await (const ev of eventStream(v1, sessionId, { url, body: req }, signal)) {
+    for await (const ev of resilientEventStream(v1, sessionId, { url, body: req }, signal)) {
       yield ev;
     }
   } catch (err) {
     if (signal?.aborted || !isLegacyRunAgentValidationError(err)) {
       throw err;
     }
-    for await (const ev of eventStream(
+    for await (const ev of resilientEventStream(
       v1,
       sessionId,
       { url, body: legacyRunAgentRequest(req) },
@@ -477,6 +599,19 @@ function makeClient(port: number): AgentClient {
         body: JSON.stringify(req),
       }),
     runAgent: (sessionId, req, signal) => runAgentStream(v1, sessionId, req, signal),
+    applyRun: (sessionId, runId) =>
+      jsonFetch<ApplyRunResult>(`${v1}/sessions/${sessionId}/agent/runs/${runId}/apply`, {
+        method: "POST",
+      }),
+    restoreRun: (sessionId, runId) =>
+      jsonFetch<RestoreRunResult>(`${v1}/sessions/${sessionId}/agent/runs/${runId}/restore`, {
+        method: "POST",
+      }),
+    discardRun: (sessionId, runId) =>
+      jsonFetch<{ run_id: string; status: string }>(
+        `${v1}/sessions/${sessionId}/agent/runs/${runId}/discard`,
+        { method: "POST" },
+      ),
     listSlashCommands: () => jsonFetch<SlashCommandDescriptor[]>(`${v1}/commands`),
     runSlashCommand: (sessionId, req, signal) =>
       eventStream(
@@ -490,6 +625,29 @@ function makeClient(port: number): AgentClient {
         method: "POST",
         body: JSON.stringify(req),
       }),
+    inlineEdit: (sessionId, req) =>
+      jsonFetch<InlineEditResult>(`${v1}/sessions/${sessionId}/inline-edit`, {
+        method: "POST",
+        body: JSON.stringify({
+          selection: req.selection,
+          instruction: req.instruction,
+          language: req.language ?? null,
+          prefix: req.prefix ?? "",
+          suffix: req.suffix ?? "",
+          model: req.model ?? null,
+          provider: req.provider ?? null,
+          api_key: req.apiKey ?? null,
+          base_url: req.baseUrl ?? null,
+        }),
+      }),
+    getProjectRules: (sessionId) =>
+      jsonFetch<ProjectRulesInfo>(`${v1}/sessions/${sessionId}/rules`),
+    listCheckpoints: (sessionId) =>
+      jsonFetch<CheckpointInfo[]>(`${v1}/sessions/${sessionId}/agent/checkpoints`),
+    searchContext: (sessionId, query, limit = 25) =>
+      jsonFetch<ContextCandidate[]>(
+        `${v1}/sessions/${sessionId}/context/search?q=${encodeURIComponent(query)}&limit=${limit}`,
+      ),
     testGen: (sessionId, req) =>
       jsonFetch<TestGenerationResult>(`${v1}/sessions/${sessionId}/testgen`, {
         method: "POST",
@@ -585,68 +743,6 @@ function makeClient(port: number): AgentClient {
     terminalStream: (id, signal) =>
       sseJson<TerminalStreamEvent>(`${v1}/terminal/${id}/stream`, { signal }),
 
-    createReplitPlan: (sessionId, prompt) =>
-      jsonFetch<ReplitPlan>(`${v1}/sessions/${sessionId}/replit/plans`, {
-        method: "POST",
-        body: JSON.stringify({ prompt }),
-      }),
-    listReplitPlans: (sessionId) =>
-      jsonFetch<ReplitPlan[]>(`${v1}/sessions/${sessionId}/replit/plans`),
-    reviseReplitPlan: (sessionId, planId, req) =>
-      jsonFetch<ReplitPlan>(`${v1}/sessions/${sessionId}/replit/plans/${planId}/revise`, {
-        method: "POST",
-        body: JSON.stringify(req),
-      }),
-    approveReplitPlan: (sessionId, planId) =>
-      jsonFetch<ReplitPlan>(`${v1}/sessions/${sessionId}/replit/plans/${planId}/approve`, {
-        method: "POST",
-      }),
-    listReplitTasks: (sessionId) =>
-      jsonFetch<ReplitTask[]>(`${v1}/sessions/${sessionId}/replit/tasks`),
-    createReplitTask: (sessionId, req) =>
-      jsonFetch<ReplitTask>(`${v1}/sessions/${sessionId}/replit/tasks`, {
-        method: "POST",
-        body: JSON.stringify(req),
-      }),
-    queueReplitTask: (sessionId, taskId) =>
-      jsonFetch<ReplitTask>(`${v1}/sessions/${sessionId}/replit/tasks/${taskId}/queue`, {
-        method: "POST",
-      }),
-    startReplitTask: (sessionId, taskId) =>
-      jsonFetch<ReplitTask>(`${v1}/sessions/${sessionId}/replit/tasks/${taskId}/start`, {
-        method: "POST",
-      }),
-    markReplitTaskReady: (sessionId, taskId) =>
-      jsonFetch<ReplitTask>(`${v1}/sessions/${sessionId}/replit/tasks/${taskId}/ready`, {
-        method: "POST",
-      }),
-    applyReplitTask: (sessionId, taskId) =>
-      jsonFetch<ReplitTask>(`${v1}/sessions/${sessionId}/replit/tasks/${taskId}/apply`, {
-        method: "POST",
-      }),
-    dismissReplitTask: (sessionId, taskId) =>
-      jsonFetch<ReplitTask>(`${v1}/sessions/${sessionId}/replit/tasks/${taskId}/dismiss`, {
-        method: "POST",
-      }),
-    cancelReplitTask: (sessionId, taskId) =>
-      jsonFetch<ReplitTask>(`${v1}/sessions/${sessionId}/replit/tasks/${taskId}/cancel`, {
-        method: "POST",
-      }),
-    replitTaskLogs: (sessionId, taskId) =>
-      jsonFetch<ReplitTaskLog[]>(`${v1}/sessions/${sessionId}/replit/tasks/${taskId}/logs`),
-    replitTaskDiff: (sessionId, taskId) =>
-      jsonFetch<{ diff: string }>(`${v1}/sessions/${sessionId}/replit/tasks/${taskId}/diff`),
-    replitTaskTestResults: (sessionId, taskId) =>
-      jsonFetch<{ output: string }>(
-        `${v1}/sessions/${sessionId}/replit/tasks/${taskId}/test-results`,
-      ),
-    listReplitCheckpoints: (sessionId) =>
-      jsonFetch<ReplitCheckpoint[]>(`${v1}/sessions/${sessionId}/replit/checkpoints`),
-    rollbackReplitCheckpoint: (sessionId, checkpointId) =>
-      jsonFetch<ReplitCheckpoint>(
-        `${v1}/sessions/${sessionId}/replit/checkpoints/${checkpointId}/rollback`,
-        { method: "POST" },
-      ),
     memoryStats: (sessionId) =>
       jsonFetch<MemoryStats>(`${v1}/sessions/${sessionId}/memory/stats`),
     compactMemory: (sessionId) =>

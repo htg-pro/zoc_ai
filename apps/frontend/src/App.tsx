@@ -4,6 +4,7 @@ import { Shell } from "@/components/layout/Shell";
 import { OnboardingWizard } from "@/features/onboarding/OnboardingWizard";
 import { getAgentClient } from "@/lib/agent-client";
 import { useApp } from "@/lib/store";
+import { getPlugins } from "@/lib/plugins";
 import { desktopConfigGet, isTauri, setWorkspaceRoot } from "@/lib/tauri-bridge";
 import { track } from "@/lib/telemetry";
 
@@ -11,6 +12,16 @@ export function App() {
   const [needsOnboarding, setNeedsOnboarding] = useState(false);
   const loadSessions = useApp((s) => s.loadSessions);
   const initLlamaCppStatus = useApp((s) => s.initLlamaCppStatus);
+  const applyEffectiveSettings = useApp((s) => s.applyEffectiveSettings);
+
+  useEffect(() => {
+    // Seed runtime state from persisted user/workspace settings (Phase 10),
+    // including the default conversation mode, before anything renders.
+    applyEffectiveSettings({ includeMode: true });
+    // Hydrate installed plugins so enabled ones contribute commands/views
+    // into the palette from the first frame (Phase 12).
+    getPlugins();
+  }, [applyEffectiveSettings]);
 
   useEffect(() => {
     void (async () => {

@@ -1,4 +1,4 @@
-# Llama Studio — 5-Year Development Implementation Plan
+# Zoc AI — 5-Year Development Implementation Plan
 
 > Horizon: Year 1 → Year 5 from v2.0.0.
 > One year, one strategic theme. Each year compounds on the last.
@@ -14,7 +14,7 @@
 - Execute the 6-month plan in `6plans.me`, then 6 more months of fast iteration on user feedback.
 - Public v3.0.0 launch with signed installers + auto-update for all OSes.
 - Telemetry (opt-in) on what tools / models / workflows people actually use.
-- Land 3–5 "lighthouse" power users (well-known OSS maintainers) who use Llama Studio daily and talk about it publicly.
+- Land 3–5 "lighthouse" power users (well-known OSS maintainers) who use Zoc AI daily and talk about it publicly.
 
 ### Year-end exit criteria
 - 50k monthly active users.
@@ -24,7 +24,7 @@
 
 ### Engineering milestones
 - Stable plugin API v0 (extensions that add slash commands + tools).
-- MCP fully supported (in + out — Llama Studio can be both client and server).
+- MCP fully supported (in + out — Zoc AI can be both client and server).
 - Sub-second cold-open on a 100k-LOC repo.
 
 ---
@@ -57,10 +57,10 @@
 **Strategic theme**: from individual tool → team operating system.
 
 ### Major bets
-- **Llama Studio Teams** (paid SaaS, optional): shared session history, shared embeddings cache, shared tool permissions, audit log, SSO.
+- **Zoc AI Teams** (paid SaaS, optional): shared session history, shared embeddings cache, shared tool permissions, audit log, SSO.
 - **Repository knowledge graph**: long-term memory across sessions — facts, decisions, code conventions captured automatically.
 - **Cross-repo intelligence**: index 100+ repos at once; the agent can answer "where do we handle X across all our services?"
-- **Code review bot**: hosted GitHub/GitLab app that posts Llama Studio reviews on PRs.
+- **Code review bot**: hosted GitHub/GitLab app that posts Zoc AI reviews on PRs.
 - **Air-gapped enterprise build**: certified install with no outbound network at all; everything (models, plugins, updates) served from an internal mirror.
 
 ### Year-end exit criteria
@@ -94,26 +94,26 @@
 ### Engineering milestones
 - Durable workflow engine inside the sidecar (think Temporal-lite).
 - Per-workspace prompt learning store (private, on-device).
-- Public benchmark suite + leaderboard ("Llama Studio Bench").
+- Public benchmark suite + leaderboard ("Zoc AI Bench").
 
 ---
 
 ## Year 5 — The Default
 
-**Strategic theme**: Llama Studio is what "AI coding" means.
+**Strategic theme**: Zoc AI is what "AI coding" means.
 
 ### Major bets
-- **OS-level integrations**: deep ties to Spotlight / Quick Search / Windows Search; Llama Studio answers code questions from anywhere.
+- **OS-level integrations**: deep ties to Spotlight / Quick Search / Windows Search; Zoc AI answers code questions from anywhere.
 - **Mobile companion** (read + chat only): iOS/Android app that pairs with your desktop instance to review diffs and chat on the go.
 - **Hardware partnerships**: pre-installed on developer-focused laptops (Framework, System76); first-class on Apple Silicon and ARM Linux.
 - **Open governance**: move the core (Tauri shell + FastAPI sidecar + Rust hotpath) to a foundation (Apache / Linux Foundation). Commercial extensions remain proprietary.
-- **Education tier**: free for students + a curriculum bundle ("Learn to code with Llama Studio").
-- **Llama Studio for Ops / Data / Security**: domain-specific spinoffs that share the core but add specialized tool packs.
+- **Education tier**: free for students + a curriculum bundle ("Learn to code with Zoc AI").
+- **Zoc AI for Ops / Data / Security**: domain-specific spinoffs that share the core but add specialized tool packs.
 
 ### Year-end exit criteria
 - 10M total installs.
 - $50M ARR.
-- Llama Studio cited as a category leader in 2 of: Gartner / Forrester / RedMonk reports.
+- Zoc AI cited as a category leader in 2 of: Gartner / Forrester / RedMonk reports.
 - Active foundation with ≥ 3 corporate sponsors.
 
 ### Engineering milestones
@@ -135,6 +135,6 @@
 
 ## How to read this plan
 
-- Each year stands on its own — if Year 2 ends and Llama Studio shuts down, Year 1 was still a useful tool people used.
+- Each year stands on its own — if Year 2 ends and Zoc AI shuts down, Year 1 was still a useful tool people used.
 - Anything in Year 4–5 is **intent, not commitment**. Re-plan annually based on what Year N taught us.
-- The North Star metric stays constant: **how many developers used Llama Studio to ship real code today.**
+- The North Star metric stays constant: **how many developers used Zoc AI to ship real code today.**

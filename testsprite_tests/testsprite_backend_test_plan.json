@@ -1,0 +1,47 @@
+[
+  {
+    "id": "TC001",
+    "title": "gethealthendpointreturns200whenservicerunning",
+    "description": "Verify that GET /health returns HTTP 200 OK when the sidecar service is running and reachable, indicating liveness."
+  },
+  {
+    "id": "TC002",
+    "title": "postv1sessionscreatesnewsession",
+    "description": "Verify that POST /v1/sessions with an empty body creates a new chat session and returns 200 with a new session_id."
+  },
+  {
+    "id": "TC003",
+    "title": "postv1sessionsessionidagentrunstartsagentrun",
+    "description": "Verify that POST /v1/sessions/{session_id}/agent/run with a prompt and mode=\"agent\" starts an agent run and returns 200, and that subsequent GET /v1/sessions/{session_id}/agent/events returns the expected SSE events."
+  },
+  {
+    "id": "TC004",
+    "title": "getv1providersreturnsconfiguredproviders",
+    "description": "Verify that GET /v1/providers returns HTTP 200 with the list of configured model providers."
+  },
+  {
+    "id": "TC005",
+    "title": "postv1providersdiscovermodelsreturnsmodelsforprovider",
+    "description": "Verify that POST /v1/providers/discover-models with a valid provider returns HTTP 200 with available models for that provider."
+  },
+  {
+    "id": "TC006",
+    "title": "getv1commandsreturnsavailablecommands",
+    "description": "Verify that GET /v1/commands returns HTTP 200 with the list of available slash commands."
+  },
+  {
+    "id": "TC007",
+    "title": "postv1toolsessionidtoolnameinvokeinvokestool",
+    "description": "Verify that POST /v1/tools/{session_id}/{tool_name}/invoke with valid input invokes the tool and returns HTTP 200 with the tool result."
+  },
+  {
+    "id": "TC008",
+    "title": "getv1settingsreturnscurrentsettings",
+    "description": "Verify that GET /v1/settings returns HTTP 200 with the current runtime-mutable settings."
+  },
+  {
+    "id": "TC009",
+    "title": "postv1terminalopensessionandreturnsid",
+    "description": "Verify that POST /v1/terminal opens a new terminal session and returns HTTP 200 with a terminal_id."
+  }
+]

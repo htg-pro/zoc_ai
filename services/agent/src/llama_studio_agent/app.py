@@ -36,7 +36,7 @@ def create_app(settings: Settings | None = None, *, state: AppState | None = Non
         yield
 
     app = FastAPI(
-        title="Llama Studio Agent",
+        title="Zoc AI Agent",
         version=__version__,
         docs_url="/docs" if cfg.debug else None,
         redoc_url=None,

@@ -3,7 +3,7 @@
 
 ## Overview
 
-This design redesigns the Llama Studio frontend (`apps/frontend`) to render the three Kombai
+This design redesigns the Zoc AI frontend (`apps/frontend`) to render the three Kombai
 canvases at high fidelity and to harden the agent run workflow they depict. It is a **frontend +
 client-logic** change: the React/Vite/TypeScript/Tailwind/shadcn app and the zustand store and
 agent client that back it. The FastAPI agent sidecar contract (over HTTP/SSE to

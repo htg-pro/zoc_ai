@@ -1,6 +1,10 @@
 import { FileTree } from "@/features/files/FileTree";
 import { SearchPanel } from "@/features/search/SearchPanel";
+import { SourceControlPanel } from "@/features/scm/SourceControlPanel";
+import { RunDebugPanel } from "@/features/debug/RunDebugPanel";
 import { IndexerPanel } from "@/features/indexer/IndexerPanel";
+import { OutlinePanel } from "@/features/outline/OutlinePanel";
+import { TimelinePanel } from "@/features/timeline/TimelinePanel";
 import { SessionsPanel } from "@/features/sessions/SessionsPanel";
 import { useApp } from "@/lib/store";
 import { parseUnifiedDiff } from "@/lib/diff-utils";
@@ -8,7 +12,11 @@ import { parseUnifiedDiff } from "@/lib/diff-utils";
 const TITLES: Record<string, string> = {
   files: "Explorer",
   search: "Search",
+  scm: "Source Control",
+  debug: "Run and Debug",
   indexer: "Indexer",
+  outline: "Outline",
+  timeline: "Timeline",
   sessions: "Sessions",
   settings: "Settings",
 };
@@ -19,9 +27,6 @@ const SELF_HEADERED = new Set(["sessions"]);
 
 export function SidePanel() {
   const activity = useApp((s) => s.activity);
-  // The Tasks view is full-screen (TaskWorkspacePanel in the main area). A
-  // compact mirror in the side panel just duplicates the kanban, so we render
-  // nothing for `activity === "tasks"` here.
   return (
     <aside className="flex h-full min-h-0 min-w-0 flex-col bg-sidebar text-sidebar-foreground">
       {!SELF_HEADERED.has(activity) && TITLES[activity] && (
@@ -32,7 +37,11 @@ export function SidePanel() {
       <div className="min-h-0 min-w-0 flex-1 overflow-hidden">
         {activity === "files" && <FileTree />}
         {activity === "search" && <SearchPanel />}
+        {activity === "scm" && <SourceControlPanel />}
+        {activity === "debug" && <RunDebugPanel />}
         {activity === "indexer" && <IndexerPanel />}
+        {activity === "outline" && <OutlinePanel />}
+        {activity === "timeline" && <TimelinePanel />}
         {activity === "sessions" && <SessionsPanel />}
         {activity === "settings" && (
           <div className="px-3 py-2 text-xs text-muted-foreground">

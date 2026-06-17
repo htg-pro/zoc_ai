@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import sqlite3
 from collections.abc import Iterator
-from contextlib import contextmanager, suppress
+from contextlib import contextmanager
 from pathlib import Path
 from threading import RLock
 
@@ -105,68 +105,6 @@ CREATE TABLE IF NOT EXISTS tool_grants (
 -- so we can incrementally extend it without re-summarising the whole transcript.
 
 
--- Replit-style plan/task workflow. Additive tables so existing session
--- persistence stays compatible with old databases.
-CREATE TABLE IF NOT EXISTS replit_plans (
-    id TEXT PRIMARY KEY,
-    session_id TEXT NOT NULL,
-    title TEXT NOT NULL,
-    summary TEXT NOT NULL,
-    status TEXT NOT NULL,
-    created_at TEXT NOT NULL,
-    updated_at TEXT NOT NULL,
-    FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE
-);
-CREATE INDEX IF NOT EXISTS idx_replit_plans_session ON replit_plans(session_id);
-
-CREATE TABLE IF NOT EXISTS replit_tasks (
-    id TEXT PRIMARY KEY,
-    session_id TEXT NOT NULL,
-    plan_id TEXT,
-    title TEXT NOT NULL,
-    summary TEXT NOT NULL,
-    status TEXT NOT NULL,
-    priority TEXT NOT NULL,
-    depends_on TEXT NOT NULL DEFAULT '[]',
-    files_likely_changed TEXT NOT NULL DEFAULT '[]',
-    done_looks_like TEXT NOT NULL DEFAULT '[]',
-    test_plan TEXT NOT NULL DEFAULT '[]',
-    workspace_path TEXT,
-    diff TEXT,
-    test_output TEXT,
-    error TEXT,
-    validation_attempts INTEGER NOT NULL DEFAULT 0,
-    created_at TEXT NOT NULL,
-    updated_at TEXT NOT NULL,
-    FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE,
-    FOREIGN KEY (plan_id) REFERENCES replit_plans(id) ON DELETE SET NULL
-);
-CREATE INDEX IF NOT EXISTS idx_replit_tasks_session ON replit_tasks(session_id);
-CREATE INDEX IF NOT EXISTS idx_replit_tasks_plan ON replit_tasks(plan_id);
-
-CREATE TABLE IF NOT EXISTS replit_task_logs (
-    id TEXT PRIMARY KEY,
-    task_id TEXT NOT NULL,
-    level TEXT NOT NULL,
-    message TEXT NOT NULL,
-    created_at TEXT NOT NULL,
-    FOREIGN KEY (task_id) REFERENCES replit_tasks(id) ON DELETE CASCADE
-);
-CREATE INDEX IF NOT EXISTS idx_replit_task_logs_task ON replit_task_logs(task_id);
-
-CREATE TABLE IF NOT EXISTS replit_checkpoints (
-    id TEXT PRIMARY KEY,
-    session_id TEXT NOT NULL,
-    task_id TEXT,
-    label TEXT NOT NULL,
-    snapshot_path TEXT NOT NULL,
-    files TEXT NOT NULL DEFAULT '[]',
-    created_at TEXT NOT NULL,
-    FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE,
-    FOREIGN KEY (task_id) REFERENCES replit_tasks(id) ON DELETE SET NULL
-);
-CREATE INDEX IF NOT EXISTS idx_replit_checkpoints_session ON replit_checkpoints(session_id);
-
 CREATE TABLE IF NOT EXISTS session_summaries (
     session_id TEXT PRIMARY KEY,
     summary TEXT NOT NULL,
@@ -192,12 +130,6 @@ class Database:
             conn.execute("PRAGMA journal_mode = WAL")
             conn.execute("PRAGMA synchronous = NORMAL")
             conn.executescript(SCHEMA)
-            # Additive migrations: safe to re-run on existing databases.
-            for stmt in (
-                "ALTER TABLE replit_tasks ADD COLUMN validation_attempts INTEGER NOT NULL DEFAULT 0",
-            ):
-                with suppress(sqlite3.OperationalError):
-                    conn.execute(stmt)
             conn.commit()
 
     @contextmanager

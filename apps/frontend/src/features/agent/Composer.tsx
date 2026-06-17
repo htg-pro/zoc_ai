@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { Paperclip, Send, Square } from "lucide-react";
+import { Paperclip, Send, ShieldCheck, Square } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { useApp } from "@/lib/store";
@@ -7,7 +7,11 @@ import { cn } from "@/lib/utils";
 import { MAX_MESSAGE_LENGTH, validateMessage } from "@/lib/composer-validate";
 import type { AutonomyLevel } from "@/lib/run-machine";
 import { SlashAutocomplete } from "./SlashAutocomplete";
+import { MentionAutocomplete } from "./MentionAutocomplete";
 import { AttachmentChips } from "./AttachmentChips";
+import { MessageQueue } from "./MessageQueue";
+import { RulesDialog } from "./RulesDialog";
+import { detectMentionQuery, applyMention } from "@/lib/context-mentions";
 
 const AUTONOMY_CYCLE: AutonomyLevel[] = ["Low", "Medium", "High"];
 
@@ -16,6 +20,9 @@ export function Composer() {
   const setValue = useApp((s) => s.setInput);
   const [composing, setComposing] = useState(false);
   const send = useApp((s) => s.sendUserMessage);
+  const queueMessage = useApp((s) => s.queueUserMessage);
+  const messageQueue = useApp((s) => s.messageQueue);
+  const stopAndSend = useApp((s) => s.stopAndSend);
   const streaming = useApp((s) => s.streaming);
   const addAttachment = useApp((s) => s.addAttachment);
   const clearAttachments = useApp((s) => s.clearAttachments);
@@ -24,15 +31,17 @@ export function Composer() {
   const isRunning = useApp((s) => s.isRunning);
   const autonomy = useApp((s) => s.autonomy);
   const setAutonomy = useApp((s) => s.setAutonomy);
-  const workflowLoading = useApp((s) => s.replitWorkflowLoading);
   const reviewRunning = useApp((s) => s.reviewRunning);
   const testRunning = useApp((s) => s.testGenRunning || s.testRunRunning);
   const agentMode = useApp((s) => s.agentMode);
   const setAgentMode = useApp((s) => s.setAgentMode);
+  const projectRules = useApp((s) => s.projectRules);
   const ref = useRef<HTMLTextAreaElement>(null);
   const [submitting, setSubmitting] = useState(false);
   const [validationError, setValidationError] = useState<string | null>(null);
-  const runBusy = streaming || workflowLoading || reviewRunning || testRunning || isRunning;
+  const [caretPos, setCaret] = useState(0);
+  const mention = caretPos >= 0 && !value.startsWith("/") ? detectMentionQuery(value, caretPos) : null;
+  const runBusy = streaming || reviewRunning || testRunning || isRunning;
   const busy = runBusy || submitting;
 
   const cycleAutonomy = () => {
@@ -59,7 +68,16 @@ export function Composer() {
       );
       return;
     }
-    if (busy) return;
+    if (busy) {
+      // A run is in flight — hold this message and release it automatically
+      // when the run finishes (R4.11 / R4.14). Clear the composer so the user
+      // sees it was accepted.
+      const content = value.trim();
+      queueMessage(content);
+      setValidationError(null);
+      setValue("");
+      return;
+    }
     const content = value.trim();
     setValidationError(null);
     setSubmitting(true);
@@ -91,10 +109,14 @@ export function Composer() {
               <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-primary" />
             </span>
             <span className="text-[11px] text-muted-foreground">
-              Will be queued until the current task completes
+              {messageQueue.length > 0
+                ? `${messageQueue.length} message${messageQueue.length === 1 ? "" : "s"} queued — sent as the run completes`
+                : "Will be queued until the current task completes"}
             </span>
           </div>
         )}
+
+        <MessageQueue />
 
         <div className="px-0.5">
           <AttachmentChips />
@@ -110,6 +132,23 @@ export function Composer() {
           />
         )}
 
+        {mention && (
+          <MentionAutocomplete
+            query={mention.query}
+            onClose={() => setCaret(-1)}
+            onPick={(c) => {
+              const { text, caret: next } = applyMention(value, mention.start, caretPos, c.path);
+              setValue(text);
+              addAttachment({ label: c.path, kind: c.kind });
+              requestAnimationFrame(() => {
+                ref.current?.focus();
+                ref.current?.setSelectionRange(next, next);
+                setCaret(next);
+              });
+            }}
+          />
+        )}
+
         <Textarea
           ref={ref}
           rows={1}
@@ -118,7 +157,9 @@ export function Composer() {
             const val = e.target.value;
             if (validationError) setValidationError(null);
             setValue(val);
+            setCaret(e.target.selectionStart ?? val.length);
           }}
+          onSelect={(e) => setCaret((e.target as HTMLTextAreaElement).selectionStart ?? 0)}
           onCompositionStart={() => setComposing(true)}
           onCompositionEnd={() => setComposing(false)}
           onKeyDown={(e) => {
@@ -155,14 +196,27 @@ export function Composer() {
             </Button>
           )}
 
-          <div className="flex items-center bg-[#1B1B21] rounded-md p-0.5 shrink-0 border border-[#26262B]">
+          {projectRules?.active && (
+            <RulesDialog>
+              <button
+                type="button"
+                className="inline-flex items-center gap-1 rounded-full border border-[#26262B] bg-[#1B1B21] px-2 py-0.5 text-[10.5px] text-[#A1A1AA] shrink-0 hover:bg-[#26262B]"
+                title="View project rules applied to every run"
+              >
+                <ShieldCheck className="h-3 w-3 text-emerald-400" />
+                Rules
+              </button>
+            </RulesDialog>
+          )}
+
+          <div className="flex items-center bg-[#1B1B21] rounded-full p-0.5 shrink-0 border border-[#26262B]">
             <button
               type="button"
               onClick={() => setAgentMode("ask")}
               className={cn(
-                "px-2.5 py-0.5 text-[11px] rounded transition-all",
+                "px-3 py-0.5 text-[11px] rounded-full font-semibold transition-all",
                 isAsk
-                  ? "font-medium text-white bg-[#7C3AED] shadow-sm"
+                  ? "text-[#0b0e14] bg-[var(--zoc-info)] shadow-sm"
                   : "text-[#71717A] hover:text-[#A1A1AA]"
               )}
               title="Ask: read-only Q&A about your code"
@@ -173,9 +227,9 @@ export function Composer() {
               type="button"
               onClick={() => setAgentMode("agent")}
               className={cn(
-                "px-2.5 py-0.5 text-[11px] rounded transition-all",
+                "px-3 py-0.5 text-[11px] rounded-full font-semibold transition-all",
                 !isAsk
-                  ? "font-medium text-white bg-[#7C3AED] shadow-sm"
+                  ? "text-[#0b0e14] bg-[var(--zoc-ember)] shadow-sm"
                   : "text-[#71717A] hover:text-[#A1A1AA]"
               )}
               title="Agent: full autonomy — can edit files and run commands"
@@ -184,35 +238,62 @@ export function Composer() {
             </button>
           </div>
 
-          <button
-            type="button"
-            onClick={cycleAutonomy}
-            className="flex items-center gap-1.5 px-1.5 py-0.5 rounded-md border border-[#26262B] bg-[#15151A] shrink-0 hover:bg-[#1B1B21] transition-colors"
-            title={`Autonomy: ${autonomy} (click to change)`}
-            aria-label={`Autonomy level: ${autonomy}`}
-          >
+          {isAsk ? (
             <span
-              className={cn(
-                "w-1.5 h-1.5 rounded-full",
-                autonomy === "High"
-                  ? "bg-warning"
-                  : autonomy === "Medium"
-                    ? "bg-primary"
-                    : "bg-success",
-              )}
-            ></span>
-            <span className="text-[11px] text-[#A1A1AA]">{autonomy}</span>
-          </button>
-
-          {streaming ? (
+              className="flex items-center gap-1.5 px-1.5 py-0.5 rounded-md border border-[var(--zoc-info)]/40 bg-[var(--zoc-info)]/10 shrink-0"
+              title="Ask mode is read-only — no files change"
+              aria-label="Read-only mode"
+            >
+              <span className="w-1.5 h-1.5 rounded-full bg-[var(--zoc-info)]" />
+              <span className="text-[11px] text-[#A1A1AA]">Read-only</span>
+            </span>
+          ) : (
             <button
               type="button"
-              onClick={() => cancelStream()}
-              className="ml-auto w-7 h-7 rounded-lg bg-destructive/90 hover:bg-destructive flex items-center justify-center shadow-[0_4px_12px_rgba(239,68,68,0.3)] shrink-0"
-              aria-label="Stop"
+              onClick={cycleAutonomy}
+              className="flex items-center gap-1.5 px-1.5 py-0.5 rounded-md border border-[#26262B] bg-[#15151A] shrink-0 hover:bg-[#1B1B21] transition-colors"
+              title={`Autonomy: ${autonomy} (click to change)`}
+              aria-label={`Autonomy level: ${autonomy}`}
             >
-              <Square className="h-3 w-3 text-white fill-white" />
+              <span
+                className={cn(
+                  "w-1.5 h-1.5 rounded-full",
+                  autonomy === "High"
+                    ? "bg-warning"
+                    : autonomy === "Medium"
+                      ? "bg-primary"
+                      : "bg-success",
+                )}
+              ></span>
+              <span className="text-[11px] text-[#A1A1AA]">{autonomy}</span>
             </button>
+          )}
+
+          {streaming ? (
+            <div className="ml-auto flex items-center gap-1.5 shrink-0">
+              {value.trim() && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    const content = value.trim();
+                    setValue("");
+                    stopAndSend(content);
+                  }}
+                  className="h-7 rounded-lg border border-[#26262B] bg-[#1B1B21] px-2 text-[11px] text-[#D4D4D8] hover:bg-[#26262B]"
+                  title="Stop the current run and send this message now"
+                >
+                  Stop &amp; send
+                </button>
+              )}
+              <button
+                type="button"
+                onClick={() => cancelStream()}
+                className="w-7 h-7 rounded-lg bg-destructive/90 hover:bg-destructive flex items-center justify-center shadow-[0_4px_12px_rgba(239,68,68,0.3)]"
+                aria-label="Stop"
+              >
+                <Square className="h-3 w-3 text-white fill-white" />
+              </button>
+            </div>
           ) : (
             <button
               type="button"
@@ -231,8 +312,10 @@ export function Composer() {
           <span className="text-destructive" role="alert">
             {validationError}
           </span>
+        ) : isAsk ? (
+          "Ask mode is read-only — no files change. Switch to Agent to make edits."
         ) : (
-          "Agent can make mistakes — wrong turns are normal. Checkpoints let you roll back."
+          "Zoc can make mistakes — checkpoints let you roll back."
         )}
       </div>
     </div>

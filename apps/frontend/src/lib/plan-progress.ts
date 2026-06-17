@@ -8,7 +8,7 @@
  *   queued     → "pending"
  * A step counts as complete only when its status is exactly `done` (R9.1).
  */
-import type { Plan, PlanStep } from "@llama-studio/shared-types";
+import type { Plan, PlanStep, TodoItem } from "@llama-studio/shared-types";
 
 export interface PlanProgress {
   /** Number of steps whose status is exactly `done`. */
@@ -36,4 +36,17 @@ export function planProgress(plan: Plan | null | undefined): PlanProgress {
 /** Convenience: the fill ratio as an integer percentage in [0,100]. */
 export function progressPercent(plan: Plan | null | undefined): number {
   return Math.round(planProgress(plan).ratio * 100);
+}
+
+/**
+ * Progress for the agent-authored to-do list (the redesign's live plan).
+ * A todo counts as complete only when its status is exactly `completed`,
+ * mirroring `planProgress`'s `done`-only rule (R9.1, R9.6).
+ */
+export function todoProgress(todos: TodoItem[] | null | undefined): PlanProgress {
+  const items = todos ?? [];
+  const total = items.length;
+  const done = items.filter((t) => t.status === "completed").length;
+  const ratio = total > 0 ? clamp01(done / total) : 0;
+  return { done, total, ratio };
 }

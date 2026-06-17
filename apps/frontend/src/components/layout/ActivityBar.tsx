@@ -1,10 +1,23 @@
-import { Files, Search, Database, MessageSquare, Settings, Palette } from "lucide-react";
+import {
+  Files,
+  Search,
+  GitBranch,
+  Bug,
+  Database,
+  ListTree,
+  History,
+  Blocks,
+  FlaskConical,
+  MessageSquare,
+  Settings,
+  Palette,
+} from "lucide-react";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { useApp, type ActivityView } from "@/lib/store";
 import { cn } from "@/lib/utils";
 
 interface Item {
-  key: ActivityView | "showcase";
+  key: ActivityView | "showcase" | "extensions" | "testing";
   label: string;
   icon: typeof Files;
   shortcut?: string;
@@ -13,6 +26,12 @@ interface Item {
 const TOP: Item[] = [
   { key: "files", label: "Explorer", icon: Files, shortcut: "⌘1" },
   { key: "search", label: "Search", icon: Search, shortcut: "⌘⇧F" },
+  { key: "scm", label: "Source Control", icon: GitBranch, shortcut: "⌘⇧G" },
+  { key: "debug", label: "Run and Debug", icon: Bug, shortcut: "⌘⇧D" },
+  { key: "testing", label: "Testing", icon: FlaskConical },
+  { key: "extensions", label: "Extensions", icon: Blocks },
+  { key: "outline", label: "Outline", icon: ListTree },
+  { key: "timeline", label: "Timeline", icon: History },
   { key: "indexer", label: "Indexer", icon: Database, shortcut: "⌘2" },
   { key: "sessions", label: "Sessions", icon: MessageSquare, shortcut: "⌘3" },
 ];
@@ -29,6 +48,19 @@ export function ActivityBar() {
   const setMainView = useApp((s) => s.setMainView);
   const toggleSide = useApp((s) => s.toggleSide);
   const sidePanelOpen = useApp((s) => s.layout.sidePanelOpen);
+  const git = useApp((s) => s.git);
+  const taskRuns = useApp((s) => s.taskRuns);
+
+  const scmCount = git
+    ? git.staged.length + git.unstaged.length + git.untracked.length + git.conflicts.length
+    : 0;
+  const failingTasks = Object.values(taskRuns).filter((s) => s === "failed").length;
+
+  const badgeFor = (key: Item["key"]): number => {
+    if (key === "scm") return scmCount;
+    if (key === "testing") return failingTasks;
+    return 0;
+  };
 
   const handleClick = (item: Item) => {
     if (item.key === "settings") {
@@ -39,6 +71,17 @@ export function ActivityBar() {
     }
     if (item.key === "showcase") {
       setMainView(mainView === "showcase" ? "editor" : "showcase");
+      return;
+    }
+    if (item.key === "extensions") {
+      // Extensions live in the Settings view (Phase 12).
+      useApp.getState().openSettings("extensions");
+      return;
+    }
+    if (item.key === "testing") {
+      // Testing is the tests-first Tasks panel in the bottom dock (Phase 6).
+      useApp.getState().setBottomTab("tasks");
+      if (!useApp.getState().layout.bottomDockOpen) useApp.getState().toggleBottom();
       return;
     }
     if (item.key === activity && sidePanelOpen) {
@@ -60,6 +103,7 @@ export function ActivityBar() {
           <ActivityButton
             key={item.key}
             item={item}
+            badge={badgeFor(item.key)}
             active={
               item.key === "sessions"
                 ? mainView === "sessions" || (mainView === "editor" && item.key === activity && sidePanelOpen)
@@ -90,10 +134,12 @@ function ActivityButton({
   item,
   active,
   onClick,
+  badge = 0,
 }: {
   item: Item;
   active: boolean;
   onClick: () => void;
+  badge?: number;
 }) {
   const Icon = item.icon;
   return (
@@ -106,7 +152,7 @@ function ActivityButton({
           )}
           <button
             type="button"
-            aria-label={item.label}
+            aria-label={badge > 0 ? `${item.label} (${badge})` : item.label}
             aria-pressed={active}
             onClick={onClick}
             className={cn(
@@ -117,6 +163,14 @@ function ActivityButton({
           >
             <Icon className="h-[18px] w-[18px]" />
           </button>
+          {badge > 0 && (
+            <span
+              className="absolute right-1 top-0.5 flex h-3.5 min-w-3.5 items-center justify-center rounded-full bg-primary px-1 text-[9px] font-semibold leading-none text-primary-foreground"
+              aria-hidden
+            >
+              {badge > 99 ? "99+" : badge}
+            </span>
+          )}
         </div>
       </TooltipTrigger>
       <TooltipContent side="right">

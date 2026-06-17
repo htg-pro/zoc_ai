@@ -3,6 +3,7 @@ import type { Session } from "@llama-studio/shared-types";
 import { ChevronsDownUp, Pin, PinOff, Plus, Search, Trash2 } from "lucide-react";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { useApp } from "@/lib/store";
+import { groupSessions } from "@/lib/session-query";
 import { cn } from "@/lib/utils";
 
 type Group = { key: "pinned" | "today" | "yesterday" | "older"; label: string; sessions: Session[] };
@@ -24,39 +25,28 @@ function timeLabel(iso: string): string {
   return d.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
 }
 
-function groupSessions(sessions: Session[], pinned: Record<string, true>): Group[] {
-  const now = new Date();
-  const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
-  const startOfYesterday = startOfToday - 86_400_000;
+function groupSessionsForPanel(
+  sessions: Session[],
+  pinned: Record<string, true>,
+): Group[] {
+  // Compute the display offset and `now` at the component/selector boundary and
+  // pass them into the canonical pure `groupSessions` (which never reads the
+  // host clock itself). `-getTimezoneOffset()` gives the display-tz offset in
+  // minutes east of UTC.
+  const now = Date.now();
+  const tzOffsetMinutes = -new Date().getTimezoneOffset();
+  const pinnedSet = new Set(Object.keys(pinned));
 
-  const pinnedList: Session[] = [];
-  const today: Session[] = [];
-  const yesterday: Session[] = [];
-  const older: Session[] = [];
-
-  for (const s of sessions) {
-    if (pinned[s.id]) {
-      pinnedList.push(s);
-      continue;
-    }
-    const t = new Date(s.updated_at).getTime();
-    if (t >= startOfToday) today.push(s);
-    else if (t >= startOfYesterday) yesterday.push(s);
-    else older.push(s);
-  }
+  const grouped = groupSessions(sessions, pinnedSet, now, tzOffsetMinutes);
 
   const byRecency = (a: Session, b: Session) =>
     new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime();
-  pinnedList.sort(byRecency);
-  today.sort(byRecency);
-  yesterday.sort(byRecency);
-  older.sort(byRecency);
 
   return [
-    { key: "pinned", label: "Pinned", sessions: pinnedList },
-    { key: "today", label: "Today", sessions: today },
-    { key: "yesterday", label: "Yesterday", sessions: yesterday },
-    { key: "older", label: "Older", sessions: older },
+    { key: "pinned", label: "Pinned", sessions: grouped.pinned.slice().sort(byRecency) },
+    { key: "today", label: "Today", sessions: grouped.today.slice().sort(byRecency) },
+    { key: "yesterday", label: "Yesterday", sessions: grouped.yesterday.slice().sort(byRecency) },
+    { key: "older", label: "Older", sessions: grouped.earlier.slice().sort(byRecency) },
   ];
 }
 
@@ -71,7 +61,7 @@ export function SessionsPanel() {
   const togglePin = useApp((s) => s.togglePinnedSession);
   const workspaceRoot = useApp((s) => s.workspaceRoot);
 
-  const groups = useMemo(() => groupSessions(sessions, pinned), [sessions, pinned]);
+  const groups = useMemo(() => groupSessionsForPanel(sessions, pinned), [sessions, pinned]);
 
   const onNew = async () => {
     const root =

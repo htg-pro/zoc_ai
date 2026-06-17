@@ -8,7 +8,7 @@ sidecar — nothing should be lost across crashes.
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 
 from shared_schema.models import (
@@ -48,8 +48,8 @@ def test_resume_round_trip(tmp_path, monkeypatch):
             name="read_file",
             arguments={"path": "x"},
             status=ToolCallStatus.succeeded,
-            started_at=datetime.utcnow(),
-            finished_at=datetime.utcnow(),
+            started_at=datetime.now(UTC),
+            finished_at=datetime.now(UTC),
         ),
     )
     s1.repo.set_permission(sess.id, PermissionGrant(scope=PermissionScope.write_fs, granted=True))

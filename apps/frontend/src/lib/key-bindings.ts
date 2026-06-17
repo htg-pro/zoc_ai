@@ -1,46 +1,22 @@
 import { useEffect } from "react";
 import { useApp } from "./store";
+import { matchKeybinding, runCommand } from "./commands";
 
+/**
+ * Global keyboard shortcuts, driven entirely by the command registry
+ * (`lib/commands.ts`) so the palette and the keyboard share one source of
+ * truth. A keydown is normalized and matched against registered keybindings;
+ * disabled commands are skipped (so their default key falls through).
+ */
 export function useGlobalShortcuts() {
-  const togglePalette = useApp((s) => s.togglePalette);
-  const setMainView = useApp((s) => s.setMainView);
-  const setActivity = useApp((s) => s.setActivity);
-  const toggleSide = useApp((s) => s.toggleSide);
-  const toggleRight = useApp((s) => s.toggleRight);
-  const toggleBottom = useApp((s) => s.toggleBottom);
-
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
-      const meta = e.metaKey || e.ctrlKey;
-      if (!meta) return;
-      const key = e.key.toLowerCase();
-      if (key === "k") {
-        e.preventDefault();
-        togglePalette();
-      } else if (key === ",") {
-        e.preventDefault();
-        setMainView("settings");
-      } else if (key === "b") {
-        e.preventDefault();
-        toggleSide();
-      } else if (key === "j") {
-        e.preventDefault();
-        toggleBottom();
-      } else if (key === "i") {
-        e.preventDefault();
-        toggleRight();
-      } else if (key === "1") {
-        e.preventDefault();
-        setActivity("files");
-      } else if (key === "2") {
-        e.preventDefault();
-        setActivity("indexer");
-      } else if (key === "3") {
-        e.preventDefault();
-        setActivity("sessions");
-      }
+      const cmd = matchKeybinding(e, useApp.getState());
+      if (!cmd) return;
+      e.preventDefault();
+      void runCommand(cmd.id);
     }
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [togglePalette, setMainView, setActivity, toggleSide, toggleRight, toggleBottom]);
+  }, []);
 }

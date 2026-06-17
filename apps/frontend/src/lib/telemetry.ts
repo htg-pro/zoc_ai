@@ -17,6 +17,10 @@ export type TelemetryKind =
   | "session.slash_command"
   | "patch.applied"
   | "patch.rejected"
+  | "agent.run.applied"
+  | "agent.run.discarded"
+  | "agent.run.restored"
+  | "inline_edit.queued"
   | "permission.grant"
   | "permission.grant_tool"
   | "permission.revoke_tool"
@@ -33,14 +37,6 @@ export type TelemetryKind =
   | "testgen.saved"
   | "memory.compacted"
   | "memory.forgotten"
-  | "replit.plan.created"
-  | "replit.plan.revised"
-  | "replit.plan.approved"
-  | "replit.task.queued"
-  | "replit.task.started"
-  | "replit.task.ready"
-  | "replit.task.applied"
-  | "replit.checkpoint.rollback"
   | "error";
 
 let optedIn: boolean | null = null;

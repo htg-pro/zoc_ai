@@ -1,0 +1,956 @@
+# Zoc AI Agent Visual Feedback And Working Flow
+
+> Purpose: explain what the screenshots show, how Zoc AI agent messages work,
+> which source files own the flow, and how Ask/Agent visual feedback is produced.
+> Scope: documentation only.
+> Date: 2026-06-17
+
+---
+
+## 1. What The Shared Images Show
+
+The screenshots show the right-side Zoc AI agent panel in a dark workbench UI.
+There are two different user-facing modes:
+
+```text
+Zoc Ask
+- Read-only answers
+- User asks questions
+- Assistant answers in chat bubbles
+- No file edits
+- No visible tool workflow cards by default
+```
+
+```text
+Zoc Agent
+- Auto run
+- Agent can inspect workspace, plan, use tools, create diffs, and request approvals
+- Tool activity cards are visible
+- Failed tool calls show red error feedback
+- Successful tool calls show green pass/ok feedback
+```
+
+The screenshots specifically show:
+
+1. Ask mode with a user message bubble.
+2. Ask mode with workspace context text appearing inside the user bubble.
+3. Ask mode assistant responding conversationally.
+4. Agent mode showing visible tool activity cards.
+5. A failed `write_file` tool call because `write_fs` permission was not
+   approved.
+6. A successful `get_project_summary` tool call with JSON-like output.
+
+Important visual lesson:
+
+```text
+Ask mode should feel like chat.
+Agent mode should feel like a workflow monitor.
+```
+
+---
+
+## 2. Black Diagram: Full Agent Panel Architecture
+
+```text
++--------------------------------------------------------------------------+
+|                             ZOC AI WORKBENCH                             |
++--------------------------------------------------------------------------+
+|                                                                          |
+|  React Shell                                                             |
+|  apps/frontend/src/components/layout/Shell.tsx                           |
+|                                                                          |
+|    +-------------------+   +-------------------+   +------------------+  |
+|    | Side Panel        |   | Editor Area       |   | Agent Panel      |  |
+|    | File tree/search  |   | Monaco/tabs       |   | Ask/Agent chat   |  |
+|    +-------------------+   +-------------------+   +------------------+  |
+|                                                       |                  |
+|                                                       v                  |
+|                                             AgentPanel.tsx               |
+|                                             Composer.tsx                 |
+|                                             AgentTimeline.tsx            |
+|                                                       |                  |
+|                                                       v                  |
+|                                             apps/frontend/src/lib/store.ts|
+|                                                       |                  |
++-------------------------------------------------------|------------------+
+                                                        |
+                                                        v
++--------------------------------------------------------------------------+
+|                        FRONTEND AGENT CLIENT                              |
+|             apps/frontend/src/lib/agent-client.ts                         |
+|                                                                          |
+|  POST /v1/sessions/{id}/agent/run                                        |
+|  GET  /v1/sessions/{id}/agent/events?since_seq=<n>                       |
++-------------------------------------------------------|------------------+
+                                                        |
+                                                        v
++--------------------------------------------------------------------------+
+|                         FASTAPI AGENT SIDECAR                             |
+|             services/agent/src/llama_studio_agent                         |
+|                                                                          |
+|  v1/agent_run.py -> agent/orchestrator.py -> tools/providers/events       |
++-------------------------------------------------------|------------------+
+                                                        |
+                                                        v
++--------------------------------------------------------------------------+
+|                         WORKSPACE + TOOLS                                 |
+|                                                                          |
+|  read_file, list_dir, grep_search, get_project_summary, write_file,       |
+|  shell tools, index tools, checkpoints, validation, diff/review           |
++--------------------------------------------------------------------------+
+```
+
+---
+
+## 3. Black Diagram: Ask Mode Flow
+
+Ask mode is for read-only Q&A.
+
+```text
++-------------------+
+| User types prompt |
+| Composer.tsx      |
++---------+---------+
+          |
+          v
++-----------------------------+
+| sendUserMessage             |
+| store.ts                    |
+| - appends user bubble       |
+| - creates runId             |
+| - mode = "ask"              |
++-------------+---------------+
+              |
+              v
++-----------------------------+
+| buildRunAgentRequest        |
+| store.ts                    |
+| - workspacePath             |
+| - activeFile                |
+| - openFiles                 |
+| - editorContent             |
+| - mode: ask                 |
+| - reviewChanges: false      |
++-------------+---------------+
+              |
+              v
++-----------------------------+
+| runAgent                    |
+| agent-client.ts             |
+| - opens event stream        |
+| - POSTs request             |
++-------------+---------------+
+              |
+              v
++-----------------------------+
+| run_agent endpoint          |
+| v1/agent_run.py             |
+| - ASK_MODE_TOOLS only       |
+| - skip_planner = true       |
+| - enable_todos = false      |
+| - Ask system prompt         |
++-------------+---------------+
+              |
+              v
++-----------------------------+
+| Orchestrator                |
+| agent/orchestrator.py       |
+| - read/search tools only    |
+| - no plan card              |
+| - no todo card              |
+| - no file write             |
++-------------+---------------+
+              |
+              v
++-----------------------------+
+| consumeStream               |
+| store.ts                    |
+| - keeps assistant deltas    |
+| - drops workflow cards      |
++-------------+---------------+
+              |
+              v
++-----------------------------+
+| buildAskTranscript          |
+| AgentTimeline.tsx           |
+| - user bubble               |
+| - assistant bubble          |
+| - errors only               |
++-----------------------------+
+```
+
+Expected Ask visual output:
+
+```text
+YOU
+  hi
+
+AGENT
+  Hello. How can I help with this project?
+```
+
+Ask mode should not show:
+
+- `Workspace analysis` card
+- `Plan` card
+- `To-do` card
+- `Tool activity` card
+- `Agent run` card
+- diff/review card
+- write/apply controls
+
+---
+
+## 4. Black Diagram: Agent Mode Flow
+
+Agent mode is for visible work.
+
+```text
++------------------------------+
+| User asks for implementation |
+| Composer.tsx                 |
++--------------+---------------+
+               |
+               v
++------------------------------+
+| sendUserMessage              |
+| store.ts                     |
+| - appends user bubble        |
+| - binds runId to message     |
+| - mode = "agent"             |
++--------------+---------------+
+               |
+               v
++------------------------------+
+| RunAgentRequest              |
+| store.ts                     |
+| - reviewChanges: true        |
+| - maxIterations: 20          |
+| - maxRepairAttempts: 2       |
++--------------+---------------+
+               |
+               v
++------------------------------+
+| run_agent endpoint           |
+| v1/agent_run.py              |
+| - may prepare isolated run   |
+| - may create checkpoint      |
+| - full tool access via rules |
++--------------+---------------+
+               |
+               v
++------------------------------+
+| Orchestrator                 |
+| agent/orchestrator.py        |
+| - emits run.started          |
+| - emits context events       |
+| - may emit plan events       |
+| - exposes todo_write         |
+| - dispatches tools           |
+| - emits tool/diff/test logs  |
++--------------+---------------+
+               |
+               v
++------------------------------+
+| consumeStream                |
+| store.ts                     |
+| - creates workspace cards    |
+| - creates tool cards         |
+| - creates plan/todo cards    |
+| - creates diff/test cards    |
++--------------+---------------+
+               |
+               v
++------------------------------+
+| AgentTimeline                |
+| AgentTimeline.tsx            |
+| - AgentRunCard               |
+| - Tool activity              |
+| - To-do                      |
+| - Plan                       |
+| - Diff/review                |
++------------------------------+
+```
+
+Expected Agent visual output:
+
+```text
+Zoc Agent
+Auto run
+
+Tool activity
+  get_project_summary
+  status: ok
+
+Tool activity
+  write_file
+  status: failed
+  error: not approved: missing permission: write_fs
+```
+
+---
+
+## 5. Why The Purple User Bubble Shows Workspace Context
+
+In the screenshots, the user bubble includes text like:
+
+```text
+---
+Current workspace context from the editor:
+workspace_root: /home/...
+active_file: /src/App.tsx
+active_editor_content:
+...
+open_files:
+...
+Use this already-open workspace...
+```
+
+This comes from the frontend legacy compatibility path in:
+
+```text
+apps/frontend/src/lib/agent-client.ts
+```
+
+Relevant function:
+
+```text
+legacyRunAgentRequest(req)
+```
+
+What it does:
+
+- takes the user's prompt
+- appends workspace context text
+- sends it as one old-style `{ prompt }` request when the newer rich request
+  shape is rejected by an older sidecar
+
+Why it appears in the UI:
+
+- the prompt text can become visible as part of the user message history
+- it makes Ask mode look noisy, even though the context is useful for the model
+
+Ideal UX rule:
+
+```text
+Workspace context should help the model.
+Workspace context should not visually pollute the user's chat bubble.
+```
+
+Recommended future improvement:
+
+- keep workspace context in the typed request payload
+- show only the original user text in the chat bubble
+- if needed, show context as a small collapsed "Context used" row
+
+---
+
+## 6. Visual Feedback Message Types
+
+### User message bubble
+
+Owned by:
+
+```text
+apps/frontend/src/lib/store.ts
+apps/frontend/src/features/agent/AgentTimeline.tsx
+```
+
+Created when:
+
+- `sendUserMessage` appends a local `Message`
+- `AgentTimeline` renders it as `MessageBubble role="user"`
+
+Purpose:
+
+- show what the user asked
+
+Should contain:
+
+- user text
+- optional attached file mention
+
+Should not contain:
+
+- huge injected system context
+- raw tool JSON
+- internal backend details
+
+### Assistant message bubble
+
+Owned by:
+
+```text
+apps/frontend/src/lib/store.ts
+apps/frontend/src/features/agent/AgentTimeline.tsx
+```
+
+Created when:
+
+- stream emits `token` or `message.delta`
+- `ensureAssistant` creates the assistant item
+- `appendDelta` updates text live
+
+Purpose:
+
+- show the answer
+- stream text as the model responds
+
+### Workspace analysis card
+
+Owned by:
+
+```text
+apps/frontend/src/lib/store.ts
+apps/frontend/src/features/agent/AgentTimeline.tsx
+services/agent/src/llama_studio_agent/agent/orchestrator.py
+```
+
+Created from events:
+
+```text
+agent.context.loading
+agent.context.ready
+run.context_ready
+```
+
+Agent mode:
+
+- visible
+
+Ask mode:
+
+- suppressed by `consumeStream`
+- hidden by `buildAskTranscript`
+
+### Plan card
+
+Owned by:
+
+```text
+services/agent/src/llama_studio_agent/agent/planner.py
+services/agent/src/llama_studio_agent/agent/orchestrator.py
+apps/frontend/src/lib/store.ts
+apps/frontend/src/features/agent/AgentTimeline.tsx
+```
+
+Created from events:
+
+```text
+plan.created
+plan
+plan_step
+```
+
+Agent mode:
+
+- visible when planner runs
+
+Ask mode:
+
+- backend sets `skip_planner = true`
+- frontend also suppresses plan events defensively
+
+### To-do card
+
+Owned by:
+
+```text
+services/agent/src/llama_studio_agent/agent/orchestrator.py
+apps/frontend/src/lib/store.ts
+apps/frontend/src/features/agent/AgentTimeline.tsx
+```
+
+Created by:
+
+```text
+todo_write virtual tool
+TodoUpdateEvent
+```
+
+Agent mode:
+
+- visible
+
+Ask mode:
+
+- backend sets `enable_todos = false`
+- `todo_write` is not exposed
+- if a model calls it anyway, backend no-ops it
+- frontend suppresses todo events defensively
+
+### Tool activity card
+
+Owned by:
+
+```text
+services/agent/src/llama_studio_agent/tools/*
+services/agent/src/llama_studio_agent/agent/orchestrator.py
+apps/frontend/src/lib/store.ts
+apps/frontend/src/features/agent/AgentTimeline.tsx
+```
+
+Created from events:
+
+```text
+tool_call
+tool.started
+tool.completed
+```
+
+Visual statuses:
+
+```text
+pending
+running
+ok
+failed
+cancelled
+approval
+```
+
+Screenshot example:
+
+```text
+Tool activity
+write_file
+status: failed
+error: not approved: missing permission: write_fs
+```
+
+Meaning:
+
+- model tried to write a file
+- permission engine denied it
+- UI correctly showed failure instead of pretending success
+
+### Diff/review card
+
+Owned by:
+
+```text
+services/agent/src/llama_studio_agent/agent/workspace_diff.py
+services/agent/src/llama_studio_agent/v1/agent_run.py
+apps/frontend/src/features/agent/DiffCard.tsx
+apps/frontend/src/features/diff/DiffReviewView.tsx
+```
+
+Created when:
+
+- Agent mode produces file changes
+- review-before-apply flow prepares a diff
+
+Ask mode:
+
+- never should show diffs
+
+---
+
+## 7. Working Source File Map
+
+### Frontend panel files
+
+```text
+apps/frontend/src/features/agent/AgentPanel.tsx
+```
+
+Owns:
+
+- Zoc Ask / Zoc Agent header
+- idle/running status
+- read-only/auto-run subtitle
+- pause/resume/stop controls
+- model picker area
+- layout of context bar, timeline, composer
+
+```text
+apps/frontend/src/features/agent/Composer.tsx
+```
+
+Owns:
+
+- text input
+- Ask/Agent segmented mode switch
+- read-only pill in Ask mode
+- autonomy control in Agent mode
+- send button
+- stop button
+- stop-and-send behavior
+- active file attachment button
+- project rules button
+
+```text
+apps/frontend/src/features/agent/AgentTimeline.tsx
+```
+
+Owns:
+
+- user bubbles
+- assistant bubbles
+- Ask transcript filtering
+- Agent run cards
+- tool activity cards
+- workspace analysis cards
+- plan cards
+- to-do cards
+- latest jump button
+- streaming spinner
+
+```text
+apps/frontend/src/features/agent/ToolCallCard.tsx
+apps/frontend/src/features/agent/DiffCard.tsx
+apps/frontend/src/features/agent/CheckpointsPanel.tsx
+apps/frontend/src/features/agent/ContextBar.tsx
+```
+
+Own:
+
+- detailed tool display
+- diff display
+- checkpoint UI
+- context/memory status display
+
+### Frontend logic files
+
+```text
+apps/frontend/src/lib/store.ts
+```
+
+Owns:
+
+- global app state
+- chat/session state
+- `sendUserMessage`
+- mode-aware request building
+- stream consumption
+- event-to-UI item conversion
+- Ask suppression rules
+- Agent workflow card creation
+- run id binding
+- stale event discard
+
+```text
+apps/frontend/src/lib/agent-client.ts
+```
+
+Owns:
+
+- FastAPI agent HTTP client
+- run POST
+- event stream subscription
+- legacy request fallback
+- reconnect and resume stream behavior
+
+```text
+apps/frontend/src/lib/sse.ts
+apps/frontend/src/lib/seq-cursor.ts
+apps/frontend/src/lib/event-ingest.ts
+apps/frontend/src/lib/run-machine.ts
+```
+
+Own:
+
+- SSE parsing
+- sequence cursor
+- stale event filtering
+- run lifecycle rules
+
+### Shared contract files
+
+```text
+packages/shared-types/python/shared_schema/models.py
+packages/shared-types/typescript/src/index.ts
+```
+
+Own:
+
+- `RunAgentRequest`
+- `AgentEvent`
+- `ToolCallEvent`
+- `PlanEvent`
+- `TodoUpdateEvent`
+- `RunLifecycleEvent`
+- `DiffEvent`
+- message/event types shared by frontend and backend
+
+### Backend route files
+
+```text
+services/agent/src/llama_studio_agent/v1/agent_run.py
+```
+
+Owns:
+
+- `/v1/sessions/{id}/agent/run`
+- run id creation
+- workspace validation
+- Ask vs Agent backend config
+- review-before-apply setup
+- isolated run setup
+- final diff/apply/restore/discard run endpoints
+
+```text
+services/agent/src/llama_studio_agent/v1/messages.py
+services/agent/src/llama_studio_agent/v1/sessions.py
+services/agent/src/llama_studio_agent/v1/tools.py
+```
+
+Own:
+
+- messages
+- sessions
+- direct tool endpoints
+
+### Backend orchestration files
+
+```text
+services/agent/src/llama_studio_agent/agent/orchestrator.py
+```
+
+Owns:
+
+- system prompt
+- Ask system prompt
+- planner toggle
+- todo toggle
+- tool schemas
+- working memory
+- workspace context injection
+- event emission
+- tool dispatch
+- final run result
+
+```text
+services/agent/src/llama_studio_agent/agent/planner.py
+services/agent/src/llama_studio_agent/agent/memory.py
+services/agent/src/llama_studio_agent/agent/recall.py
+services/agent/src/llama_studio_agent/agent/workspace_diff.py
+services/agent/src/llama_studio_agent/agent/validation.py
+services/agent/src/llama_studio_agent/agent/checkpoints.py
+```
+
+Own:
+
+- planning
+- memory window
+- semantic recall
+- diff extraction
+- validation
+- checkpoints
+
+### Backend tool files
+
+```text
+services/agent/src/llama_studio_agent/tools/workspace.py
+```
+
+Owns:
+
+- `get_project_summary`
+- `get_open_workspace`
+- `get_active_file`
+- git status/diff helper tools
+
+```text
+services/agent/src/llama_studio_agent/tools/filesystem.py
+```
+
+Owns:
+
+- `read_file`
+- `write_file`
+- file mutation permission behavior
+
+```text
+services/agent/src/llama_studio_agent/tools/search.py
+services/agent/src/llama_studio_agent/tools/ast.py
+services/agent/src/llama_studio_agent/tools/index.py
+services/agent/src/llama_studio_agent/tools/shell.py
+services/agent/src/llama_studio_agent/tools/registry.py
+services/agent/src/llama_studio_agent/tools/sandbox.py
+```
+
+Own:
+
+- grep/search
+- AST query
+- index query
+- shell execution
+- tool registration
+- workspace path safety
+
+---
+
+## 8. Step-By-Step: User Sends A Message
+
+```text
+1. User types in Composer.
+2. Composer validates non-empty message.
+3. Composer calls sendUserMessage(content).
+4. store.ts expands @file if present.
+5. store.ts creates a local user message item.
+6. store.ts creates deterministic runId: run-local-...
+7. store.ts builds RunAgentRequest.
+8. agent-client.ts opens SSE stream and POSTs /agent/run.
+9. v1/agent_run.py validates session and workspace.
+10. v1/agent_run.py chooses Ask or Agent config.
+11. orchestrator.py emits lifecycle events.
+12. orchestrator.py streams model output and tool events.
+13. agent-client.ts yields AgentEvent objects.
+14. store.ts consumeStream applies or suppresses events by mode.
+15. AgentTimeline renders Ask transcript or Agent workflow cards.
+```
+
+---
+
+## 9. Ask Vs Agent Decision Table
+
+| Behavior | Ask | Agent |
+|---|---:|---:|
+| Direct answer bubble | yes | yes |
+| Read workspace context | yes | yes |
+| Show workspace analysis card | no | yes |
+| Show tool activity card | no by default | yes |
+| Run planner | no | yes |
+| Show plan card | no | yes |
+| Create to-do card | no | yes |
+| Write files | no | permission/review flow |
+| Run shell commands | no | permission flow |
+| Create diff | no | yes |
+| Review/apply changes | no | yes |
+| Show read-only pill | yes | no |
+| Show autonomy control | no | yes |
+
+---
+
+## 10. What Should Be Fixed Next
+
+From the screenshots and source flow, the main remaining UX risk is visible
+workspace context inside the user bubble.
+
+Recommended future fix:
+
+```text
+Keep user message clean:
+  "hi"
+
+Keep context hidden in request payload:
+  workspacePath
+  activeFile
+  openFiles
+  editorContent
+
+Optional visual:
+  Context used: App.tsx, agent.py
+```
+
+Implementation direction:
+
+- keep `RunAgentRequest` typed shape as the normal path
+- avoid using `legacyRunAgentRequest` unless talking to old sidecar versions
+- when legacy fallback happens, keep the displayed chat message as original user
+  content
+- do not overwrite the user bubble with the expanded prompt
+- add a small collapsed context disclosure if needed
+
+---
+
+## 11. Black Diagram: Clean Future Ask UI
+
+```text
++------------------------------------------------------+
+| Zoc Ask                                      idle     |
+| Read-only answers                         Select model|
++------------------------------------------------------+
+|                                                      |
+|  YOU  04:20 PM                                       |
+|  +-----------------------------------------------+   |
+|  | hi                                            |   |
+|  +-----------------------------------------------+   |
+|                                                      |
+|  AGENT  04:20 PM                                    |
+|  +-----------------------------------------------+   |
+|  | Hello. I see App.tsx is open. How can I help? |   |
+|  +-----------------------------------------------+   |
+|                                                      |
+|  Context used: App.tsx, agent.py       [collapsed]   |
+|                                                      |
++------------------------------------------------------+
+| Ask about your code...  [Ask] [Agent] [Read-only] -> |
++------------------------------------------------------+
+```
+
+---
+
+## 12. Black Diagram: Agent Tool Feedback UI
+
+```text
++------------------------------------------------------+
+| Zoc Agent                                   idle      |
+| Auto run                                  Select model|
++------------------------------------------------------+
+|                                                      |
+| Tool activity                                Failed   |
+| +--------------------------------------------------+ |
+| | write_file                                       | |
+| | status: failed                                   | |
+| | input: path=src/types.ts                         | |
+| | error: not approved: missing permission write_fs | |
+| +--------------------------------------------------+ |
+|                                                      |
+| Tool activity                                Ok       |
+| +--------------------------------------------------+ |
+| | get_project_summary                              | |
+| | status: ok                                       | |
+| | output: workspace summary JSON                   | |
+| +--------------------------------------------------+ |
+|                                                      |
++------------------------------------------------------+
+| Message the agent... [Ask] [Agent] [High] ->         |
++------------------------------------------------------+
+```
+
+---
+
+## 13. Acceptance Checklist For This Flow
+
+Ask mode is correct when:
+
+- user bubble shows only the user's message
+- assistant bubble gives the answer
+- no workspace analysis card appears
+- no plan card appears
+- no to-do card appears
+- no tool activity card appears by default
+- no write/shell action is allowed
+- header says `Zoc Ask`
+- subtitle says `Read-only answers`
+- composer shows `Read-only`
+
+Agent mode is correct when:
+
+- header says `Zoc Agent`
+- subtitle says `Auto run`
+- tool activity cards show tool input/output/error
+- failed tool permissions show red error feedback
+- successful tools show green pass/ok feedback
+- plans and to-dos are visible when the agent is doing real work
+- diffs require review/apply flow before touching real workspace
+
+Backend is correct when:
+
+- Ask mode uses `ASK_SYSTEM_PROMPT`
+- Ask mode sets `skip_planner = true`
+- Ask mode sets `enable_todos = false`
+- Ask mode restricts tools to read/search/status tools
+- Agent mode can use normal planner, todos, tools, review flow, and permission
+  checks
+
+---
+
+## 14. One-Line Mental Model
+
+```text
+Ask is a clean read-only conversation.
+Agent is a visible workflow with tools, plans, permissions, diffs, and review.
+```

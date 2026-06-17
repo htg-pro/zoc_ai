@@ -1,4 +1,4 @@
-# Llama Studio — Project Guide (A to Z)
+# Zoc AI — Project Guide (A to Z)
 
 > Version: 2.0.0
 > A local-first agentic coding desktop app — llama.cpp-powered, shipped as a Tauri v2 binary with a bundled FastAPI sidecar.
@@ -7,7 +7,7 @@
 
 ## 1. What is this project?
 
-**Llama Studio** is a desktop IDE-style application (think Cursor / Zencoder / Codex), but:
+**Zoc AI** is a desktop IDE-style application (think Cursor / Zencoder / Codex), but:
 
 - **Local-first**: the AI brain runs on YOUR machine via `llama.cpp` / `llama-server` (no data leaves your computer unless you opt into a cloud provider).
 - **Agentic**: the assistant can read files, edit code, run a terminal, search the codebase semantically, run tests, and review/explain code.
@@ -154,7 +154,7 @@ llama-studio/
 
 ## 4. How it works (data flow)
 
-1. **You launch Llama Studio.** Tauri shell opens the window AND spawns the Python sidecar as a child process.
+1. **You launch Zoc AI.** Tauri shell opens the window AND spawns the Python sidecar as a child process.
 2. **Sidecar handshake.** The sidecar picks a free loopback port and prints `LLAMA_STUDIO_AGENT_PORT=<n>` on stdout. The Tauri shell reads that line and stores the port.
 3. **Frontend asks for the port.** React calls `invoke('agent_port')` and gets the port.
 4. **Workspace scope.** First-run wizard asks you to pick a folder. Tauri pins all file I/O to that root via `WorkspaceState` — paths outside the root are rejected.
@@ -248,7 +248,7 @@ Cross-OS bundles are NOT supported — run `make release` once per OS, or use a 
 ### 6.5 End-user install (the people you ship to)
 
 - **Linux**: download the `.AppImage`, `chmod +x`, double-click. OR install the `.deb` with `sudo apt install ./llama-studio_*.deb`.
-- **macOS**: open the `.dmg`, drag Llama Studio to Applications. If unsigned, right-click → Open the first time.
+- **macOS**: open the `.dmg`, drag Zoc AI to Applications. If unsigned, right-click → Open the first time.
 - **Windows**: run the `.msi` or NSIS `.exe` installer.
 
 First launch: the onboarding wizard walks the user through workspace setup, local GGUF model import, and optional cloud provider keys. Done.

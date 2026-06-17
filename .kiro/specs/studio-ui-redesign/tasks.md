@@ -1,8 +1,33 @@
 # Implementation Plan: Studio UI Redesign
 
+## Status (updated June 14, 2026)
+
+**Pure modules + property tests (tasks 1–14): COMPLETE.** All pure modules exist
+(`run-machine`, `event-ingest`, `reconnect`, `plan-progress`, `session-query`, `diff-utils`,
+`layout`, `composer-validate`, `context-usage`, `format-elapsed`, `reduced-motion`) with their
+fast-check property suites green.
+
+**View layer + wiring (tasks 15–25): mostly COMPLETE.** Recent increment closed these gaps:
+- Bug #4 (run-start ordering): the previous stream is now aborted **before** the new run id is
+  assigned in `sendUserMessage` (`store.ts`).
+- Queued message (R4.11/R4.14): the composer now actually holds a message while a run is active
+  and the store releases + sends it on the terminal transition (`store.ts`, `Composer.tsx`).
+- Plan/task progress summary (R9.1–9.6): `ContextBar` renders a `done/total` progress bar driven
+  by the new `todoProgress` selector in `plan-progress.ts`.
+- "Agent is editing" badge (R3.5): pulsing indicator on actively-changed files in `FileTree`.
+- Bottom-dock agent control (R3.12): pause/resume toggle wired into `BottomDock`.
+- Checkpoint rollback hardening (R11.3): two-step confirm, in-progress disabling, and a 10s
+  timeout with inline error retention in `AgentTimeline`.
+
+**Known remaining partials (lower priority, additive):** `resilientEventStream` reconnection
+wrapper in `agent-client.ts` (task 16.1); exact pixel panel bounds via `layout.ts` in `Shell.tsx`
+(task 17.1); persisted pin state inside `SessionsView` (task 18.2).
+
+Verification: 121 frontend tests pass (`vitest run`), `tsc --noEmit` clean.
+
 ## Overview
 
-This plan implements the Llama Studio frontend redesign (`apps/frontend`: React + Vite + TypeScript
+This plan implements the Zoc AI frontend redesign (`apps/frontend`: React + Vite + TypeScript
 + Tailwind + shadcn + zustand) at high fidelity across the three Kombai canvases, and hardens the
 agent run workflow they depict.
 
@@ -22,8 +47,8 @@ Verification (run in `apps/frontend`): `npm run typecheck`, `npm run lint`, `npm
 
 ## Tasks
 
-- [ ] 1. Property-based test infrastructure
-  - [ ]* 1.1 Add fast-check dev dependency and configure Vitest
+- [x] 1. Property-based test infrastructure
+  - [x]* 1.1 Add fast-check dev dependency and configure Vitest
     - Add `fast-check` to `apps/frontend/package.json` devDependencies and install
     - Confirm `vitest.config.ts` runs `*.prop.test.ts` files in single-run (no watch) mode
     - _Requirements: Testing Strategy (PBT setup)_
@@ -33,8 +58,8 @@ Verification (run in `apps/frontend`): `npm run typecheck`, `npm run lint`, `npm
       `RunConfig`, and `LayoutState`
     - _Requirements: Testing Strategy (generators)_
 
-- [ ] 2. Design system and Design_Tokens
-  - [ ] 2.1 Define Design_Tokens as CSS variables and Tailwind theme
+- [x] 2. Design system and Design_Tokens
+  - [x] 2.1 Define Design_Tokens as CSS variables and Tailwind theme
     - Promote the canvas color, typography, radius values into named CSS variables in
       `src/styles/globals.css` and map them in `tailwind.config.ts`
     - Set `Inter` (→ `system-ui` → sans) for UI text and `JetBrains Mono` (→ `ui-monospace` → mono)
@@ -49,8 +74,8 @@ Verification (run in `apps/frontend`): `npm run typecheck`, `npm run lint`, `npm
       palette, the font families/fallbacks are present, and no disallowed raw hex literals remain
     - _Requirements: 1.1, 1.2, 1.3_
 
-- [ ] 3. format-elapsed pure module
-  - [ ] 3.1 Implement `formatElapsed`
+- [x] 3. format-elapsed pure module
+  - [x] 3.1 Implement `formatElapsed`
     - Add `src/lib/format-elapsed.ts` producing zero-padded `HH:MM:SS` from non-negative elapsed time
     - _Requirements: 3.2_
   - [ ]* 3.2 Write property test for elapsed formatting
@@ -59,8 +84,8 @@ Verification (run in `apps/frontend`): `npm run typecheck`, `npm run lint`, `npm
       `// Feature: studio-ui-redesign, Property 29: ...`, ≥100 iterations
     - **Validates: Requirements 3.2**
 
-- [ ] 4. reduced-motion pure module
-  - [ ] 4.1 Implement reduced-motion helpers
+- [x] 4. reduced-motion pure module
+  - [x] 4.1 Implement reduced-motion helpers
     - Add `src/lib/reduced-motion.ts` with `useReducedMotion`, `staticStateCue(state)` (icon + color
       cue for active/complete/error), and a motion-token class resolver
     - _Requirements: 6.6, 6.8_
@@ -69,8 +94,8 @@ Verification (run in `apps/frontend`): `npm run typecheck`, `npm run lint`, `npm
     - File `src/lib/__tests__/reduced-motion.prop.test.ts`, tagged, ≥100 iterations
     - **Validates: Requirements 6.8**
 
-- [ ] 5. plan-progress pure module
-  - [ ] 5.1 Implement `planProgress`
+- [x] 5. plan-progress pure module
+  - [x] 5.1 Implement `planProgress`
     - Add `src/lib/plan-progress.ts` returning `{ done, total, ratio }` with ratio clamped to [0,1]
       and 0 when total is 0; `completedCount` = steps in `done`
     - _Requirements: 4.8, 9.1, 9.2, 9.3, 9.6_
@@ -79,8 +104,8 @@ Verification (run in `apps/frontend`): `npm run typecheck`, `npm run lint`, `npm
     - File `src/lib/__tests__/plan-progress.prop.test.ts`, tagged, ≥100 iterations
     - **Validates: Requirements 4.8, 9.1, 9.2, 9.3, 9.6**
 
-- [ ] 6. composer-validate pure module
-  - [ ] 6.1 Implement `validateMessage`
+- [x] 6. composer-validate pure module
+  - [x] 6.1 Implement `validateMessage`
     - Add `src/lib/composer-validate.ts` accepting iff trimmed length is in [1, 10000]
     - _Requirements: 4.9, 4.13_
   - [ ]* 6.2 Write property test for message validation
@@ -88,8 +113,8 @@ Verification (run in `apps/frontend`): `npm run typecheck`, `npm run lint`, `npm
     - File `src/lib/__tests__/composer-validate.prop.test.ts`, tagged, ≥100 iterations
     - **Validates: Requirements 4.9, 4.13**
 
-- [ ] 7. context-usage pure module
-  - [ ] 7.1 Implement context-usage computation
+- [x] 7. context-usage pure module
+  - [x] 7.1 Implement context-usage computation
     - Add `src/lib/context-usage.ts` returning ratio `consumed/limit` clamped to [0,1], percent in
       [0,100], warning active iff ratio ≥ 0.9
     - _Requirements: 4.12, 4.15_
@@ -98,8 +123,8 @@ Verification (run in `apps/frontend`): `npm run typecheck`, `npm run lint`, `npm
     - File `src/lib/__tests__/context-usage.prop.test.ts`, tagged, ≥100 iterations
     - **Validates: Requirements 4.12, 4.15**
 
-- [ ] 8. session-query pure module
-  - [ ] 8.1 Implement session selectors and mutations
+- [x] 8. session-query pure module
+  - [x] 8.1 Implement session selectors and mutations
     - Add `src/lib/session-query.ts` with `groupSessions`, `matchesSearch`, `sortSessions`,
       `filterSortSearch`, stat-card selectors, `tabCounts`, pin toggle, and delete
     - _Requirements: 2.2, 2.3, 2.4, 2.5, 2.6, 2.7, 2.8, 2.11, 2.12_
@@ -126,8 +151,8 @@ Verification (run in `apps/frontend`): `npm run typecheck`, `npm run lint`, `npm
     - **Property 19: Session deletion removes only the target**
     - **Validates: Requirements 2.12**
 
-- [ ] 9. diff-utils extension
-  - [ ] 9.1 Extend diff-utils for review logic
+- [x] 9. diff-utils extension
+  - [x] 9.1 Extend diff-utils for review logic
     - Extend `src/lib/diff-utils.ts` with line classification (`add`/`del`/context), `reviewSummary`,
       `clampIndex` navigation, per-file apply/undo set operations, and applied-id persistence helpers
     - Preserve existing `diff-utils.test.ts` behavior
@@ -149,8 +174,8 @@ Verification (run in `apps/frontend`): `npm run typecheck`, `npm run lint`, `npm
     - **Property 24: Applied-patch persistence round-trips**
     - **Validates: Requirements 10.6**
 
-- [ ] 10. layout pure module
-  - [ ] 10.1 Implement layout helpers
+- [x] 10. layout pure module
+  - [x] 10.1 Implement layout helpers
     - Add `src/lib/layout.ts` with `togglePanel`, `clampSize` (Explorer/Agent 180–600px; dock
       120px–80% window), and `sanitizeLayout`/persist/load round-trip helpers
     - _Requirements: 12.1, 12.2, 12.3, 12.4, 12.7, 12.8_
@@ -165,8 +190,8 @@ Verification (run in `apps/frontend`): `npm run typecheck`, `npm run lint`, `npm
     - **Property 28: Layout persistence round-trips sizes and visibility**
     - **Validates: Requirements 12.4, 12.8**
 
-- [ ] 11. run-machine pure module
-  - [ ] 11.1 Implement run lifecycle reducer
+- [x] 11. run-machine pure module
+  - [x] 11.1 Implement run lifecycle reducer
     - Add `src/lib/run-machine.ts` with `runReducer` (start/pause/resume/stop/done/error/stream-lost),
       `controlAvailability(phase)`, and queued-message release logic; clears `runId` on terminal states
     - _Requirements: 7.1, 7.5, 7.6, 7.7, 7.8, 7.9, 7.10, 4.11, 4.14_
@@ -184,8 +209,8 @@ Verification (run in `apps/frontend`): `npm run typecheck`, `npm run lint`, `npm
     - **Property 11: Queued message releases exactly once on terminal transition**
     - **Validates: Requirements 4.11, 4.14**
 
-- [ ] 12. event-ingest pure module
-  - [ ] 12.1 Implement event ingestion and ordering
+- [x] 12. event-ingest pure module
+  - [x] 12.1 Implement event ingestion and ordering
     - Add `src/lib/event-ingest.ts` with `decideIngest` (stale/stopped/buffer/apply), `orderEvents`
       + id-upsert (ascending `seq`), isolated plan-step status update, and checkpoint/timeline
       ordering by creation time
@@ -204,8 +229,8 @@ Verification (run in `apps/frontend`): `npm run typecheck`, `npm run lint`, `npm
     - **Property 25: Checkpoint/timeline ordering is by creation time**
     - **Validates: Requirements 11.1**
 
-- [ ] 13. reconnect pure module
-  - [ ] 13.1 Implement reconnection policy
+- [x] 13. reconnect pure module
+  - [x] 13.1 Implement reconnection policy
     - Add `src/lib/reconnect.ts` with `nextReconnect` returning `resubscribe`
       (`sinceSeq = highestSeq`, `attempt = attempts + 1`) while `attempts < 5` and `give-up` at 5
     - _Requirements: 7.4, 8.6, 8.9_
@@ -217,7 +242,7 @@ Verification (run in `apps/frontend`): `npm run typecheck`, `npm run lint`, `npm
     - **Property 7: Reconnection is bounded to five attempts**
     - **Validates: Requirements 8.9**
 
-- [ ] 14. Checkpoint - Pure modules complete
+- [x] 14. Checkpoint - Pure modules complete
   - Ensure all tests pass, ask the user if questions arise.
 
 - [ ] 15. Run slice store migration

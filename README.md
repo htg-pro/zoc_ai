@@ -1,4 +1,4 @@
-# Llama Studio
+# Zoc AI
 
 Local-first agentic coding desktop app — llama.cpp-powered, shipped as a
 Tauri v2 binary with a bundled FastAPI sidecar.
@@ -202,6 +202,12 @@ and host signed update manifests at that endpoint. See
   loopback URLs.
 - **Schema drift CI failure** — edit Pydantic models, run
   `pnpm schema:generate`, commit both Python and TS sides.
+- **App ships stale code after a rebuild** — the Tauri bundle ships the Python
+  sidecar and hotpath as prebuilt `externalBin`s. `beforeBuildCommand` runs
+  `scripts/prepare_tauri_build.sh` to rebuild the frontend **and** regenerate
+  those binaries on every `tauri build`, so a direct build can't ship an old
+  sidecar. If you bundle the sidecar yourself first, set
+  `LLAMA_STUDIO_SKIP_PREPARE=1` to skip the (slow) re-bundle.
 
 ## Conventions
 
@@ -210,6 +216,13 @@ and host signed update manifests at that endpoint. See
 - **No silent fallbacks.** If a piece can't start, fail loudly with a clear
   error.
 
-See [`CHANGELOG.md`](./CHANGELOG.md) for release history.
+## Developer docs
 
-glpat-U452Q5ioK1gbxZ0iHRhr_2M6MQpvOjEKdTpuOTlweg8.01.171w20x6s
+In-depth guides for working on the agent internals live in [`doc/dev/`](./doc/dev/):
+
+- [`doc/dev/README.md`](./doc/dev/README.md) — orientation, where things live, conventions, gotchas.
+- [`doc/dev/agent-run-flow.md`](./doc/dev/agent-run-flow.md) — the agent run + isolation/apply/discard lifecycle and SSE events.
+- [`doc/dev/frontend-agent-panel.md`](./doc/dev/frontend-agent-panel.md) — frontend store, pure modules, and agent UI.
+- [`doc/dev/testing.md`](./doc/dev/testing.md) — running and writing tests across all three languages.
+
+See [`CHANGELOG.md`](./CHANGELOG.md) for release history.

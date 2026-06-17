@@ -4,7 +4,7 @@ version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
-description = "Hot-path Rust crate for Llama Studio: PTY, fs watch, search, and code indexer."
+description = "Hot-path Rust crate for Zoc AI: PTY, fs watch, search, and code indexer."
 
 [lib]
 name = "llama_studio_hotpath"

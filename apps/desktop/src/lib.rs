@@ -3,9 +3,12 @@
 //! patch application, workspace onboarding, telemetry), and forwards FS
 //! watcher + sidecar status events on `fs://changed` / `agent://status`.
 
+mod checks;
 mod fs_commands;
+mod git;
 mod llama_server;
 mod patch;
+mod search_commands;
 mod secrets;
 mod sidecar;
 mod workspace;
@@ -90,6 +93,33 @@ pub fn run() {
             fs_commands::fs_write_text,
             fs_commands::fs_watch_start,
             fs_commands::fs_watch_stop,
+            fs_commands::fs_stat,
+            fs_commands::fs_create_file,
+            fs_commands::fs_create_dir,
+            fs_commands::fs_rename,
+            fs_commands::fs_move,
+            fs_commands::fs_delete,
+            fs_commands::fs_duplicate,
+            fs_commands::fs_reveal,
+            search_commands::fs_search,
+            search_commands::fs_replace_preview,
+            search_commands::fs_replace_apply,
+            git::git_status,
+            git::git_diff,
+            git::git_stage,
+            git::git_unstage,
+            git::git_discard,
+            git::git_commit,
+            git::git_branches,
+            git::git_checkout,
+            git::git_create_branch,
+            git::git_pull,
+            git::git_push,
+            git::git_log,
+            git::git_conflicts,
+            git::git_blame,
+            checks::run_check,
+            checks::run_task,
             patch::apply_patch,
             workspace::desktop_config_get,
             workspace::desktop_config_set,

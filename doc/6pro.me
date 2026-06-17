@@ -1,4 +1,4 @@
-# Llama Studio — 6-Month Implementation Prompts
+# Zoc AI — 6-Month Implementation Prompts
 
 > Companion to `doc/6plans.me`.
 > Each section is a **ready-to-paste prompt** you can hand to an AI coding agent (or a human engineer) to implement one month of the plan.
@@ -9,7 +9,7 @@
 ## PROMPT 1 — Month 1: CI Distribution & Signed Installers
 
 **Context.**
-Llama Studio v2.0.0 already ships a release pipeline (`scripts/release.sh`, `scripts/make_zip.sh`, `scripts/verify_zip.py`) that fails-hard when installers are missing. `.github/workflows/release.yml` runs the matrix on Ubuntu/macOS/Windows and uploads installers + the combined zip on tagged pushes. Auto-update is scaffolded in `apps/desktop/tauri.conf.json` but disabled.
+Zoc AI v2.0.0 already ships a release pipeline (`scripts/release.sh`, `scripts/make_zip.sh`, `scripts/verify_zip.py`) that fails-hard when installers are missing. `.github/workflows/release.yml` runs the matrix on Ubuntu/macOS/Windows and uploads installers + the combined zip on tagged pushes. Auto-update is scaffolded in `apps/desktop/tauri.conf.json` but disabled.
 
 **Goal.**
 Make every tagged release produce **signed, notarized, auto-updating** installers for Linux (x86_64 + arm64), macOS (Intel + Apple Silicon), and Windows (x64) — fully automated, zero manual steps.
@@ -214,7 +214,7 @@ Make it natural to share context, with privacy-preserving primitives.
    - Schema: `model`, `provider`, `allowed_tools[]`, `slash_commands_dir`, `ignore_patterns[]`, `embedding_model`.
    - Loader merges into the user's settings on workspace open with a "Use team defaults?" prompt.
 3. **Pair mode (experimental, flag-gated)**:
-   - WebRTC data channel between two Llama Studio instances on the same LAN (mDNS discovery).
+   - WebRTC data channel between two Zoc AI instances on the same LAN (mDNS discovery).
    - Sync: chat messages, agent tool calls (read-only on the receiver), cursor position in the editor.
    - End-to-end encrypted with a shared 6-word passphrase exchanged out-of-band.
    - Behind a `Settings → Experimental → Pair mode` toggle.
@@ -223,7 +223,7 @@ Make it natural to share context, with privacy-preserving primitives.
    - "Import PR into review" command palette action: paste a PR URL, get the full diff loaded into the review panel.
    - PAT stored in keyring; no OAuth flow yet.
 5. **Read-only editor adapter**:
-   - New `apps/vscode-extension/` (TypeScript, basic VSC extension): connects to a running Llama Studio sidecar via the loopback port, displays the agent chat in a side panel.
+   - New `apps/vscode-extension/` (TypeScript, basic VSC extension): connects to a running Zoc AI sidecar via the loopback port, displays the agent chat in a side panel.
    - Same for JetBrains via a minimal Kotlin plugin in `apps/jetbrains-plugin/`.
    - Both are read-only (no tool execution from inside the host editor — for safety).
 

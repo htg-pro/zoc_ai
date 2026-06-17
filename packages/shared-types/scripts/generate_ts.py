@@ -55,7 +55,18 @@ def format_ts_type(schema: dict[str, Any], required: bool = True) -> str:
     if "$ref" in schema:
         ref_name = schema["$ref"].split("/")[-1]
         return ref_name if required else f"{ref_name} | null"
-    
+
+    # Handle const / enum (e.g. multi-value Literal discriminators like
+    # `type: Literal["run.started", "run.applied", ...]`). Pydantic emits a
+    # single-value Literal as {"const": v} and multi-value as {"enum": [...]}.
+    if "const" in schema:
+        cv = schema["const"]
+        return f'"{cv}"' if isinstance(cv, str) else str(cv)
+    if "enum" in schema:
+        parts = [f'"{v}"' if isinstance(v, str) else str(v) for v in schema["enum"]]
+        union = " | ".join(parts) if parts else "never"
+        return f"({union}) | null" if not required else union
+
     # Handle anyOf (unions)
     if "anyOf" in schema:
         types = [format_ts_type(s, required=True) for s in schema["anyOf"]]
@@ -225,24 +236,25 @@ def generate_interface_ts(name: str, model_class: type) -> str:
 
 def generate_discriminated_union_ts(name: str, union_type: Any) -> str:
     """Generate TypeScript discriminated union type."""
+    import types as _types
     from typing import Union
-    
+
     args = get_args(union_type)
     if not args:
         return f"export type {name} = unknown;\n"
-    
+
     # First arg is the Union type, second is the Field metadata
     union_arg = args[0]
-    
-    # Check if it's actually a Union
-    if get_origin(union_arg) is Union:
+
+    # Accept both `typing.Union[...]` and PEP 604 `A | B` (types.UnionType).
+    if get_origin(union_arg) in (Union, getattr(_types, "UnionType", Union)):
         # Get the types from the Union
         union_types = get_args(union_arg)
-        type_names = [t.__name__ for t in union_types if hasattr(t, '__name__')]
-        
+        type_names = [t.__name__ for t in union_types if hasattr(t, "__name__")]
+
         if type_names:
             return f"export type {name} =\n  | " + "\n  | ".join(type_names) + ";\n"
-    
+
     return f"export type {name} = unknown;\n"
 
 
@@ -252,7 +264,7 @@ def generate_typescript() -> str:
     # Header
     lines = [
         "/**",
-        " * Shared TypeScript types for Llama Studio.",
+        " * Shared TypeScript types for Zoc AI.",
         " *",
         " * AUTO-GENERATED from Python Pydantic models.",
         " * DO NOT EDIT MANUALLY - changes will be overwritten.",

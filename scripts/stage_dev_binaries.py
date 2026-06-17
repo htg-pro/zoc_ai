@@ -13,11 +13,12 @@ This script provisions both required binaries for the host triple:
 * ``llama-studio-agent``   — bundled from the FastAPI sidecar via PyInstaller
   (delegated to ``bundle_sidecar.py``).
 
-It is idempotent: if a binary already exists it is left untouched so repeated
-``make dev`` runs stay fast. The check is existence-based, not freshness-based,
-so after changing sidecar/hotpath source you must delete the staged file (or run
-``make clean``) to force a rebuild. Missing toolchains (cargo / PyInstaller)
-produce a clear warning and a non-zero exit instead of a cryptic Tauri error.
+It is **freshness-aware**: a staged binary is rebuilt whenever its source tree
+is newer than the staged file (or the file is missing). This means editing the
+sidecar (``services/agent``) or hotpath (``crates/hotpath``) source and re-running
+``make dev`` picks up your changes automatically — no more stale binaries.
+Missing toolchains (cargo / PyInstaller) produce a clear warning and a non-zero
+exit instead of a cryptic Tauri error.
 """
 
 from __future__ import annotations
@@ -34,17 +35,48 @@ from bundle_sidecar import _detect_triple  # reuse triple detection
 ROOT = Path(__file__).resolve().parent.parent
 BIN_OUT = ROOT / "apps" / "desktop" / "binaries"
 HOTPATH_CRATE = "llama-studio-hotpath"
+HOTPATH_SRC = ROOT / "crates" / "hotpath"
+AGENT_SRC = ROOT / "services" / "agent" / "src"
+SHARED_SRC = ROOT / "packages" / "shared-types" / "python"
 
 
 def _exe_suffix() -> str:
     return ".exe" if platform.system().lower() == "windows" else ""
 
 
+def _newest_mtime(*roots: Path) -> float:
+    """Newest modification time across the given files/directories (0 if none)."""
+    newest = 0.0
+    for root in roots:
+        if not root.exists():
+            continue
+        if root.is_file():
+            with contextlib.suppress(OSError):
+                newest = max(newest, root.stat().st_mtime)
+            continue
+        for p in root.rglob("*"):
+            if p.is_file() and "__pycache__" not in p.parts:
+                with contextlib.suppress(OSError):
+                    newest = max(newest, p.stat().st_mtime)
+    return newest
+
+
+def _is_stale(target: Path, *source_roots: Path) -> bool:
+    """True if the staged binary is missing or older than any source file."""
+    if not target.exists():
+        return True
+    try:
+        target_mtime = target.stat().st_mtime
+    except OSError:
+        return True
+    return _newest_mtime(*source_roots) > target_mtime
+
+
 def _stage_hotpath(triple: str) -> int:
     suffix = _exe_suffix()
     target = BIN_OUT / f"{HOTPATH_CRATE}-{triple}{suffix}"
-    if target.exists():
-        print(f"==> hotpath already staged: {target.relative_to(ROOT)}")
+    if not _is_stale(target, HOTPATH_SRC / "src", HOTPATH_SRC / "Cargo.toml"):
+        print(f"==> hotpath up to date: {target.relative_to(ROOT)}")
         return 0
 
     if shutil.which("cargo") is None:
@@ -55,7 +87,7 @@ def _stage_hotpath(triple: str) -> int:
         )
         return 1
 
-    print(f"==> Building {HOTPATH_CRATE} (release)")
+    print(f"==> Building {HOTPATH_CRATE} (source changed or missing)")
     subprocess.check_call(
         ["cargo", "build", "--release", "-p", HOTPATH_CRATE], cwd=str(ROOT)
     )
@@ -75,11 +107,11 @@ def _stage_hotpath(triple: str) -> int:
 def _stage_agent(triple: str) -> int:
     suffix = _exe_suffix()
     target = BIN_OUT / f"llama-studio-agent-{triple}{suffix}"
-    if target.exists():
-        print(f"==> agent sidecar already staged: {target.relative_to(ROOT)}")
+    if not _is_stale(target, AGENT_SRC, SHARED_SRC):
+        print(f"==> agent sidecar up to date: {target.relative_to(ROOT)}")
         return 0
 
-    print("==> Bundling agent sidecar (PyInstaller)")
+    print("==> Bundling agent sidecar (source changed or missing)")
     return subprocess.call([sys.executable, str(ROOT / "scripts" / "bundle_sidecar.py")])
 
 

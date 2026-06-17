@@ -194,6 +194,249 @@ export async function fsWriteText(path: string, content: string): Promise<boolea
   }
 }
 
+/** Mirrors Rust `fs_commands::FileStat`. */
+export interface FileStat {
+  exists: boolean;
+  is_dir: boolean;
+  is_file: boolean;
+  size: number;
+  modified_ms: number | null;
+}
+
+export async function fsStat(path: string): Promise<FileStat | null> {
+  return callOrNull<FileStat>("fs_stat", { path });
+}
+
+/** Create an empty file. Throws (with the Rust error string) on failure or
+ *  outside the desktop runtime. Returns the created absolute path. */
+export async function fsCreateFile(path: string): Promise<string> {
+  return callOrThrow<string>("fs_create_file", { path });
+}
+
+export async function fsCreateDir(path: string): Promise<string> {
+  return callOrThrow<string>("fs_create_dir", { path });
+}
+
+export async function fsRename(from: string, to: string): Promise<string> {
+  return callOrThrow<string>("fs_rename", { from, to });
+}
+
+export async function fsMove(from: string, to: string): Promise<string> {
+  return callOrThrow<string>("fs_move", { from, to });
+}
+
+export async function fsDelete(path: string): Promise<void> {
+  await callOrThrow<void>("fs_delete", { path });
+}
+
+/** Duplicate a file/dir to a "… copy" sibling. Returns the new absolute path. */
+export async function fsDuplicate(path: string): Promise<string> {
+  return callOrThrow<string>("fs_duplicate", { path });
+}
+
+/** Reveal a path in the OS file manager (best-effort). */
+export async function fsReveal(path: string): Promise<void> {
+  await callOrThrow<void>("fs_reveal", { path });
+}
+
+// ── Workspace text search & replace (Phase 3) ─────────────────────────────
+// Field names are snake_case to match the Rust `SearchOptions`/`ReplaceOptions`.
+
+export interface SearchOptions {
+  query: string;
+  is_regex: boolean;
+  case_sensitive: boolean;
+  whole_word: boolean;
+  includes: string[];
+  excludes: string[];
+  use_gitignore: boolean;
+  max_results?: number;
+}
+
+export interface SearchLineMatch {
+  line: number;
+  column: number;
+  start: number;
+  end: number;
+  text: string;
+}
+
+export interface SearchFileMatches {
+  file: string;
+  matches: SearchLineMatch[];
+}
+
+export interface SearchResults {
+  files: SearchFileMatches[];
+  total: number;
+  truncated: boolean;
+}
+
+export interface ReplaceOptions extends SearchOptions {
+  replacement: string;
+  paths?: string[] | null;
+}
+
+export interface LinePreview {
+  line: number;
+  before: string;
+  after: string;
+}
+
+export interface FileReplace {
+  file: string;
+  replacements: number;
+  previews: LinePreview[];
+}
+
+export interface ReplacedFile {
+  file: string;
+  replacements: number;
+  original: string;
+}
+
+export interface ReplaceSummary {
+  files: ReplacedFile[];
+  total_replacements: number;
+}
+
+export async function fsSearch(options: SearchOptions): Promise<SearchResults | null> {
+  return callOrNull<SearchResults>("fs_search", { options });
+}
+
+export async function fsReplacePreview(options: ReplaceOptions): Promise<FileReplace[] | null> {
+  return callOrNull<FileReplace[]>("fs_replace_preview", { options });
+}
+
+export async function fsReplaceApply(options: ReplaceOptions): Promise<ReplaceSummary> {
+  return callOrThrow<ReplaceSummary>("fs_replace_apply", { options });
+}
+
+// ── Source control (Phase 4) ──────────────────────────────────────────────
+
+export interface GitEntry {
+  path: string;
+  x: string;
+  y: string;
+  label: string;
+}
+
+export interface GitStatus {
+  is_repo: boolean;
+  branch: string | null;
+  upstream: string | null;
+  ahead: number;
+  behind: number;
+  staged: GitEntry[];
+  unstaged: GitEntry[];
+  untracked: GitEntry[];
+  conflicts: GitEntry[];
+}
+
+export interface GitBranchInfo {
+  name: string;
+  current: boolean;
+}
+
+export interface GitCommit {
+  hash: string;
+  short: string;
+  author: string;
+  email: string;
+  timestamp: number;
+  subject: string;
+}
+
+export interface BlameLine {
+  line: number;
+  sha: string;
+  author: string;
+  summary: string;
+}
+
+export async function gitStatus(): Promise<GitStatus | null> {
+  return callOrNull<GitStatus>("git_status", {});
+}
+
+export async function gitDiff(path: string, staged: boolean): Promise<string> {
+  return (await callOrNull<string>("git_diff", { path, staged })) ?? "";
+}
+
+export async function gitStage(paths: string[]): Promise<void> {
+  await callOrThrow<void>("git_stage", { paths });
+}
+
+export async function gitUnstage(paths: string[]): Promise<void> {
+  await callOrThrow<void>("git_unstage", { paths });
+}
+
+export async function gitDiscard(paths: string[]): Promise<void> {
+  await callOrThrow<void>("git_discard", { paths });
+}
+
+export async function gitCommit(message: string): Promise<string> {
+  return callOrThrow<string>("git_commit", { message });
+}
+
+export async function gitBranches(): Promise<GitBranchInfo[]> {
+  return (await callOrNull<GitBranchInfo[]>("git_branches", {})) ?? [];
+}
+
+export async function gitCheckout(branch: string): Promise<void> {
+  await callOrThrow<void>("git_checkout", { branch });
+}
+
+export async function gitCreateBranch(name: string): Promise<void> {
+  await callOrThrow<void>("git_create_branch", { name });
+}
+
+export async function gitPull(): Promise<string> {
+  return callOrThrow<string>("git_pull", {});
+}
+
+export async function gitPush(): Promise<string> {
+  return callOrThrow<string>("git_push", {});
+}
+
+export async function gitLog(limit?: number): Promise<GitCommit[]> {
+  return (await callOrNull<GitCommit[]>("git_log", { limit })) ?? [];
+}
+
+export async function gitConflicts(): Promise<string[]> {
+  return (await callOrNull<string[]>("git_conflicts", {})) ?? [];
+}
+
+export async function gitBlame(path: string): Promise<BlameLine[]> {
+  return (await callOrNull<BlameLine[]>("git_blame", { path })) ?? [];
+}
+
+// ── Validation checks (Phase 5) ───────────────────────────────────────────
+
+export interface CheckResult {
+  kind: string;
+  stdout: string;
+  stderr: string;
+  code: number;
+}
+
+export async function runCheck(kind: string, cwd?: string): Promise<CheckResult | null> {
+  return callOrNull<CheckResult>("run_check", { kind, cwd });
+}
+
+export interface TaskRunResult {
+  stdout: string;
+  stderr: string;
+  code: number;
+}
+
+export async function runTaskCommand(
+  command: string,
+  args: string[],
+  cwd?: string | null,
+): Promise<TaskRunResult | null> {
+  return callOrNull<TaskRunResult>("run_task", { command, args, cwd: cwd ?? undefined });
+}
+
 export async function fsWatchStart(root: string): Promise<boolean> {
   const b = await bindings();
   if (!b) return false;

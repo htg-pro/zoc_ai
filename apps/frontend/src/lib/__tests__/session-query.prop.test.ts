@@ -12,6 +12,7 @@ import {
   deserializePinned,
   filterSortSearch,
   groupSessions,
+  localDayIndex,
   matchesFilter,
   matchesSearch,
   serializePinned,
@@ -38,7 +39,7 @@ describe("session-query", () => {
   it("Property 1: grouping is total and pin-aware", () => {
     fc.assert(
       fc.property(arbWithPinned, ({ sessions, pinned }) => {
-        const g = groupSessions(sessions, pinned, NOW);
+        const g = groupSessions(sessions, pinned, NOW, 0);
 
         // Pinned bucket is exactly the pinned sessions.
         expect(g.pinned.every((s) => pinned.has(s.id))).toBe(true);
@@ -176,6 +177,112 @@ describe("session-query", () => {
         },
       ),
       { numRuns: 200 },
+    );
+  });
+});
+
+// Feature: chat-memory-session-system, Property 8: Day-bucketing consistent with display timezone
+// Validates: Requirements 3.1
+describe("session-query — Property 8: day-bucketing consistent with display timezone", () => {
+  const MS_PER_DAY = 86_400_000;
+
+  // Realistic display-timezone offsets in minutes (UTC-14 .. UTC+14).
+  const arbTzOffset = fc.integer({ min: -14 * 60, max: 14 * 60 });
+  // Any epoch ms within the bounded range used elsewhere (round-trips through ISO).
+  const arbEpochMs = fc.integer({ min: 0, max: 4_102_444_800_000 });
+  // A local calendar day index. min=1 keeps constructed epochs positive even
+  // after subtracting the largest negative-equivalent offset shift.
+  const arbDayIndex = fc.integer({ min: 1, max: 47_000 });
+  // An offset within a single local day, in ms.
+  const arbWithinDay = fc.integer({ min: 0, max: MS_PER_DAY - 1 });
+
+  // Build the ISO timestamp whose local day (under `off`) is exactly `day`,
+  // shifted `withinDay` ms into that day.
+  const isoForLocalDay = (day: number, off: number, withinDay: number): string =>
+    new Date(day * MS_PER_DAY + off * 60_000 + withinDay).toISOString();
+
+  it("localDayIndex is deterministic (equal inputs yield equal outputs)", () => {
+    fc.assert(
+      fc.property(arbEpochMs, arbTzOffset, (ms, off) => {
+        const iso = new Date(ms).toISOString();
+        expect(localDayIndex(iso, off)).toBe(localDayIndex(iso, off));
+      }),
+      { numRuns: 300 },
+    );
+  });
+
+  it("two timestamps within the same local day share an index", () => {
+    fc.assert(
+      fc.property(
+        arbDayIndex,
+        arbTzOffset,
+        arbWithinDay,
+        arbWithinDay,
+        (day, off, a, b) => {
+          const iso1 = isoForLocalDay(day, off, a);
+          const iso2 = isoForLocalDay(day, off, b);
+          // Both land on the intended local day, hence share an index.
+          expect(localDayIndex(iso1, off)).toBe(day);
+          expect(localDayIndex(iso2, off)).toBe(day);
+          expect(localDayIndex(iso1, off)).toBe(localDayIndex(iso2, off));
+        },
+      ),
+      { numRuns: 300 },
+    );
+  });
+
+  it("consecutive local days differ by exactly 1", () => {
+    fc.assert(
+      fc.property(arbDayIndex, arbTzOffset, arbWithinDay, (day, off, within) => {
+        const isoToday = isoForLocalDay(day, off, within);
+        const isoNext = isoForLocalDay(day + 1, off, within);
+        expect(localDayIndex(isoNext, off) - localDayIndex(isoToday, off)).toBe(1);
+      }),
+      { numRuns: 300 },
+    );
+  });
+
+  it("local midnight is the first instant of its day; one ms earlier is the prior day", () => {
+    fc.assert(
+      fc.property(arbDayIndex, arbTzOffset, (day, off) => {
+        const midnight = isoForLocalDay(day, off, 0);
+        const justBefore = new Date(
+          day * MS_PER_DAY + off * 60_000 - 1,
+        ).toISOString();
+        expect(localDayIndex(midnight, off)).toBe(day);
+        expect(localDayIndex(justBefore, off)).toBe(day - 1);
+      }),
+      { numRuns: 300 },
+    );
+  });
+
+  it("every non-pinned session lands in exactly one labeled bucket, consistent with localDayIndex and now", () => {
+    fc.assert(
+      fc.property(arbWithPinned, arbTzOffset, ({ sessions, pinned }, off) => {
+        const g = groupSessions(sessions, pinned, NOW, off);
+        const nowDay = Math.floor((NOW - off * 60_000) / MS_PER_DAY);
+        const nonPinned = sessions.filter((s) => !pinned.has(s.id));
+
+        for (const s of nonPinned) {
+          const inToday = g.today.includes(s);
+          const inYesterday = g.yesterday.includes(s);
+          const inEarlier = g.earlier.includes(s);
+          // Exactly one labeled bucket.
+          expect([inToday, inYesterday, inEarlier].filter(Boolean).length).toBe(1);
+
+          // Bucket choice agrees with localDayIndex relative to now.
+          const day = localDayIndex(s.updated_at, off);
+          if (day === nowDay) expect(inToday).toBe(true);
+          else if (day === nowDay - 1) expect(inYesterday).toBe(true);
+          else expect(inEarlier).toBe(true);
+        }
+
+        // The three labeled buckets partition the non-pinned sessions.
+        expect(g.today.length + g.yesterday.length + g.earlier.length).toBe(
+          nonPinned.length,
+        );
+      }),
+      { numRuns: 300 },
     );
   });
 });

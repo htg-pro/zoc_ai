@@ -11,9 +11,11 @@ import {
   __cachedPort,
   __resetAgentClient,
   __resetLastSeq,
+  __setLastSeq,
   getAgentClient,
   makeAgentClient,
 } from "@/lib/agent-client";
+import { advance, initialCursor, subscribeCursor } from "@/lib/seq-cursor";
 import type { AgentEvent } from "@llama-studio/shared-types";
 
 interface Captured {
@@ -65,9 +67,6 @@ beforeEach(() => {
     if (url.endsWith("/v1/terminal/t1/input")) return mockJson({ ok: true });
     if (url.endsWith("/v1/terminal/t1/resize")) return mockJson({ ok: true });
     if (url.endsWith("/v1/terminal/t1/stop")) return mockJson({ id: "t1", status: "exited" });
-    if (url.endsWith("/v1/sessions/s1/replit/plans/p1/revise")) return mockJson({ id: "p2", session_id: "s1", title: "revised", summary: "s", status: "draft", tasks: [], created_at: "t", updated_at: "t" });
-    if (url.endsWith("/v1/sessions/s1/replit/tasks/t1/queue")) return mockJson({ id: "t1", session_id: "s1", title: "t", summary: "s", status: "queued", priority: "medium", depends_on: [], files_likely_changed: [], done_looks_like: [], test_plan: [], created_at: "t", updated_at: "t" });
-    if (url.endsWith("/v1/sessions/s1/replit/tasks/t1/ready")) return mockJson({ id: "t1", session_id: "s1", title: "t", summary: "s", status: "ready", priority: "medium", depends_on: [], files_likely_changed: [], done_looks_like: [], test_plan: [], diff: "d", test_output: "NO ERROR", created_at: "t", updated_at: "t" });
     return new Response("", { status: 404 });
   }) as unknown as typeof fetch;
 });
@@ -165,17 +164,6 @@ describe("agent-client", () => {
     expect(rebuildReq.init.method).toBe("POST");
   });
 
-  it("uses Replit workflow revision and readiness routes", async () => {
-    await c.reviseReplitPlan("s1", "p1", { prompt: "revise" });
-    await c.queueReplitTask("s1", "t1");
-    await c.markReplitTaskReady("s1", "t1");
-
-    const paths = captured.map((r) => r.url);
-    expect(paths).toContain("http://127.0.0.1:9999/v1/sessions/s1/replit/plans/p1/revise");
-    expect(paths).toContain("http://127.0.0.1:9999/v1/sessions/s1/replit/tasks/t1/queue");
-    expect(paths).toContain("http://127.0.0.1:9999/v1/sessions/s1/replit/tasks/t1/ready");
-  });
-
   it("throws on non-2xx with a useful message", async () => {
     await expect(c.getSession("nope")).rejects.toThrow(/http 404/);
   });
@@ -215,7 +203,7 @@ describe("agent-client", () => {
     }) as unknown as typeof fetch;
 
     const events: AgentEvent[] = [];
-    for await (const ev of c.runAgent("sX", { prompt: "hello", max_repair_attempts: 2 })) {
+    for await (const ev of c.runAgent("sX", { prompt: "hello", maxRepairAttempts: 2, mode: "agent" })) {
       events.push(ev);
     }
 
@@ -228,7 +216,11 @@ describe("agent-client", () => {
 
     const postReq = captured.find((r) => r.init.method === "POST");
     expect(postReq?.url).toBe("http://127.0.0.1:9999/v1/sessions/sX/agent/run");
-    expect(JSON.parse(postReq?.init.body as string)).toEqual({ prompt: "hello", max_repair_attempts: 2 });
+    expect(JSON.parse(postReq?.init.body as string)).toEqual({
+      prompt: "hello",
+      maxRepairAttempts: 2,
+      mode: "agent",
+    });
   });
 
   it("retries runAgent with a legacy prompt body when rich requests hit extra_forbidden", async () => {
@@ -351,5 +343,185 @@ describe("agent-client", () => {
       "http://127.0.0.1:9999/v1/sessions/sR/agent/approvals/c1/retry",
     );
     expect(JSON.parse(postReq?.init.body as string)).toEqual({});
+  });
+
+  it("reconnects without re-triggering after a mid-stream drop, resuming from the cursor", async () => {
+    __resetLastSeq("sD");
+    const enc = new TextEncoder();
+    // First connection yields seq 1, then the socket drops mid-stream. Using
+    // pull() (not a synchronous error in start) ensures the queued chunk is
+    // delivered before the error surfaces.
+    let pulls = 0;
+    const body1 = new ReadableStream<Uint8Array>({
+      pull(controller) {
+        pulls += 1;
+        if (pulls === 1) {
+          controller.enqueue(
+            enc.encode('data: {"type":"token","session_id":"sD","seq":1,"at":"t","delta":"a"}\n\n'),
+          );
+        } else {
+          controller.error(new Error("network drop"));
+        }
+      },
+    });
+    // Reconnect yields seq 2 then done.
+    const body2 = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(
+          enc.encode('data: {"type":"token","session_id":"sD","seq":2,"at":"t","delta":"b"}\n\n'),
+        );
+        controller.enqueue(
+          enc.encode('data: {"type":"done","session_id":"sD","seq":3,"at":"t","ok":true}\n\n'),
+        );
+        controller.close();
+      },
+    });
+    const sseBodies = [body1, body2];
+    const eventsReqs: string[] = [];
+    let postCount = 0;
+
+    global.fetch = vi.fn(async (input: RequestInfo | URL, init: RequestInit = {}) => {
+      const url = typeof input === "string" ? input : input.toString();
+      captured.push({ url, init });
+      if (url.includes("/agent/events")) {
+        eventsReqs.push(url);
+        return new Response(sseBodies.shift(), {
+          status: 200,
+          headers: { "content-type": "text/event-stream" },
+        });
+      }
+      if (url.endsWith("/v1/sessions/sD/agent/run")) {
+        postCount += 1;
+        return mockJson({ ok: true });
+      }
+      return new Response("", { status: 404 });
+    }) as unknown as typeof fetch;
+
+    const events: AgentEvent[] = [];
+    for await (const ev of c.runAgent("sD", { prompt: "hi", mode: "agent" })) {
+      events.push(ev);
+    }
+
+    // Events flowed across the reconnect boundary.
+    expect(events.map((e) => e.type)).toEqual(["token", "token", "done"]);
+    // The trigger fired exactly once — reconnect must NOT re-POST /run.
+    expect(postCount).toBe(1);
+    // Two subscriptions: the initial one and one reconnect, resuming after seq 1.
+    expect(eventsReqs).toHaveLength(2);
+    expect(eventsReqs[1]).toContain("since_seq=1");
+  });
+
+  it("resubscribes with since_seq equal to subscribeCursor(cursor) after events advance it", async () => {
+    __resetLastSeq("sC");
+    const enc = new TextEncoder();
+    // First run advances the cursor to seq 7; the second run must resubscribe
+    // from that floor (the highest applied seq), never replaying stale events.
+    const body1 = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(
+          enc.encode('data: {"type":"token","session_id":"sC","seq":3,"at":"t","delta":"a"}\n\n'),
+        );
+        controller.enqueue(
+          enc.encode('data: {"type":"token","session_id":"sC","seq":5,"at":"t","delta":"b"}\n\n'),
+        );
+        controller.enqueue(
+          enc.encode('data: {"type":"done","session_id":"sC","seq":7,"at":"t","ok":true}\n\n'),
+        );
+        controller.close();
+      },
+    });
+    const body2 = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(
+          enc.encode('data: {"type":"done","session_id":"sC","seq":8,"at":"t","ok":true}\n\n'),
+        );
+        controller.close();
+      },
+    });
+    const sseBodies = [body1, body2];
+    const eventsReqs: string[] = [];
+
+    global.fetch = vi.fn(async (input: RequestInfo | URL, init: RequestInit = {}) => {
+      const url = typeof input === "string" ? input : input.toString();
+      captured.push({ url, init });
+      if (url.includes("/agent/events")) {
+        eventsReqs.push(url);
+        return new Response(sseBodies.shift(), {
+          status: 200,
+          headers: { "content-type": "text/event-stream" },
+        });
+      }
+      if (url.endsWith("/v1/sessions/sC/agent/run")) {
+        return mockJson({ ok: true });
+      }
+      return new Response("", { status: 404 });
+    }) as unknown as typeof fetch;
+
+    // First run: starts at the empty floor, applies events up to seq 7.
+    const first: AgentEvent[] = [];
+    for await (const ev of c.runAgent("sC", { prompt: "hello", mode: "agent" })) {
+      first.push(ev);
+    }
+    expect(eventsReqs[0]).toContain("since_seq=0");
+
+    // Second run: resubscribe cursor must equal the highest applied seq (7),
+    // i.e. subscribeCursor of a cursor advanced by every applied event.
+    const second: AgentEvent[] = [];
+    for await (const ev of c.runAgent("sC", { prompt: "again", mode: "agent" })) {
+      second.push(ev);
+    }
+
+    const expectedCursor = [3, 5, 7].reduce(
+      (cursor, seq) => advance(cursor, seq),
+      initialCursor(),
+    );
+    expect(subscribeCursor(expectedCursor)).toBe(7);
+    expect(eventsReqs).toHaveLength(2);
+    expect(eventsReqs[1]).toContain(`since_seq=${subscribeCursor(expectedCursor)}`);
+    expect(eventsReqs[1]).toContain("since_seq=7");
+  });
+
+  it("preserves the seq floor on a new run start instead of replaying stale low-seq events", async () => {
+    __resetLastSeq("sF");
+    // Seed a floor as if a prior run had already advanced the cursor to seq 9.
+    __setLastSeq("sF", 9);
+    const enc = new TextEncoder();
+    const body = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(
+          enc.encode('data: {"type":"done","session_id":"sF","seq":10,"at":"t","ok":true}\n\n'),
+        );
+        controller.close();
+      },
+    });
+    const eventsReqs: string[] = [];
+
+    global.fetch = vi.fn(async (input: RequestInfo | URL, init: RequestInit = {}) => {
+      const url = typeof input === "string" ? input : input.toString();
+      captured.push({ url, init });
+      if (url.includes("/agent/events")) {
+        eventsReqs.push(url);
+        return new Response(body, {
+          status: 200,
+          headers: { "content-type": "text/event-stream" },
+        });
+      }
+      if (url.endsWith("/v1/sessions/sF/agent/run")) {
+        return mockJson({ ok: true });
+      }
+      return new Response("", { status: 404 });
+    }) as unknown as typeof fetch;
+
+    const events: AgentEvent[] = [];
+    for await (const ev of c.runAgent("sF", { prompt: "hi", mode: "agent" })) {
+      events.push(ev);
+    }
+
+    // Starting a fresh run does NOT reset since_seq to 0 — the floor (9) holds,
+    // so the backend won't replay stale events below it (R1.5).
+    const seededFloor = subscribeCursor(advance(initialCursor(), 9));
+    expect(seededFloor).toBe(9);
+    expect(eventsReqs[0]).toContain(`since_seq=${seededFloor}`);
+    expect(eventsReqs[0]).not.toContain("since_seq=0");
   });
 });

@@ -71,3 +71,74 @@ async def test_orchestrator_repair_after_failure(app_state, session, mock_provid
     statuses = [c.status.value for c in res.tool_calls]
     assert "failed" in statuses and "succeeded" in statuses
     assert res.repaired is True
+
+
+def _ask_config() -> OrchestratorConfig:
+    """Mirror the Ask-mode profile the /agent/run endpoint builds."""
+    return OrchestratorConfig(skip_planner=True, enable_todos=False, presentation_mode="ask")
+
+
+@pytest.mark.asyncio
+async def test_ask_mode_skips_planner_and_emits_no_plan(app_state, session, mock_provider):
+    # With skip_planner the first (and only) model reply is the direct answer —
+    # no planner JSON is consumed first.
+    mock_provider.queue(MockResponse(text="Hi! How can I help?"))
+    orch = _make_orch(app_state, session)
+    res = await orch.run(
+        session_id=session.id,
+        workspace_root=session.workspace_root,
+        prompt="hi",
+        config=_ask_config(),
+    )
+    assert res.final_text == "Hi! How can I help?"
+    assert res.plan is None
+    assert app_state.repo.get_plan(session.id) is None
+    types = {ev["type"] for ev in app_state.repo.list_events(session.id)}
+    assert "plan.created" not in types
+    assert "plan" not in types
+    assert "todo_update" not in types
+
+
+@pytest.mark.asyncio
+async def test_ask_mode_swallows_stray_todo_write(app_state, session, mock_provider):
+    # Even if a misbehaving model calls todo_write in Ask mode, no TodoUpdateEvent
+    # is emitted and the run still answers.
+    todo = ProviderToolCall(
+        id="t1", name="todo_write", arguments={"todos": [{"title": "x", "status": "pending"}]}
+    )
+    mock_provider.queue(
+        MockResponse(text="", tool_calls=[todo]),
+        MockResponse(text="Here is the answer."),
+    )
+    orch = _make_orch(app_state, session)
+    res = await orch.run(
+        session_id=session.id,
+        workspace_root=session.workspace_root,
+        prompt="explain",
+        config=_ask_config(),
+    )
+    assert res.final_text == "Here is the answer."
+    types = {ev["type"] for ev in app_state.repo.list_events(session.id)}
+    assert "todo_update" not in types
+
+
+@pytest.mark.asyncio
+async def test_agent_mode_still_plans_and_todos(app_state, session, mock_provider):
+    # The default (Agent) profile keeps the planner + to-do behavior intact.
+    todo = ProviderToolCall(
+        id="t1", name="todo_write", arguments={"todos": [{"title": "step", "status": "pending"}]}
+    )
+    mock_provider.queue(
+        MockResponse(text='{"goal": "do it", "steps": [{"title": "work"}]}'),
+        MockResponse(text="", tool_calls=[todo]),
+        MockResponse(text="done"),
+    )
+    orch = _make_orch(app_state, session)
+    res = await orch.run(
+        session_id=session.id,
+        workspace_root=session.workspace_root,
+        prompt="build something",
+    )
+    assert res.plan is not None and res.plan.goal == "do it"
+    types = {ev["type"] for ev in app_state.repo.list_events(session.id)}
+    assert "todo_update" in types

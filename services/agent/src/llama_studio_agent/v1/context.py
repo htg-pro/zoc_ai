@@ -1,86 +1,55 @@
-"""Context status endpoint with model recommendations."""
+"""Context search for the `@` mention picker — files, folders, and symbols."""
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends
-from shared_schema.models import ContextStatus, Session
+import contextlib
 
+from fastapi import APIRouter, Depends, Query
+from shared_schema.models import ContextCandidate, Session
+
+from ..agent.context_search import search_files
 from ..deps import get_session, get_state
 from ..state import AppState
-from ..v1.memory import memory_stats
 
 router = APIRouter(prefix="/sessions/{session_id}", tags=["context"])
 
 
-@router.get("/context-status", response_model=ContextStatus)
-def context_status(
+@router.get("/context/search", response_model=list[ContextCandidate])
+async def context_search(
+    q: str = Query(default=""),
+    limit: int = Query(default=25, ge=1, le=100),
     session: Session = Depends(get_session),
     state: AppState = Depends(get_state),
-) -> ContextStatus:
-    """Return extended context status with model recommendations.
+) -> list[ContextCandidate]:
+    root = session.workspace_root or ""
+    candidates: list[ContextCandidate] = [
+        ContextCandidate(
+            kind=item["kind"],  # type: ignore[arg-type]
+            label=str(item["label"]),
+            path=str(item["path"]),
+            detail=str(item["detail"]) if item.get("detail") else None,
+        )
+        for item in (search_files(root, q, limit=limit) if root else [])
+    ]
 
-    Includes:
-    - Current token usage and budget
-    - Model being used
-    - Recommended model (if context is getting tight)
-    - Whether the conversation can continue
-    - Whether compaction is available
-    """
-    # Get base memory stats
-    stats = memory_stats(session=session, state=state)
-    
-    # Calculate usage percentage
-    usage_percent = (
-        (stats.tokens_used / stats.context_window * 100)
-        if stats.context_window > 0
-        else 0.0
-    )
-    
-    # Determine if we can continue
-    # Can't continue if we're at >95% capacity and no summary exists
-    can_continue = usage_percent < 95 or stats.has_summary
-    
-    # Determine if compaction is available
-    # Compaction is available if we have dropped messages that haven't been summarized
-    compaction_available = stats.dropped_messages > 0 and not stats.has_summary
-    
-    # Model recommendation logic
-    recommended_model = None
-    current_model = session.model or state.settings.default_model
-    
-    if usage_percent > 80:
-        # Try to find a model with larger context window
-        provider_kind = session.provider or state.settings.default_provider
-        try:
-            provider, _ = state.providers.resolve(provider_kind, current_model)
-            available_models = provider.models()
-            
-            # Find models with larger context windows
-            current_window = stats.context_window
-            larger_models = [
-                m for m in available_models
-                if m.capability.context_window > current_window
-            ]
-            
-            # Sort by context window size and recommend the smallest that fits
-            if larger_models:
-                larger_models.sort(key=lambda m: m.capability.context_window)
-                recommended_model = larger_models[0].model_id
-        except Exception:
-            # Provider resolution failed, no recommendation
-            pass
-    
-    return ContextStatus(
-        context_window=stats.context_window,
-        tokens_used=stats.tokens_used,
-        tokens_available=stats.tokens_available,
-        messages_in_context=stats.messages_in_context,
-        total_messages=stats.total_messages,
-        dropped_messages=stats.dropped_messages,
-        has_summary=stats.has_summary,
-        model=current_model,
-        recommended_model=recommended_model,
-        can_continue=can_continue,
-        compaction_available=compaction_available,
-        usage_percent=round(usage_percent, 2),
-    )
+    # Best-effort code symbols from the index (semantic). Skipped silently when
+    # the indexer isn't ready or returns nothing.
+    if q.strip():
+        with contextlib.suppress(Exception):
+            indexer = state.indexer_for(session.id, session.workspace_root)
+            hits = await indexer.query(q, top_k=min(8, limit))
+            for hit in hits:
+                chunk = hit.chunk
+                snippet = (chunk.text or "").strip().splitlines()
+                label = snippet[0][:80] if snippet else chunk.file.rsplit("/", 1)[-1]
+                candidates.append(
+                    ContextCandidate(
+                        kind="symbol",
+                        label=label or chunk.file,
+                        path=chunk.file,
+                        detail=f"{chunk.file}:{chunk.start_line + 1}",
+                        line=chunk.start_line + 1,
+                    )
+                )
+
+    return candidates[:limit]

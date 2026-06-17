@@ -17,7 +17,7 @@ import {
   getProvidersSnapshot,
   subscribeProviders,
 } from "@/lib/providers";
-import { secureStore } from "@/lib/secure-store";
+import { secureStore, subscribeSecrets } from "@/lib/secure-store";
 import { useApp } from "@/lib/store";
 
 const LLAMACPP_PROVIDER = "llamacpp";
@@ -53,8 +53,13 @@ export function ModelPicker() {
     getProvidersSnapshot,
   );
 
-  // Track which cloud providers actually have an API key configured.
+  // Track which cloud providers actually have an API key configured. We re-read
+  // on three triggers so the badge is never stale: the provider list changes,
+  // a key is saved/cleared anywhere (subscribeSecrets), or the menu is opened.
   const [keyedProviders, setKeyedProviders] = useState<Record<string, boolean>>({});
+  const [secretsVersion, setSecretsVersion] = useState(0);
+  const [open, setOpen] = useState(false);
+  useEffect(() => subscribeSecrets(() => setSecretsVersion((v) => v + 1)), []);
   useEffect(() => {
     let cancelled = false;
     void (async () => {
@@ -72,7 +77,7 @@ export function ModelPicker() {
     return () => {
       cancelled = true;
     };
-  }, [cloudProviders]);
+  }, [cloudProviders, secretsVersion, open]);
 
   const builtinCurrent = cloudProviders
     .flatMap((p) => p.models)
@@ -100,7 +105,7 @@ export function ModelPicker() {
   const llamaError = isLocalSelection && !!llamaStatus?.last_error;
 
   return (
-    <DropdownMenu>
+    <DropdownMenu open={open} onOpenChange={setOpen}>
       <DropdownMenuTrigger asChild>
         <button
           type="button"

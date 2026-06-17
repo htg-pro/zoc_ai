@@ -61,7 +61,6 @@ describe("AgentPanel single workflow timeline", () => {
     };
     useApp.setState({
       agentItems: [todos],
-      loadReplitWorkflow: vi.fn(async () => {}),
     });
 
     render(
@@ -80,46 +79,6 @@ describe("AgentPanel single workflow timeline", () => {
     expect(screen.queryByText(/The agent timeline hit a render error/i)).not.toBeInTheDocument();
   });
 
-  it("does not render removed Task progress cards for task workflow items", async () => {
-    const task: AgentWorkflowItem = {
-      type: "task",
-      id: "task-inline",
-      createdAt: new Date().toISOString(),
-      task: {
-        id: "task-inline",
-        session_id: "s1",
-        plan_id: null,
-        title: "Inline task",
-        summary: "Task appears in the single conversation timeline.",
-        status: "queued",
-        priority: "medium",
-        depends_on: [],
-        files_likely_changed: ["src/App.tsx"],
-        done_looks_like: ["Timeline shows task progress"],
-        test_plan: ["pnpm typecheck"],
-        validation_attempts: 0,
-        created_at: new Date().toISOString(),
-        updated_at: new Date().toISOString(),
-      },
-    };
-    useApp.setState({
-      agentItems: [task],
-      replitTasks: [task.task],
-      selectedReplitTaskId: null,
-      replitTaskLogs: {},
-      loadReplitWorkflow: vi.fn(async () => {}),
-    });
-
-    render(
-      <TooltipProvider>
-        <AgentPanel />
-      </TooltipProvider>,
-    );
-
-    // Task progress cards were removed from the timeline in the redesign.
-    expect(screen.queryByText(/Task progress/i)).not.toBeInTheDocument();
-    expect(screen.queryByText(/The agent timeline hit a render error/i)).not.toBeInTheDocument();
-  });
 
   it("groups a run's to-do list and diff into one unified Agent run card", async () => {
     const todos: AgentWorkflowItem = {
@@ -143,7 +102,6 @@ describe("AgentPanel single workflow timeline", () => {
     useApp.setState({
       agentItems: [todos, diff],
       pendingPatches: [diff.type === "diff" ? diff.patch : (undefined as never)],
-      loadReplitWorkflow: vi.fn(async () => {}),
     });
 
     render(
@@ -157,5 +115,46 @@ describe("AgentPanel single workflow timeline", () => {
     expect(screen.getByText(/To-do/i)).toBeInTheDocument();
     expect(screen.getByText(/Add toggle component/i)).toBeInTheDocument();
     expect(screen.getByText(/ThemeToggle\.tsx/i)).toBeInTheDocument();
+  });
+
+  it("Ask mode renders a clean transcript and hides workflow cards even if present", async () => {
+    const now = new Date().toISOString();
+    const items: AgentWorkflowItem[] = [
+      { type: "user_message", id: "u1", text: "hi", createdAt: now },
+      {
+        type: "workspace_analysis",
+        id: "run-1-context",
+        summary: "Analyzed project",
+        files: [],
+        issues: [],
+        nextSteps: [],
+        status: "ready",
+        createdAt: now,
+      },
+      {
+        type: "todos",
+        id: "run-1-todos",
+        createdAt: now,
+        todos: [{ id: "1", content: "Respond to greeting", status: "completed" }],
+      },
+      { type: "agent_message", id: "a1", text: "Hello! How can I help?", createdAt: now },
+    ];
+    useApp.setState({ agentItems: items, agentMode: "ask" });
+
+    render(
+      <TooltipProvider>
+        <AgentPanel />
+      </TooltipProvider>,
+    );
+
+    // Header reflects Ask mode (subtitle is unique to the header).
+    expect(await screen.findByText(/Read-only answers/i)).toBeInTheDocument();
+    // The assistant answer is shown.
+    expect(screen.getByText(/Hello! How can I help\?/i)).toBeInTheDocument();
+    // Workflow cards are suppressed in Ask mode.
+    expect(screen.queryByText(/Agent run/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Workspace analysis/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Respond to greeting/i)).not.toBeInTheDocument();
+    useApp.setState({ agentMode: "agent" });
   });
 });

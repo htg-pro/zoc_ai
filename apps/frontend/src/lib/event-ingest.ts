@@ -3,13 +3,12 @@
  *
  * Pure logic that decides whether an incoming event is applied, buffered (while
  * paused), or discarded (duplicate/stale or after stop), plus the timeline
- * upsert-by-id/order-by-seq rule, isolated plan-step updates, tool-call status
- * labeling, and checkpoint ordering by creation time.
+ * upsert-by-id/order-by-seq rule, isolated plan-step updates, and tool-call
+ * status labeling.
  */
 import type {
   AgentEvent,
   PlanStep,
-  ReplitCheckpoint,
   ToolCallStatus,
 } from "@llama-studio/shared-types";
 
@@ -22,17 +21,35 @@ export interface IngestState {
   paused: boolean;
   /** True once the run's stream has been stopped/terminated (R8.8). */
   stopped: boolean;
+  /**
+   * The active backend run id; events tagged with a different `run_id` are
+   * stale cross-run replays and are discarded (R1.2). `null` means no run is
+   * bound yet, so the cross-run rule does not apply.
+   */
+  activeRunId: string | null;
 }
 
 /**
- * Decide how to handle an event of a given sequence number:
+ * Decide how to handle an incoming event:
+ *  - discard if the event carries a non-null `run_id` that differs from the
+ *    active run (cross-run stale replay) (R1.2),
  *  - discard if it is a duplicate/stale (`seq <= highestSeq`) (R8.7),
  *  - discard if the stream has been stopped (R8.8),
  *  - buffer if the run is paused (R7.3),
- *  - otherwise apply.
+ *  - otherwise apply (R1.7).
+ *
+ * The cross-run discard leaves `highestSeq`, `activeRunId`, and
+ * `boundMessageId` untouched at the caller.
  */
-export function decideIngest(seq: number, st: IngestState): IngestDecision {
-  if (seq <= st.highestSeq) return "discard";
+export function decideIngest(event: AgentEvent, st: IngestState): IngestDecision {
+  if (
+    event.run_id != null &&
+    st.activeRunId != null &&
+    event.run_id !== st.activeRunId
+  ) {
+    return "discard";
+  }
+  if (event.seq <= st.highestSeq) return "discard";
   if (st.stopped) return "discard";
   if (st.paused) return "buffer";
   return "apply";
@@ -120,20 +137,6 @@ export function applyPlanStep(steps: readonly PlanStep[], step: PlanStep): PlanS
   });
   if (!found) next.push(step);
   return next;
-}
-
-/** Order checkpoint entries by creation time, ties broken by id (R11.1, R32). */
-export function orderCheckpoints(
-  checkpoints: readonly ReplitCheckpoint[],
-): ReplitCheckpoint[] {
-  return checkpoints
-    .slice()
-    .sort((a, b) => {
-      const ta = Date.parse(a.created_at);
-      const tb = Date.parse(b.created_at);
-      if (ta !== tb) return ta - tb;
-      return a.id.localeCompare(b.id);
-    });
 }
 
 /**

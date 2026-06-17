@@ -146,6 +146,7 @@ from .memory import (
     tool_schemas_tokens,
 )
 from .planner import build_plan
+from .project_rules import load_project_rules
 from .recall import RecallConfig, RecallService, hits_as_chat_message_content
 from .summariser import (
     SummariserConfig,
@@ -354,10 +355,28 @@ def _aggregate_run_patches(tool_calls: list[ToolCall]) -> list[DiffPatch]:
     return list(by_path.values())
 
 
+# Ask mode system prompt: read-only Q&A. No planning, no to-do checklist, and
+# the model is told never to claim it changed files. The tool set is further
+# restricted to read/search tools at the endpoint (ASK_MODE_TOOLS).
+ASK_SYSTEM_PROMPT: str = (
+    "You are Zoc AI in Ask mode: a read-only coding assistant for the user's "
+    "current workspace. Answer the user's question directly and conversationally. "
+    "You may inspect the project with read/search tools (get_project_summary, "
+    "list_dir, read_file, grep_search, glob_files, get_git_status, get_git_diff) "
+    "when the question needs project context, but only when needed — a greeting or "
+    "general question needs no tools. "
+    "Do NOT create a plan. Do NOT create or update a to-do checklist. Do NOT claim "
+    "you changed, created, or deleted any files — Ask mode cannot modify the "
+    "workspace. If the request would require editing files or running commands, "
+    "briefly explain what you would do and tell the user to switch to Agent mode to "
+    "make the changes."
+)
+
+
 @dataclass(slots=True)
 class OrchestratorConfig:
     system_prompt: str = (
-        "You are Llama Studio, an autonomous agentic coding assistant running inside "
+        "You are Zoc AI, an autonomous agentic coding assistant running inside "
         "the user's current workspace. The workspace files are available through tools. "
         "Never ask the user to upload or provide project files when a workspace path is "
         "present. For project-specific questions, use workspace tools before answering. "
@@ -381,6 +400,14 @@ class OrchestratorConfig:
     max_repair_attempts: int = 2
     allowed_tools: tuple[str, ...] | None = None
     skip_planner: bool = False
+    # When False, the virtual `todo_write` tool is not exposed to the model and
+    # no to-do checklist events are emitted. Ask mode sets this False so a
+    # read-only Q&A never produces a plan/checklist (see ASK_SYSTEM_PROMPT).
+    enable_todos: bool = True
+    # Presentation hint carried end-to-end so the frontend can pick a render
+    # pipeline. "ask" => clean Q&A transcript; "agent"/"plan"/"debug" => full
+    # workflow timeline. Does not change orchestration on its own.
+    presentation_mode: str = "agent"
     # How long a tool call may sit suspended waiting for the user's
     # approval decision before it is treated as denied.
     approval_timeout: float = 300.0
@@ -441,6 +468,12 @@ class AgentOrchestrator:
         self.permissions = permissions
         self.approvals = approvals
         self.recall_service = recall_service
+        # The owning run id for the in-flight `run()`. Set at the start of
+        # `run()` from `workspace_context["run_id"]` and stamped onto every
+        # event by `_emit` so the frontend can correlate events to runs and
+        # discard events from a superseded run. Orthogonal to the per-session
+        # `seq` (which `EventBus.next_seq` remains the sole authority for).
+        self._run_id: str | None = None
 
     def _resolve_context_window(self) -> int | None:
         """Best-effort: ask the provider for the active model's context window."""
@@ -507,6 +540,12 @@ class AgentOrchestrator:
         record_prompt: bool = True,
     ) -> OrchestratorResult:
         cfg = config or OrchestratorConfig()
+        # Adopt the owning run id (minted in v1/agent_run.py and threaded
+        # through workspace_context) so every event emitted below carries it.
+        # Absent (e.g. the retry path) → events keep run_id=None and the
+        # frontend treats them as belonging to the active run (legacy).
+        run_id_ctx = (workspace_context or {}).get("run_id")
+        self._run_id = str(run_id_ctx) if run_id_ctx else None
         await self._emit(
             session_id,
             AgentLifecycleEvent(
@@ -581,7 +620,9 @@ class AgentOrchestrator:
         ]
         # Expose the live to-do tool alongside the real filesystem/shell tools.
         # It's intercepted in the dispatch loop and never hits the registry.
-        tool_schemas.append(TODO_WRITE_TOOL_SCHEMA)
+        # Ask mode disables this so a read-only Q&A produces no checklist.
+        if cfg.enable_todos:
+            tool_schemas.append(TODO_WRITE_TOOL_SCHEMA)
 
         # Phase 1+2+3: working memory with token-budget truncation and an
         # episodic summary of older turns.
@@ -644,6 +685,10 @@ class AgentOrchestrator:
         workspace_context_text = _format_workspace_context(workspace_root, workspace_context)
         if workspace_context_text:
             history.append(ChatMessage(role="system", content=workspace_context_text))
+        # Project rules (.zoc/rules) — authoritative per-project conventions.
+        rules_text = load_project_rules(workspace_root)
+        if rules_text:
+            history.append(ChatMessage(role="system", content=rules_text))
         if project_summary_context:
             history.append(ChatMessage(role="system", content=project_summary_context))
         await self._emit(
@@ -999,6 +1044,27 @@ class AgentOrchestrator:
         # Intercept it, broadcast the live to-do snapshot, and return a
         # cheap success observation so the LLM keeps going.
         if ptc.name == "todo_write":
+            # Ask mode (enable_todos=False) must never emit a to-do snapshot,
+            # even if a misbehaving model calls todo_write anyway. Swallow it as
+            # a no-op and nudge the model back to answering directly.
+            if not cfg.enable_todos:
+                call = ToolCall(
+                    name=ptc.name,
+                    arguments=ptc.arguments,
+                    status=ToolCallStatus.succeeded,
+                    result={"ok": True, "ignored": True},
+                    started_at=_utcnow(),
+                    finished_at=_utcnow(),
+                )
+                return call, json.dumps(
+                    {
+                        "ok": True,
+                        "message": (
+                            "To-do lists are disabled in Ask mode. Answer the user "
+                            "directly without a checklist."
+                        ),
+                    }
+                )
             todos = _coerce_todos(ptc.arguments)
             await self._emit(
                 session_id,
@@ -1274,6 +1340,12 @@ class AgentOrchestrator:
         # Pydantic event models are frozen via _Base; recreate with the seq.
         data = event.model_dump()
         data["seq"] = seq
+        # Stamp the owning run id so the frontend can correlate every event to
+        # the run that produced it (Requirements 1.2, 1.7). `next_seq` remains
+        # the sole monotonic seq source — run_id is orthogonal. Never clobber a
+        # run_id an event already set explicitly.
+        if data.get("run_id") is None and self._run_id is not None:
+            data["run_id"] = self._run_id
         rebuilt = event.__class__.model_validate(data)
         self.repo.append_event(session_id, seq, rebuilt.type, data)
         await self.bus.publish(rebuilt)

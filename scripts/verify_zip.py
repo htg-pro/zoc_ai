@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Validate a Llama Studio release zip.
+"""Validate a Zoc AI release zip.
 
 Asserts:
   * top-level directory is ``llama-studio-v<version>/``

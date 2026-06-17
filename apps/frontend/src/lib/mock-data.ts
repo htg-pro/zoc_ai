@@ -91,7 +91,7 @@ def health():
   },
   "/README.md": {
     language: "markdown",
-    content: `# Llama Studio\n\nA local agentic coding desktop app.\n`,
+    content: `# Zoc AI\n\nA local agentic coding desktop app.\n`,
   },
   "/package.json": {
     language: "json",

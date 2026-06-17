@@ -112,6 +112,51 @@ class DiffPatch(_Base):
     summary: str | None = None
 
 
+# ── Inline edit (Cmd-K) ───────────────────────────────────────────────────
+
+class InlineEditResult(_Base):
+    """Result of an inline-edit request: the rewritten replacement for the
+    user's selection. The frontend splices this back into the file and routes
+    the change through the normal diff-review/apply flow."""
+
+    edited: str
+
+
+# ── Project rules (.zoc/rules) ────────────────────────────────────────────
+
+class ProjectRulesInfo(_Base):
+    """Whether per-project agent rules are active for a session, and which
+    files they came from."""
+
+    active: bool = False
+    sources: list[str] = Field(default_factory=list)
+    rules: str = ""
+
+
+# ── Checkpoints (restore points) ──────────────────────────────────────────
+
+class CheckpointInfo(_Base):
+    """A restorable checkpoint captured before an agent run's changes were
+    applied. `run_id` is the restore handle (POST /runs/{run_id}/restore)."""
+
+    run_id: str
+    label: str = ""
+    created_at: str = ""
+    files: list[str] = Field(default_factory=list)
+
+
+# ── Context mentions (@ picker) ───────────────────────────────────────────
+
+class ContextCandidate(_Base):
+    """A candidate for the `@` context picker: a file, folder, or code symbol."""
+
+    kind: Literal["file", "folder", "symbol"]
+    label: str
+    path: str
+    detail: str | None = None
+    line: int | None = None
+
+
 # ── Sessions ──────────────────────────────────────────────────────────────
 
 class SessionStatus(str, Enum):
@@ -394,6 +439,7 @@ class AgentEventBase(_Base):
     session_id: UUID
     seq: int
     at: datetime = Field(default_factory=datetime.utcnow)
+    run_id: str | None = None
 
 
 class TokenEvent(AgentEventBase):
@@ -484,75 +530,6 @@ class DoneEvent(AgentEventBase):
     ok: bool
     summary: str | None = None
 
-# ── Replit-style plan/task workflow ───────────────────────────────────────
-
-class ReplitTaskStatus(str, Enum):
-    draft = "draft"
-    queued = "queued"
-    active = "active"
-    ready = "ready"
-    failed = "failed"
-    done = "done"
-    dismissed = "dismissed"
-    cancelled = "cancelled"
-
-
-class ReplitTaskPriority(str, Enum):
-    low = "low"
-    medium = "medium"
-    high = "high"
-
-
-class ReplitTask(_Base):
-    id: UUID = Field(default_factory=uuid4)
-    session_id: UUID
-    plan_id: UUID | None = None
-    title: str
-    summary: str
-    status: ReplitTaskStatus = ReplitTaskStatus.draft
-    priority: ReplitTaskPriority = ReplitTaskPriority.medium
-    depends_on: list[UUID] = Field(default_factory=list)
-    files_likely_changed: list[str] = Field(default_factory=list)
-    done_looks_like: list[str] = Field(default_factory=list)
-    test_plan: list[str] = Field(default_factory=list)
-    workspace_path: str | None = None
-    diff: str | None = None
-    test_output: str | None = None
-    error: str | None = None
-    validation_attempts: int = 0
-    created_at: datetime = Field(default_factory=datetime.utcnow)
-    updated_at: datetime = Field(default_factory=datetime.utcnow)
-
-
-class ReplitPlanStatus(str, Enum):
-    draft = "draft"
-    approved = "approved"
-    archived = "archived"
-
-
-class ReplitPlan(_Base):
-    id: UUID = Field(default_factory=uuid4)
-    session_id: UUID
-    title: str
-    summary: str
-    status: ReplitPlanStatus = ReplitPlanStatus.draft
-    tasks: list[ReplitTask] = Field(default_factory=list)
-    created_at: datetime = Field(default_factory=datetime.utcnow)
-    updated_at: datetime = Field(default_factory=datetime.utcnow)
-
-
-class ReplitTaskLog(_Base):
-    id: UUID = Field(default_factory=uuid4)
-    task_id: UUID
-    level: Literal["debug", "info", "warning", "error"] = "info"
-    message: str
-    created_at: datetime = Field(default_factory=datetime.utcnow)
-
-
-class TaskCreatedEvent(AgentEventBase):
-    type: Literal["task.created"] = "task.created"
-    task: ReplitTask
-
 
 # ── Live agent-authored to-do list (Cursor/Claude Code TodoWrite pattern) ──
 
@@ -591,6 +568,8 @@ class RunLifecycleEvent(AgentEventBase):
         "run.discarded",
         "run.error",
     ]
+    # Correlates the run across SSE events and the apply/discard endpoints.
+    run_id: str | None = None
     # "ask" | "agent" — carried on run.started so the UI can branch.
     mode: str | None = None
     message: str | None = None
@@ -605,6 +584,7 @@ class CheckpointCreatedEvent(AgentEventBase):
     backend can restore from."""
 
     type: Literal["checkpoint.created"] = "checkpoint.created"
+    run_id: str | None = None
     checkpoint_id: str
     label: str | None = None
 
@@ -614,34 +594,9 @@ class DiffReadyEvent(AgentEventBase):
     changed. Complements the per-write `diff` events with a single summary."""
 
     type: Literal["diff.ready"] = "diff.ready"
+    run_id: str | None = None
     patches: list[DiffPatch] = Field(default_factory=list)
-
-
-class ReplitCheckpoint(_Base):
-    id: UUID = Field(default_factory=uuid4)
-    session_id: UUID
-    task_id: UUID | None = None
-    label: str
-    snapshot_path: str
-    files: list[str] = Field(default_factory=list)
-    created_at: datetime = Field(default_factory=datetime.utcnow)
-
-
-class CreateReplitPlanRequest(_Base):
-    prompt: str
-
-
-class ReviseReplitPlanRequest(_Base):
-    prompt: str
-
-
-class CreateReplitTaskRequest(_Base):
-    title: str
-    summary: str = ""
-    priority: ReplitTaskPriority = ReplitTaskPriority.medium
-    files_likely_changed: list[str] = Field(default_factory=list)
-    done_looks_like: list[str] = Field(default_factory=list)
-    test_plan: list[str] = Field(default_factory=list)
+    validation: dict[str, str] = Field(default_factory=dict)
 
 
 # ── API requests ──────────────────────────────────────────────────────────
@@ -660,10 +615,14 @@ class PostMessageRequest(_Base):
 
 class RunAgentRequest(_Base):
     # Backward compatible with the old `{ prompt }` shape while accepting
-    # the richer Cursor/Replit-style request sent by the frontend.
+    # the richer Cursor-style request sent by the frontend.
     prompt: str | None = None
     message: str | None = None
     session_id: UUID | None = Field(default=None, alias="sessionId")
+    # Optional client-supplied run id. When absent the backend mints one
+    # (uuid4 hex) so every run — isolated/review or direct — has a stable id
+    # that is returned in the response and stamped onto its emitted events.
+    run_id: str | None = Field(default=None, alias="runId")
     workspace_path: str | None = Field(default=None, alias="workspacePath")
     active_file: str | None = Field(default=None, alias="activeFile")
     open_files: list[OpenFileContext] = Field(default_factory=list, alias="openFiles")
@@ -678,6 +637,9 @@ class RunAgentRequest(_Base):
     provider: str | None = None
     api_key: str | None = Field(default=None, alias="apiKey")
     base_url: str | None = Field(default=None, alias="baseUrl")
+    # When true (Agent mode), the run executes in an isolated copy of the
+    # workspace; changes are reviewed and only land on Apply (redesign Part 2.5).
+    review_changes: bool = Field(default=False, alias="reviewChanges")
     max_iterations: int = Field(default=12, alias="maxIterations", ge=1, le=50)
     max_repair_attempts: int = Field(default=2, alias="maxRepairAttempts")
 
@@ -698,7 +660,6 @@ AgentEvent = Annotated[
     | ToolStartedEvent
     | ToolCompletedEvent
     | ToolCallEvent
-    | TaskCreatedEvent
     | TodoUpdateEvent
     | RunLifecycleEvent
     | CheckpointCreatedEvent
@@ -716,12 +677,12 @@ __all__ = [
     "AgentEvent",
     "AgentEventBase",
     "AgentLifecycleEvent",
+    "CheckpointCreatedEvent",
+    "CheckpointInfo",
     "CodeReviewFinding",
     "CodeReviewReport",
+    "ContextCandidate",
     "ContextStatus",
-    "CheckpointCreatedEvent",
-    "CreateReplitPlanRequest",
-    "CreateReplitTaskRequest",
     "CreateSessionRequest",
     "DiffEvent",
     "DiffPatch",
@@ -737,6 +698,7 @@ __all__ = [
     "IndexConfig",
     "IndexQueryResult",
     "IndexStatus",
+    "InlineEditResult",
     "LogEvent",
     "MemoryStats",
     "Message",
@@ -755,16 +717,9 @@ __all__ = [
     "PlanStepEvent",
     "PlanStepStatus",
     "PostMessageRequest",
+    "ProjectRulesInfo",
     "ProviderDescriptor",
     "ProviderKind",
-    "ReplitCheckpoint",
-    "ReplitPlan",
-    "ReplitPlanStatus",
-    "ReplitTask",
-    "ReplitTaskLog",
-    "ReplitTaskPriority",
-    "ReplitTaskStatus",
-    "ReviseReplitPlanRequest",
     "RunAgentRequest",
     "RunLifecycleEvent",
     "RunSlashCommandRequest",
@@ -773,7 +728,6 @@ __all__ = [
     "SettingsSnapshot",
     "SlashCommandDescriptor",
     "SlashCommandName",
-    "TaskCreatedEvent",
     "TerminalSession",
     "TerminalSessionStatus",
     "TestGenerationResult",
