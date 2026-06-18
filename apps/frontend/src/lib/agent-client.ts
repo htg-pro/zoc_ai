@@ -44,16 +44,14 @@ import type {
   ToolDescriptor,
   ToolGrant,
   UpdateIndexConfigRequest,
+  UpdateSessionRequest,
   UpdateSettingsRequest,
 } from "@zoc-studio/shared-types";
 
-import { agentPort, agentStatus, isTauri } from "./tauri-bridge";
+import { resolveAgentPort } from "./agent-port";
 
 let cached: AgentClient | null = null;
 let cachedPort: number | null = null;
-const DESKTOP_AGENT_PORT_WAIT_MS = 20_000;
-const DESKTOP_AGENT_PORT_POLL_MS = 250;
-const DESKTOP_AGENT_HEALTH_WAIT_MS = 10_000;
 
 export interface SpawnTerminalOpts {
   args?: string[];
@@ -118,6 +116,7 @@ export interface AgentClient {
   listSessions(): Promise<Session[]>;
   getSession(id: string): Promise<Session>;
   createSession(req: CreateSessionRequest): Promise<Session>;
+  updateSession(id: string, req: UpdateSessionRequest): Promise<Session>;
   deleteSession(id: string): Promise<void>;
   listMessages(sessionId: string): Promise<Message[]>;
   postMessage(sessionId: string, req: PostMessageRequest): Promise<Message>;
@@ -175,71 +174,6 @@ export type TerminalStreamEvent =
   | { type: "data"; chunk: string }
   | { type: "exit"; code: number | null }
   | { type: "error"; message: string };
-
-async function resolvePort(): Promise<number> {
-  const port = await agentPort();
-  if (typeof port === "number" && port > 0) {
-    if (isTauri()) await waitForAgentHealth(port);
-    return port;
-  }
-  if (isTauri()) {
-    return waitForDesktopAgentPort();
-  }
-  const env = (import.meta as { env?: Record<string, string | undefined> }).env;
-  const fallback = env?.VITE_AGENT_PORT;
-  return fallback ? Number.parseInt(fallback, 10) : 8765;
-}
-
-async function waitForDesktopAgentPort(): Promise<number> {
-  const deadline = Date.now() + DESKTOP_AGENT_PORT_WAIT_MS;
-  let lastError: string | null = null;
-
-  while (Date.now() < deadline) {
-    const status = await agentStatus();
-    if (typeof status?.port === "number" && status.port > 0) {
-      await waitForAgentHealth(status.port);
-      return status.port;
-    }
-    if (status?.last_error) lastError = status.last_error;
-
-    const port = await agentPort();
-    if (typeof port === "number" && port > 0) {
-      await waitForAgentHealth(port);
-      return port;
-    }
-
-    await delay(DESKTOP_AGENT_PORT_POLL_MS);
-  }
-
-  throw new Error(
-    lastError
-      ? `Agent sidecar did not become ready: ${lastError}`
-      : "Agent sidecar did not become ready before the startup timeout.",
-  );
-}
-
-async function waitForAgentHealth(port: number): Promise<void> {
-  const deadline = Date.now() + DESKTOP_AGENT_HEALTH_WAIT_MS;
-  let lastError: string | null = null;
-  const url = `http://127.0.0.1:${port}/health`;
-
-  while (Date.now() < deadline) {
-    try {
-      const res = await fetch(url);
-      if (res.ok) return;
-      lastError = `http ${res.status}`;
-    } catch (err) {
-      lastError = (err as Error).message;
-    }
-    await delay(DESKTOP_AGENT_PORT_POLL_MS);
-  }
-
-  throw new Error(`Agent sidecar port ${port} did not pass /health: ${lastError ?? "timed out"}`);
-}
-
-function delay(ms: number): Promise<void> {
-  return new Promise((resolve) => globalThis.setTimeout(resolve, ms));
-}
 
 async function jsonFetch<T>(url: string, init: RequestInit = {}): Promise<T> {
   const headers = new Headers(init.headers ?? {});
@@ -430,6 +364,8 @@ function makeClient(port: number): AgentClient {
     getSession: (id) => jsonFetch<Session>(`${v1}/sessions/${id}`),
     createSession: (req) =>
       jsonFetch<Session>(`${v1}/sessions`, { method: "POST", body: JSON.stringify(req) }),
+    updateSession: (id, req) =>
+      jsonFetch<Session>(`${v1}/sessions/${id}`, { method: "PATCH", body: JSON.stringify(req) }),
     deleteSession: (id) => jsonFetch<void>(`${v1}/sessions/${id}`, { method: "DELETE" }),
     listMessages: (sessionId) => jsonFetch<Message[]>(`${v1}/sessions/${sessionId}/messages`),
     postMessage: (sessionId, req) =>
@@ -587,7 +523,7 @@ function makeClient(port: number): AgentClient {
 
 export async function getAgentClient(): Promise<AgentClient> {
   if (cached) return cached;
-  const port = await resolvePort();
+  const port = await resolveAgentPort();
   cachedPort = port;
   cached = makeClient(port);
   return cached;

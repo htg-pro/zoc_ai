@@ -32,6 +32,7 @@ Requirements: 6.2, 6.4, 6.5 (plus the R9.3 non-blocking diary mirror).
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from typing import Protocol
@@ -45,6 +46,9 @@ __all__ = [
     "EmitGate",
     "EmitSink",
 ]
+
+
+logger = logging.getLogger(__name__)
 
 #: A sink that receives each *conforming* event as a wire-form mapping
 #: (camelCase keys, ``type`` discriminator) in FSM production order (R6.5).
@@ -129,7 +133,10 @@ class EmitGate:
 
         # Non-blocking Tier 1 mirror (R9.3): append only enqueues and returns.
         if self._diary is not None:
-            self._diary.append(wire)
+            try:
+                self._diary.append(wire)
+            except Exception as exc:  # pragma: no cover - defensive boundary
+                logger.warning("failed to mirror event to diary: %s", exc)
         return True
 
     def _record_violation(self, payload: Mapping[str, object]) -> None:

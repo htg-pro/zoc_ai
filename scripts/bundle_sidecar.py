@@ -166,6 +166,7 @@ def main() -> int:
         subprocess.check_call([str(target), "--help"], timeout=10)
     except (subprocess.CalledProcessError, subprocess.TimeoutExpired, OSError) as exc:
         print(f"!! Sidecar smoke test failed: {exc}", file=sys.stderr)
+        return 1
     return 0
 
 

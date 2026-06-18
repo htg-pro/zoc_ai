@@ -608,6 +608,12 @@ class CreateSessionRequest(_Base):
     model: str | None = None
 
 
+class UpdateSessionRequest(_Base):
+    title: str | None = None
+    provider: str | None = None
+    model: str | None = None
+
+
 class PostMessageRequest(_Base):
     content: str
     role: MessageRole = MessageRole.user
@@ -745,5 +751,6 @@ __all__ = [
     "ToolResult",
     "ToolStartedEvent",
     "UpdateIndexConfigRequest",
+    "UpdateSessionRequest",
     "UpdateSettingsRequest",
 ]

@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "zocai-gateway"
-version = "0.1.0"
+version = "2.0.0"
 description = "FastAPI streaming gateway sidecar for the Zoc AI Ecosystem (Layer 2)."
 requires-python = ">=3.11"
 license = { text = "MIT" }
@@ -13,7 +13,16 @@ dependencies = [
     "uvicorn[standard]>=0.32",
     "pydantic>=2.9",
     "sse-starlette>=2.1",
+    "zoc-studio-shared-schema",
+    "zocai-evolution",
 ]
+
+# These two are sibling packages in the uv workspace. The gateway imports
+# `shared_schema.*` and `zocai_evolution.*` at runtime, so they must be
+# declared dependencies (resolved from the workspace, not PyPI).
+[tool.uv.sources]
+zoc-studio-shared-schema = { workspace = true }
+zocai-evolution = { workspace = true }
 
 [project.optional-dependencies]
 dev = [

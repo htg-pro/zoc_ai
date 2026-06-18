@@ -62,7 +62,7 @@ version:
 	python3 scripts/stamp_version.py
 
 sidecar:
-	uv run python3 scripts/bundle_sidecar.py
+	uv run --package zocai-gateway --with pyinstaller python3 scripts/bundle_sidecar.py
 
 release: version
 	bash scripts/release.sh

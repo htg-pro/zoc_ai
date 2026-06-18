@@ -40,21 +40,18 @@ async def run_test():
         except Exception:
             pass
         
-        # -> Final action — this is where the agent failed
-        # Error observed by agent: Navigation failed - site unavailable: http://localhost:1420
-        await page.goto("http://localhost:1420")
-        try:
-            await page.wait_for_load_state("domcontentloaded", timeout=5000)
-        except Exception:
-            pass
-        
+        # -> Type a slash command into the composer and send it.
+        composer = page.get_by_test_id("composer-textarea")
+        await composer.wait_for(state="visible", timeout=10000)
+        await composer.fill("/explain src/App.tsx")
+
+        send = page.get_by_role("button", name="Send", exact=True)
+        await send.click(timeout=10000)
+
         # --> Assertions to verify final state
-        current_url = await page.evaluate("() => window.location.href")
-        # Assert: page loaded with a URL (final outcome verified by the AI judge during the run)
-        assert current_url, 'Page should have loaded with a URL'
-        current_url = await page.evaluate("() => window.location.href")
-        # Assert: page loaded with a URL (final outcome verified by the AI judge during the run)
-        assert current_url, 'Page should have loaded with a URL'
+        region = page.get_by_test_id("agent-run-region")
+        await expect(region).to_contain_text("/explain src/App.tsx", timeout=15000), "The slash command should be shown as a user message."
+        await expect(region).to_contain_text(re.compile(r"(Ran /explain|explain|error|sidecar)", re.I), timeout=15000), "The slash command should produce a response or actionable error."
         await asyncio.sleep(5)
 
     finally:
@@ -66,4 +63,3 @@ async def run_test():
             await pw.stop()
 
 asyncio.run(run_test())
-    

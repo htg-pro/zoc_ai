@@ -64,7 +64,7 @@ fi
 
 # 3. FastAPI sidecar -> single-file executable.
 echo "==> Bundling agent sidecar"
-if ! uv run python3 scripts/bundle_sidecar.py; then
+if ! uv run --package zocai-gateway --with pyinstaller python3 scripts/bundle_sidecar.py; then
   echo "!! Sidecar bundling failed; cannot continue with Tauri build." >&2
   exit 1
 fi

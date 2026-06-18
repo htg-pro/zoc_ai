@@ -7,7 +7,7 @@ Touched files:
 
 * ``package.json``                                (root + every workspace package)
 * ``Cargo.toml``                                  (workspace.package.version)
-* ``pyproject.toml``                              (root + every uv-workspace member)
+* ``pyproject.toml``                              (root + every uv/Python workspace member)
 * ``apps/desktop/tauri.conf.json``
 * ``CHANGELOG.md``                                (only verifies the entry exists)
 """
@@ -71,6 +71,8 @@ def main() -> int:
     _stamp_toml_version(ROOT / "Cargo.toml", "workspace.package")
     _stamp_toml_version(ROOT / "pyproject.toml", "project")
     for py in ROOT.glob("services/*/pyproject.toml"):
+        _stamp_toml_version(py, "project")
+    for py in ROOT.glob("python/*/pyproject.toml"):
         _stamp_toml_version(py, "project")
     for py in ROOT.glob("packages/*/python/pyproject.toml"):
         _stamp_toml_version(py, "project")

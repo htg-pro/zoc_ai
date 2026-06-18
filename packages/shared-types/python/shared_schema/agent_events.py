@@ -41,7 +41,7 @@ EventType = Literal[
 ModelTier = Literal["local-slm", "edge", "cloud"]
 
 
-class _EventBase(BaseModel):
+class BaseEvent(BaseModel):
     """Fields common to every event. ``seq`` is monotonic and defines order (R6.5)."""
 
     model_config = ConfigDict(extra="forbid", populate_by_name=True)
@@ -53,7 +53,7 @@ class _EventBase(BaseModel):
 
 # ── The eight row kinds ─────────────────────────────────────────────────────
 
-class IntentEvent(_EventBase):
+class IntentEvent(BaseEvent):
     type: Literal["intent"] = "intent"
     text: str
     model_tier: ModelTier = Field(alias="modelTier")  # R1.9
@@ -61,7 +61,7 @@ class IntentEvent(_EventBase):
     fallback_reason: str | None = Field(default=None, alias="fallbackReason")  # R1.6
 
 
-class ThinkingEvent(_EventBase):
+class ThinkingEvent(BaseEvent):
     type: Literal["thinking"] = "thinking"
     text: str
     collapsible: Literal[True] = True  # R3.6
@@ -76,36 +76,36 @@ class ReadFileRef(BaseModel):
     span: tuple[int, int] | None = None
 
 
-class ReadFilesEvent(_EventBase):
+class ReadFilesEvent(BaseEvent):
     type: Literal["read-files"] = "read-files"
     files: list[ReadFileRef]
 
 
-class EditFileEvent(_EventBase):
+class EditFileEvent(BaseEvent):
     type: Literal["edit-file"] = "edit-file"
     path: str
     diff: str
 
 
-class CommandEvent(_EventBase):
+class CommandEvent(BaseEvent):
     type: Literal["command"] = "command"
     command: str
     exit_code: int | None = Field(default=None, alias="exitCode")
     error_tag: str | None = Field(default=None, alias="errorTag")
 
 
-class SummaryEvent(_EventBase):
+class SummaryEvent(BaseEvent):
     type: Literal["summary"] = "summary"
     text: str
 
 
-class ApprovalEvent(_EventBase):
+class ApprovalEvent(BaseEvent):
     type: Literal["approval"] = "approval"
     prompt: str
     decision: Literal["approve", "reject"] | None = None
 
 
-class DoneEvent(_EventBase):
+class DoneEvent(BaseEvent):
     type: Literal["done"] = "done"
     ok: bool
     reason: str | None = None
@@ -141,6 +141,7 @@ __all__ = [
     "AgentEvent",
     "AgentEventModel",
     "ApprovalEvent",
+    "BaseEvent",
     "CommandEvent",
     "DoneEvent",
     "EditFileEvent",

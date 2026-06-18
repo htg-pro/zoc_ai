@@ -77,6 +77,7 @@ from .models import (
     ToolGrant,
     ToolResult,
     UpdateIndexConfigRequest,
+    UpdateSessionRequest,
     UpdateSettingsRequest,
 )
 
@@ -152,6 +153,7 @@ __all__ = [
     "ToolGrant",
     "ToolResult",
     "UpdateIndexConfigRequest",
+    "UpdateSessionRequest",
     "UpdateSettingsRequest",
 ]
 __version__ = "0.1.0"

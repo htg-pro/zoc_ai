@@ -517,6 +517,7 @@ export interface AppState {
   loadSessions: () => Promise<void>;
   selectSession: (id: string) => Promise<void>;
   createSession: (title: string, workspaceRoot: string) => Promise<Session | null>;
+  renameSession: (id: string, newTitle: string) => Promise<boolean>;
   deleteSession: (id: string) => Promise<boolean>;
   /** Toggle pin state for a session (persisted). */
   togglePinnedSession: (id: string) => void;
@@ -1925,44 +1926,70 @@ export const useApp = create<AppState>((set, get) => ({
         await tauriSetWorkspaceRoot(cfg.workspace_root);
       }
     }
-    try {
-      const client = await getAgentClient();
-      const sessions = await client.listSessions();
+    const client = await getAgentClient();
 
-      // R2.2: resolve the app-open intent from the persisted "last active"
-      // pointer instead of unconditionally selecting sessions[0]. A `resume`
-      // is produced only when `lastActiveId` names a session that still
-      // exists; otherwise the resolver yields `fresh` and we start clean.
-      const lastActiveId = loadLastActiveSession();
-      const intent = resolveSessionIntent({
-        trigger: "app-open",
-        sessions,
-        lastActiveId,
-      });
-
-      if (intent.kind === "resume" || intent.kind === "select") {
-        const target = sessions.find((s) => s.id === intent.sessionId) ?? sessions[0];
-        set({
-          sessions,
-          liveMode: true,
-          activeSessionId: target.id,
-          chat: entriesFromSession(target),
-          agentItems: workflowItemsFromSession(target),
-          plan: target.plan ?? null,
-          workspaceRoot: target.workspace_root ?? get().workspaceRoot,
-        });
-        persistLastActiveSession(target.id);
-        void get().loadMemoryStats();
-        return;
+    // Backend reachability is decided by the Gateway `/health` endpoint — the
+    // single canonical sidecar — NOT the legacy `/v1/sessions` API, which was
+    // removed in the ecosystem merge. Deriving `liveMode` from `/health` keeps
+    // chat runs (which DO have a live Gateway route, `POST /v1/agent/run`) from
+    // being wrongly diverted to the offline mock path just because the session
+    // store is gone. Partial clients/mocks without `health()` skip this probe.
+    if (typeof client.health === "function") {
+      try {
+        await client.health();
+        set({ liveMode: true });
+      } catch {
+        // Gateway not reachable (e.g. browser preview); a successful
+        // listSessions below can still flip liveMode true for a legacy backend.
       }
+    }
 
-      // intent.kind === "fresh": never auto-resume a prior session.
-      if (!sessions.length) {
-        // No sessions yet — auto-create a single clean session so the user
-        // can start working immediately. The freshly-created session is
-        // itself clean, so selecting it does not violate the "fresh" intent.
-        const workspaceRoot = get().workspaceRoot || "/tmp";
-        const { provider, model } = get().selectedModel;
+    // Session hydration is best-effort: the Gateway has no session store, so a
+    // 404/failure here is expected. Keep any locally-cached sessions in that
+    // case and leave `liveMode` as the `/health` probe set it.
+    let sessions: Session[];
+    try {
+      sessions = await client.listSessions();
+    } catch {
+      return;
+    }
+
+    // R2.2: resolve the app-open intent from the persisted "last active"
+    // pointer instead of unconditionally selecting sessions[0]. A `resume`
+    // is produced only when `lastActiveId` names a session that still
+    // exists; otherwise the resolver yields `fresh` and we start clean.
+    const lastActiveId = loadLastActiveSession();
+    const intent = resolveSessionIntent({
+      trigger: "app-open",
+      sessions,
+      lastActiveId,
+    });
+
+    if (intent.kind === "resume" || intent.kind === "select") {
+      const target = sessions.find((s) => s.id === intent.sessionId) ?? sessions[0];
+      set({
+        sessions,
+        liveMode: true,
+        activeSessionId: target.id,
+        chat: entriesFromSession(target),
+        agentItems: workflowItemsFromSession(target),
+        plan: target.plan ?? null,
+        workspaceRoot: target.workspace_root ?? get().workspaceRoot,
+      });
+      persistLastActiveSession(target.id);
+      void get().loadMemoryStats();
+      return;
+    }
+
+    // intent.kind === "fresh": never auto-resume a prior session.
+    if (!sessions.length) {
+      // No sessions yet — auto-create a single clean session so the user
+      // can start working immediately. Best-effort: if the backend has no
+      // session store, leave the panel empty (the user can start a local
+      // session from the Sessions view).
+      const workspaceRoot = get().workspaceRoot || "/tmp";
+      const { provider, model } = get().selectedModel;
+      try {
         const session = await client.createSession({
           title: "New Session",
           workspace_root: workspaceRoot,
@@ -1980,24 +2007,24 @@ export const useApp = create<AppState>((set, get) => ({
         });
         persistLastActiveSession(session.id);
         void get().loadMemoryStats();
-        return;
+      } catch {
+        // No server-side session store — nothing to hydrate.
       }
-
-      // Sessions exist but none is an explicit resume target — keep the list
-      // for the sidebar but start with a clean/empty active state rather than
-      // auto-resuming the most-recent prior session.
-      set({
-        sessions,
-        liveMode: true,
-        activeSessionId: "",
-        chat: [],
-        agentItems: [],
-        plan: null,
-      });
-      void get().loadMemoryStats();
-    } catch {
-      // Browser preview / sidecar offline → keep mocks.
+      return;
     }
+
+    // Sessions exist but none is an explicit resume target — keep the list
+    // for the sidebar but start with a clean/empty active state rather than
+    // auto-resuming the most-recent prior session.
+    set({
+      sessions,
+      liveMode: true,
+      activeSessionId: "",
+      chat: [],
+      agentItems: [],
+      plan: null,
+    });
+    void get().loadMemoryStats();
   },
 
   selectSession: async (id) => {
@@ -2015,20 +2042,31 @@ export const useApp = create<AppState>((set, get) => ({
       persistLastActiveSession(null);
       return;
     }
-    set({ activeSessionId: intent.sessionId });
+    // Load the conversation from the locally-cached session immediately so the
+    // panel reflects the resumed session even when the backend has no session
+    // store (the Gateway does not persist sessions). A successful backend
+    // fetch below refreshes it with authoritative data.
+    const cached = get().sessions.find((s) => s.id === intent.sessionId);
+    set({
+      activeSessionId: intent.sessionId,
+      chat: cached ? entriesFromSession(cached) : [],
+      agentItems: cached ? workflowItemsFromSession(cached) : [],
+      plan: cached?.plan ?? null,
+    });
     persistLastActiveSession(intent.sessionId);
-    if (!get().liveMode) return;
-    try {
-      const client = await getAgentClient();
-      const session = await client.getSession(intent.sessionId);
-      set((s) => ({
-        sessions: s.sessions.map((x) => (x.id === intent.sessionId ? session : x)),
-        chat: entriesFromSession(session),
-        agentItems: workflowItemsFromSession(session),
-        plan: session.plan ?? null,
-      }));
-    } catch {
-      /* keep cached */
+    if (get().liveMode) {
+      try {
+        const client = await getAgentClient();
+        const session = await client.getSession(intent.sessionId);
+        set((s) => ({
+          sessions: s.sessions.map((x) => (x.id === intent.sessionId ? session : x)),
+          chat: entriesFromSession(session),
+          agentItems: workflowItemsFromSession(session),
+          plan: session.plan ?? null,
+        }));
+      } catch {
+        /* keep cached */
+      }
     }
     void get().loadMemoryStats();
     void get().loadProjectRules();
@@ -2060,8 +2098,73 @@ export const useApp = create<AppState>((set, get) => ({
       await track("session.created", { id: session.id });
       return session;
     } catch {
-      return null;
+      // The canonical Gateway has no session store, so the create call 404s in
+      // a Gateway-only deployment. Fall back to a locally-managed session so
+      // the panel still connects and a fresh conversation can start.
+      const { provider, model } = get().selectedModel;
+      const now = new Date().toISOString();
+      const session: Session = {
+        id: `local-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+        title,
+        status: "active",
+        workspace_root: workspaceRoot,
+        provider: provider || null,
+        model: model || null,
+        created_at: now,
+        updated_at: now,
+        messages: [],
+        plan: null,
+        tool_calls: [],
+      };
+      set((s) => ({
+        sessions: [session, ...s.sessions],
+        activeSessionId: session.id,
+        chat: [],
+        agentItems: [],
+        plan: null,
+      }));
+      persistLastActiveSession(session.id);
+      await track("session.created", { id: session.id, local: true });
+      return session;
     }
+  },
+
+  renameSession: async (id, newTitle) => {
+    const title = newTitle.trim();
+    if (!title) return false;
+    const existing = get().sessions.find((s) => s.id === id);
+    if (!existing) return false;
+    if (existing.title === title) return true;
+
+    const updatedAt = new Date().toISOString();
+    const optimistic: Session = { ...existing, title, updated_at: updatedAt };
+    set((s) => ({
+      sessions: s.sessions.map((session) => (session.id === id ? optimistic : session)),
+      chat: s.activeSessionId === id ? entriesFromSession(optimistic) : s.chat,
+      agentItems: s.activeSessionId === id ? workflowItemsFromSession(optimistic) : s.agentItems,
+      plan: s.activeSessionId === id ? optimistic.plan ?? null : s.plan,
+    }));
+
+    if (get().liveMode) {
+      try {
+        const client = await getAgentClient();
+        const session = await client.updateSession(id, { title });
+        set((s) => ({
+          sessions: s.sessions.map((item) => (item.id === id ? session : item)),
+          chat: s.activeSessionId === id ? entriesFromSession(session) : s.chat,
+          agentItems: s.activeSessionId === id ? workflowItemsFromSession(session) : s.agentItems,
+          plan: s.activeSessionId === id ? session.plan ?? null : s.plan,
+        }));
+      } catch (err) {
+        await track("error", {
+          stage: "renameSession",
+          message: (err as Error).message,
+        }).catch(() => undefined);
+      }
+    }
+
+    await track("session.renamed", { id }).catch(() => undefined);
+    return true;
   },
 
   deleteSession: async (id) => {

@@ -57,7 +57,10 @@ export function AgentPanel() {
       : "Auto run";
 
   return (
-    <div className="grid h-full min-h-0 min-w-0 grid-cols-1 grid-rows-[auto_auto_minmax(0,1fr)_auto] bg-background">
+    <div
+      className="grid h-full min-h-0 min-w-0 grid-cols-1 grid-rows-[auto_auto_minmax(0,1fr)_auto] bg-background"
+      data-testid="agent-panel"
+    >
       <div className="shrink-0 flex min-w-0 flex-col border-b border-[#1E1E23] bg-[#101014] row-start-1">
         {/* Top bar info */}
         <div className="flex min-h-[44px] items-center gap-2.5 px-3 py-1.5">

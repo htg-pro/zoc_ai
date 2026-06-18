@@ -37,7 +37,7 @@
 import { useEffect, useRef, useState } from "react";
 import type { AgentEvents } from "@zoc-studio/shared-types";
 
-import { agentPort, agentStatus, isTauri } from "@/lib/tauri-bridge";
+import { resolveAgentPort } from "@/lib/agent-port";
 
 /** The flat row-based Event_Contract union (R6.2 single source of truth). */
 export type AgentEvent = AgentEvents.AgentEvent;
@@ -54,12 +54,6 @@ export const AGENT_DIARY_ENDPOINT = "/v1/agent/diary";
 
 /** Default delay before re-subscribing after a dropped stream. */
 export const DEFAULT_RECONNECT_DELAY_MS = 1000;
-
-// Readiness-wait tuning mirrors `lib/agent-client.ts` so the SSE client and the
-// control client agree on how long to wait for the bundled sidecar (R10.3).
-const DESKTOP_AGENT_PORT_WAIT_MS = 20_000;
-const DESKTOP_AGENT_PORT_POLL_MS = 250;
-const DESKTOP_AGENT_HEALTH_WAIT_MS = 10_000;
 
 /** Lifecycle of the underlying SSE subscription. */
 export type StreamStatus = "connecting" | "open" | "reconnecting" | "closed";
@@ -102,6 +96,8 @@ export interface UseAgentStreamOptions {
   resolveBaseUrl?: BaseUrlResolver;
   /** Delay before re-subscribing after a drop. Defaults to 1000 ms. */
   reconnectDelayMs?: number;
+  /** Active Gateway run id to subscribe to. Omitted/null opens the ping stream. */
+  runId?: string | null;
 }
 
 export interface UseAgentStreamResult {
@@ -159,79 +155,21 @@ const defaultRecoverFromDiary: DiaryRecovery = async (url) => {
   return Array.isArray(payload) ? (payload as AgentEvent[]) : [];
 };
 
-function delay(ms: number): Promise<void> {
-  return new Promise((resolve) => globalThis.setTimeout(resolve, ms));
-}
-
-/** Polls `/health` on the resolved port until it responds OK (R10.3). */
-async function waitForAgentHealth(port: number): Promise<void> {
-  const deadline = Date.now() + DESKTOP_AGENT_HEALTH_WAIT_MS;
-  let lastError: string | null = null;
-  const url = `http://127.0.0.1:${port}/health`;
-
-  while (Date.now() < deadline) {
-    try {
-      const res = await fetch(url);
-      if (res.ok) return;
-      lastError = `http ${res.status}`;
-    } catch (err) {
-      lastError = (err as Error).message;
-    }
-    await delay(DESKTOP_AGENT_PORT_POLL_MS);
-  }
-
-  throw new Error(`Agent sidecar port ${port} did not pass /health: ${lastError ?? "timed out"}`);
-}
-
-/** Waits for the desktop supervisor to publish the sidecar's loopback port. */
-async function waitForDesktopAgentPort(): Promise<number> {
-  const deadline = Date.now() + DESKTOP_AGENT_PORT_WAIT_MS;
-  let lastError: string | null = null;
-
-  while (Date.now() < deadline) {
-    const status = await agentStatus();
-    if (typeof status?.port === "number" && status.port > 0) {
-      await waitForAgentHealth(status.port);
-      return status.port;
-    }
-    if (status?.last_error) lastError = status.last_error;
-
-    const port = await agentPort();
-    if (typeof port === "number" && port > 0) {
-      await waitForAgentHealth(port);
-      return port;
-    }
-
-    await delay(DESKTOP_AGENT_PORT_POLL_MS);
-  }
-
-  throw new Error(
-    lastError
-      ? `Agent sidecar did not become ready: ${lastError}`
-      : "Agent sidecar did not become ready before the startup timeout.",
-  );
-}
-
 /**
  * Default base-URL resolver. Reuses the existing Tauri port resolution and
  * readiness wait so the SSE client connects to the same loopback sidecar as
- * the rest of the app. Returns a relative base (`""`) outside the desktop
- * runtime so a dev proxy can serve the endpoints.
+ * the rest of the app.
  */
 export const defaultResolveBaseUrl: BaseUrlResolver = async () => {
-  const port = await agentPort();
-  if (typeof port === "number" && port > 0) {
-    if (isTauri()) await waitForAgentHealth(port);
-    return `http://127.0.0.1:${port}`;
-  }
-  if (isTauri()) {
-    const ready = await waitForDesktopAgentPort();
-    return `http://127.0.0.1:${ready}`;
-  }
-  const env = (import.meta as { env?: Record<string, string | undefined> }).env;
-  const fallback = env?.VITE_AGENT_PORT;
-  return fallback ? `http://127.0.0.1:${Number.parseInt(fallback, 10)}` : "";
+  const port = await resolveAgentPort();
+  return `http://127.0.0.1:${port}`;
 };
+
+function withRunId(path: string, runId: string | null | undefined): string {
+  if (!runId) return path;
+  const separator = path.includes("?") ? "&" : "?";
+  return `${path}${separator}runId=${encodeURIComponent(runId)}`;
+}
 
 /** Parses a single SSE `data` frame into an AgentEvent, or null if malformed. */
 export function parseFrame(data: string): AgentEvent | null {
@@ -261,12 +199,13 @@ export function useAgentStream(options: UseAgentStreamOptions = {}): UseAgentStr
     recoverFromDiary = defaultRecoverFromDiary,
     resolveBaseUrl = defaultResolveBaseUrl,
     reconnectDelayMs = DEFAULT_RECONNECT_DELAY_MS,
+    runId = null,
   } = options;
 
   const [events, setEvents] = useState<AgentEvent[]>([]);
   const [status, setStatus] = useState<StreamStatus>("connecting");
 
-  // Stable refs so the effect can run once while always seeing fresh config.
+  // Stable refs so handlers always see fresh config between reconnects.
   const optionRefs = useRef({
     eventsUrl,
     diaryUrl,
@@ -274,6 +213,7 @@ export function useAgentStream(options: UseAgentStreamOptions = {}): UseAgentStr
     recoverFromDiary,
     resolveBaseUrl,
     reconnectDelayMs,
+    runId,
   });
   optionRefs.current = {
     eventsUrl,
@@ -282,6 +222,7 @@ export function useAgentStream(options: UseAgentStreamOptions = {}): UseAgentStr
     recoverFromDiary,
     resolveBaseUrl,
     reconnectDelayMs,
+    runId,
   };
 
   useEffect(() => {
@@ -303,8 +244,12 @@ export function useAgentStream(options: UseAgentStreamOptions = {}): UseAgentStr
       if (cancelled) {
         return;
       }
-      const { eventsUrl: path, createStream: open } = optionRefs.current;
-      const next = open(`${baseUrl}${path}`);
+      const {
+        eventsUrl: path,
+        createStream: open,
+        runId: activeRunId,
+      } = optionRefs.current;
+      const next = open(`${baseUrl}${withRunId(path, activeRunId)}`);
       stream = next;
       next.onopen = () => {
         if (!cancelled) {
@@ -342,7 +287,7 @@ export function useAgentStream(options: UseAgentStreamOptions = {}): UseAgentStr
       // backfills anything missed while disconnected.
       try {
         const trailing = await optionRefs.current.recoverFromDiary(
-          `${baseUrl}${optionRefs.current.diaryUrl}`,
+          `${baseUrl}${withRunId(optionRefs.current.diaryUrl, optionRefs.current.runId)}`,
         );
         if (!cancelled && trailing.length > 0) {
           setEvents((prev) => mergeEvents(prev, trailing));
@@ -374,6 +319,7 @@ export function useAgentStream(options: UseAgentStreamOptions = {}): UseAgentStr
     };
 
     void start();
+    setEvents([]);
 
     return () => {
       cancelled = true;
@@ -386,9 +332,7 @@ export function useAgentStream(options: UseAgentStreamOptions = {}): UseAgentStr
       }
       setStatus("closed");
     };
-    // The effect subscribes once on mount; live config is read via optionRefs.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [runId]);
 
   return { events, status };
 }

@@ -29,6 +29,8 @@ __all__ = [
     "HOST_ENV_VAR",
     "LOOPBACK_HOSTS",
     "PORT_ENV_VAR",
+    "RUN_TIMEOUT_ENV_VAR",
+    "SSE_QUEUE_TIMEOUT_ENV_VAR",
     "GatewayConfigError",
     "GatewaySettings",
 ]
@@ -43,6 +45,12 @@ HOST_ENV_VAR = "ZOC_STUDIO_GATEWAY_HOST"
 
 #: Environment variable overriding the bind port (``0`` ⇒ OS-assigned).
 PORT_ENV_VAR = "ZOC_STUDIO_GATEWAY_PORT"
+
+#: Environment variable overriding the maximum wall time for one driven run.
+RUN_TIMEOUT_ENV_VAR = "ZOC_STUDIO_GATEWAY_RUN_TIMEOUT_SECONDS"
+
+#: Environment variable overriding how long an SSE stream waits for a frame.
+SSE_QUEUE_TIMEOUT_ENV_VAR = "ZOC_STUDIO_GATEWAY_SSE_QUEUE_TIMEOUT_SECONDS"
 
 #: Host strings treated as the loopback interface (R12.1/R12.4).
 LOOPBACK_HOSTS = frozenset({"127.0.0.1", "::1", "localhost"})
@@ -66,6 +74,10 @@ class GatewaySettings(BaseModel):
         port: Bind port. ``0`` (the default) requests an OS-assigned port.
         auth_token: Optional shared-secret credential. Required when ``host`` is
             non-loopback; see :meth:`enforce_bind_policy`.
+        run_timeout_seconds: Maximum wall time for a driven pipeline before the
+            gateway emits an error and closes the run stream.
+        sse_queue_timeout_seconds: Maximum idle wait for an SSE queue frame
+            before the stream emits an error and closes.
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -73,6 +85,8 @@ class GatewaySettings(BaseModel):
     host: str = "127.0.0.1"
     port: int = Field(default=0, ge=0, le=65535)
     auth_token: str | None = None
+    run_timeout_seconds: float = Field(default=300.0, gt=0)
+    sse_queue_timeout_seconds: float = Field(default=300.0, gt=0)
 
     @classmethod
     def from_env(cls, env: Mapping[str, str] | None = None) -> "GatewaySettings":
@@ -94,11 +108,19 @@ class GatewaySettings(BaseModel):
         host = source.get(HOST_ENV_VAR)
         port = source.get(PORT_ENV_VAR)
         token = source.get(AUTH_TOKEN_ENV_VAR)
+        run_timeout = source.get(RUN_TIMEOUT_ENV_VAR)
+        sse_timeout = source.get(SSE_QUEUE_TIMEOUT_ENV_VAR)
 
         return cls(
             host=host if host else defaults.host,
             port=int(port) if port else defaults.port,
             auth_token=token if token else defaults.auth_token,
+            run_timeout_seconds=(
+                float(run_timeout) if run_timeout else defaults.run_timeout_seconds
+            ),
+            sse_queue_timeout_seconds=(
+                float(sse_timeout) if sse_timeout else defaults.sse_queue_timeout_seconds
+            ),
         )
 
     def is_loopback(self) -> bool:

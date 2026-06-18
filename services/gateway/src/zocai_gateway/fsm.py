@@ -301,6 +301,8 @@ class FSM:
         Raises:
             IllegalTransitionError: If called outside ``HANDLE_ERROR``.
         """
+        if self.current is not Stage.HANDLE_ERROR:
+            raise IllegalTransitionError(self.current, Stage.PLAN_EDITS)
         return self.transition_to(Stage.PLAN_EDITS)
 
     def pause(self, reason: str | None = None) -> Stage:

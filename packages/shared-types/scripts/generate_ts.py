@@ -23,15 +23,16 @@ Usage:
 
 import argparse
 import sys
+from enum import Enum
 from pathlib import Path
-from typing import Any, get_args, get_origin
+from typing import Any, Literal, get_args, get_origin
 
 # Add the Python package to path
 ROOT = Path(__file__).resolve().parents[1]  # packages/shared-types
 PY_PKG = ROOT / "python"
 sys.path.insert(0, str(PY_PKG))
 
-from shared_schema import models  # noqa: E402
+from shared_schema import agent_events, models  # noqa: E402
 
 # Type mapping from JSON Schema to TypeScript
 TYPE_MAP = {
@@ -61,9 +62,9 @@ def format_ts_type(schema: dict[str, Any], required: bool = True) -> str:
     # single-value Literal as {"const": v} and multi-value as {"enum": [...]}.
     if "const" in schema:
         cv = schema["const"]
-        return f'"{cv}"' if isinstance(cv, str) else str(cv)
+        return format_literal_value(cv)
     if "enum" in schema:
-        parts = [f'"{v}"' if isinstance(v, str) else str(v) for v in schema["enum"]]
+        parts = [format_literal_value(v) for v in schema["enum"]]
         union = " | ".join(parts) if parts else "never"
         return f"({union}) | null" if not required else union
 
@@ -83,6 +84,13 @@ def format_ts_type(schema: dict[str, Any], required: bool = True) -> str:
     
     # Handle arrays
     if schema.get("type") == "array":
+        if "prefixItems" in schema:
+            item_types = [
+                format_ts_type(item_schema, required=True)
+                for item_schema in schema.get("prefixItems", [])
+            ]
+            ts_type = f"[{', '.join(item_types)}]"
+            return ts_type
         items_schema = schema.get("items", {})
         item_type = format_ts_type(items_schema, required=True)
         ts_type = f"{item_type}[]"
@@ -129,6 +137,23 @@ def generate_enum_ts(name: str, enum_class: type) -> str:
     """Generate TypeScript type for a Python Enum."""
     values = [f'"{v.value}"' for v in enum_class]
     return f"export type {name} =\n  | " + "\n  | ".join(values) + ";\n"
+
+
+def format_literal_value(value: object) -> str:
+    if isinstance(value, str):
+        return f'"{value}"'
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if value is None:
+        return "null"
+    return str(value)
+
+
+def generate_literal_alias_ts(name: str, literal_alias: Any) -> str:
+    """Generate TypeScript type for a Python Literal alias."""
+    values = get_args(literal_alias)
+    parts = [format_literal_value(v) for v in values]
+    return f"export type {name} =\n  | " + "\n  | ".join(parts) + ";\n"
 
 
 def generate_interface_ts(name: str, model_class: type) -> str:
@@ -205,7 +230,7 @@ def generate_interface_ts(name: str, model_class: type) -> str:
         if prop_name in literal_fields_with_defaults:
             # Use the literal value as the type (required)
             literal_value = literal_fields_with_defaults[prop_name]
-            ts_type = f'"{literal_value}"' if isinstance(literal_value, str) else str(literal_value)
+            ts_type = format_literal_value(literal_value)
             lines.append(f"  {prop_name}: {ts_type};")
             continue
         
@@ -258,8 +283,15 @@ def generate_discriminated_union_ts(name: str, union_type: Any) -> str:
     return f"export type {name} = unknown;\n"
 
 
-def generate_typescript() -> str:
+def generate_typescript(
+    model_module: Any = models,
+    *,
+    source_name: str = "packages/shared-types/python/shared_schema/models.py",
+    footer: list[str] | None = None,
+    skip_models: set[str] | None = None,
+) -> str:
     """Generate complete TypeScript file from all Pydantic models."""
+    skip_models = skip_models or set()
     
     # Header
     lines = [
@@ -270,7 +302,7 @@ def generate_typescript() -> str:
         " * DO NOT EDIT MANUALLY - changes will be overwritten.",
         " *",
         " * To regenerate: pnpm schema:generate",
-        " * Source: packages/shared-types/python/shared_schema/models.py",
+        f" * Source: {source_name}",
         " */",
         "",
         "// Type aliases",
@@ -280,23 +312,30 @@ def generate_typescript() -> str:
     ]
     
     # Get all exported models
-    all_models = models.__all__
+    all_models = model_module.__all__
     
     # Separate enums, interfaces, and unions
     enums = []
     interfaces = []
+    literal_aliases = []
     unions = []
     
     for name in all_models:
-        obj = getattr(models, name)
+        obj = getattr(model_module, name)
+        if name in skip_models:
+            continue
         
         # Check if it's an enum
-        if isinstance(obj, type) and issubclass(obj, models.Enum):
+        if isinstance(obj, type) and issubclass(obj, Enum):
             enums.append((name, obj))
         
         # Check if it's a Pydantic model
         elif isinstance(obj, type) and hasattr(obj, "model_json_schema"):
             interfaces.append((name, obj))
+
+        # Check if it's a Literal alias
+        elif get_origin(obj) is Literal:
+            literal_aliases.append((name, obj))
         
         # Check if it's a union type (Annotated with Union)
         elif get_origin(obj) is not None:
@@ -308,6 +347,14 @@ def generate_typescript() -> str:
         lines.append("")
         for name, enum_class in sorted(enums):
             lines.append(generate_enum_ts(name, enum_class))
+
+    # Generate Literal aliases before interfaces that reference them.
+    if literal_aliases:
+        if not enums:
+            lines.append("// ── Enums ─────────────────────────────────────────────────────────────")
+            lines.append("")
+        for name, literal_alias in sorted(literal_aliases):
+            lines.append(generate_literal_alias_ts(name, literal_alias))
     
     # Generate interfaces
     if interfaces:
@@ -322,32 +369,55 @@ def generate_typescript() -> str:
         lines.append("")
         for name, union_type in sorted(unions):
             lines.append(generate_discriminated_union_ts(name, union_type))
+
+    if footer:
+        lines.extend(footer)
     
     return "\n".join(lines)
 
 
+def generate_index_typescript() -> str:
+    return generate_typescript(
+        models,
+        source_name="packages/shared-types/python/shared_schema/models.py",
+        footer=[
+            "// ── Event_Contract (single source of truth for Gateway SSE events) ─────",
+            "",
+            "export * as AgentEvents from \"./agent-events\";",
+            "",
+        ],
+    )
+
+
+def generate_agent_events_typescript() -> str:
+    return generate_typescript(
+        agent_events,
+        source_name="packages/shared-types/python/shared_schema/agent_events.py",
+        skip_models={"AgentEventModel"},
+    )
+
+
 def check_drift() -> bool:
     """Check if generated TypeScript matches the committed version."""
-    ts_file = ROOT / "typescript" / "src" / "index.ts"
+    files = {
+        ROOT / "typescript" / "src" / "index.ts": generate_index_typescript(),
+        ROOT / "typescript" / "src" / "agent-events.ts": generate_agent_events_typescript(),
+    }
     
-    if not ts_file.exists():
-        print(f"❌ TypeScript file not found: {ts_file}", file=sys.stderr)
-        return False
-    
-    # Generate new content
-    new_content = generate_typescript()
-    
-    # Read existing content
-    existing_content = ts_file.read_text()
-    
-    # Compare
-    if new_content == existing_content:
+    ok = True
+    for ts_file, new_content in files.items():
+        if not ts_file.exists():
+            print(f"❌ TypeScript file not found: {ts_file}", file=sys.stderr)
+            ok = False
+            continue
+        if new_content != ts_file.read_text():
+            print(f"❌ TypeScript types are out of sync: {ts_file}", file=sys.stderr)
+            ok = False
+    if ok:
         print("✅ TypeScript types are up to date")
-        return True
     else:
-        print("❌ TypeScript types are out of sync with Python models", file=sys.stderr)
         print("   Run 'pnpm schema:generate' to update", file=sys.stderr)
-        return False
+    return ok
 
 
 def main():
@@ -364,15 +434,17 @@ def main():
         sys.exit(0 if success else 1)
     else:
         # Generate TypeScript
-        ts_content = generate_typescript()
-        
-        # Write to file
-        ts_file = ROOT / "typescript" / "src" / "index.ts"
-        ts_file.parent.mkdir(parents=True, exist_ok=True)
-        ts_file.write_text(ts_content)
-        
-        print(f"✅ Generated TypeScript types: {ts_file.relative_to(ROOT)}")
+        generated = {
+            ROOT / "typescript" / "src" / "index.ts": generate_index_typescript(),
+            ROOT / "typescript" / "src" / "agent-events.ts": generate_agent_events_typescript(),
+        }
+        for ts_file, ts_content in generated.items():
+            ts_file.parent.mkdir(parents=True, exist_ok=True)
+            ts_file.write_text(ts_content)
+            print(f"✅ Generated TypeScript types: {ts_file.relative_to(ROOT)}")
+
         print(f"   Models: {len(models.__all__)}")
+        print(f"   Agent events: {len(agent_events.__all__)}")
 
 
 if __name__ == "__main__":

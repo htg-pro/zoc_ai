@@ -112,7 +112,7 @@ export function ReadFilesRow({ event }: RowProps<AgentEvents.ReadFilesEvent>): J
         {event.files.map((file, index) => (
           <li key={`${file.path}:${index}`} className="feed-file flex items-baseline gap-1 font-mono text-[12px]">
             <span className="feed-file-path text-[var(--zoc-text-secondary)]">{file.path}</span>
-            {file.span !== undefined && (
+            {file.span != null && (
               <span className="feed-file-span text-[var(--zoc-text-faint)]">
                 :{file.span[0]}–{file.span[1]}
               </span>
@@ -222,12 +222,14 @@ export function ApprovalRow({
   event,
   onDecision = postAgentDecision,
 }: ApprovalRowProps): JSX.Element {
-  const [decision, setDecision] = useState<ApprovalDecision | undefined>(event.decision);
+  const [decision, setDecision] = useState<ApprovalDecision | undefined>(
+    event.decision ?? undefined,
+  );
   // Synchronous guard: React state updates are async, so a ref pins the
   // "a decision is recorded or in flight" fact immediately. This makes the
   // post fire at most once even under rapid/concurrent clicks (R5.2, R5.3) and
   // lets a transport error reopen the row by clearing the guard.
-  const settledRef = useRef<boolean>(event.decision !== undefined);
+  const settledRef = useRef<boolean>(event.decision != null);
   const decided = decision !== undefined;
 
   async function handleDecision(choice: ApprovalDecision): Promise<void> {

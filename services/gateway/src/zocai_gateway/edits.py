@@ -194,7 +194,7 @@ class EditCoordinator:
         for change in plan.changes:
             try:
                 self.toolset.write_file(change.path, change.content)
-            except (ReadOnlyViolation, OSError) as exc:
+            except (ReadOnlyViolation, OSError, UnicodeDecodeError) as exc:
                 # R3.9: halt, retain already-applied changes, emit an error
                 # event naming the failed change, and attempt nothing further.
                 reason = f"failed to apply change to {change.path!r}: {exc}"

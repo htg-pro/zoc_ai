@@ -102,7 +102,6 @@ export interface AgentLifecycleEvent extends AgentEventBase {
 
 export interface CheckpointCreatedEvent extends AgentEventBase {
   type: "checkpoint.created";
-  run_id?: string | null;
   checkpoint_id: string;
   label?: string | null;
 }
@@ -165,7 +164,6 @@ export interface DiffPatch {
 
 export interface DiffReadyEvent extends AgentEventBase {
   type: "diff.ready";
-  run_id?: string | null;
   patches: DiffPatch[];
   validation: Record<string, string>;
 }
@@ -351,15 +349,8 @@ export interface ProviderDescriptor {
 export interface RunAgentRequest {
   prompt?: string | null;
   message?: string | null;
-  /**
-   * Client-supplied run id (R1.2, R1.7). When set, the backend reuses it as
-   * the run's authoritative id and echoes it on every emitted event, so the
-   * frontend can bind the run to the message it answers and discard events
-   * from a superseded run. When absent the backend mints one. Sent as `runId`
-   * (the backend model aliases `run_id` ⇄ `runId`).
-   */
-  runId?: string | null;
   sessionId?: string | null;
+  runId?: string | null;
   workspacePath?: string | null;
   activeFile?: string | null;
   openFiles?: OpenFileContext[];
@@ -377,7 +368,6 @@ export interface RunAgentRequest {
 
 export interface RunLifecycleEvent extends AgentEventBase {
   type: "run.started" | "run.context_ready" | "run.awaiting_review" | "run.applied" | "run.discarded" | "run.error";
-  run_id?: string | null;
   mode?: string | null;
   message?: string | null;
   detail?: string | null;
@@ -511,21 +501,15 @@ export interface UpdateIndexConfigRequest {
   watch?: boolean | null;
 }
 
+export interface UpdateSessionRequest {
+  title?: string | null;
+  provider?: string | null;
+  model?: string | null;
+}
+
 export interface UpdateSettingsRequest {
   embedding?: EmbeddingSettings | null;
 }
-
-// ── Event_Contract (single source of truth for SSE events) ─────────────
-//
-// The new ecosystem SSE Event_Contract lives in `agent-events.ts` and is the
-// Single_Source_Of_Truth for the eight typed SSE rows (R6.2, R6.6). It is
-// re-exported here under the `AgentEvents` namespace so consumers import a
-// single surface: `import { AgentEvents } from "@zoc-studio/shared-types"`
-// then reference `AgentEvents.AgentEvent`, `AgentEvents.EventType`,
-// `AgentEvents.IntentEvent`, etc. The namespace keeps the new contract's
-// `AgentEvent`/`DoneEvent` distinct from the legacy run/tool-call types below,
-// which surviving editor-support UI still imports until separately retired.
-export * as AgentEvents from "./agent-events";
 
 // ── Union Types ───────────────────────────────────────────────────────
 
@@ -549,3 +533,7 @@ export type AgentEvent =
   | LogEvent
   | ErrorEvent
   | DoneEvent;
+
+// ── Event_Contract (single source of truth for Gateway SSE events) ─────
+
+export * as AgentEvents from "./agent-events";

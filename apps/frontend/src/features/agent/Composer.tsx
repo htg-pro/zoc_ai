@@ -100,7 +100,10 @@ export function Composer() {
   const isAsk = agentMode === "ask";
 
   return (
-    <div className="shrink-0 border-t border-[#1E1E23] bg-[#101014] p-3">
+    <div
+      className="shrink-0 border-t border-[#1E1E23] bg-[#101014] p-3"
+      data-testid="composer"
+    >
       <div className="rounded-[10px] bg-[#131318] border border-[#26262B] p-2.5">
         {runBusy && (
           <div className="mb-2 inline-flex items-center gap-1.5 rounded-full border border-[hsl(var(--border-muted))] bg-accent px-2 py-1">
@@ -176,7 +179,8 @@ export function Composer() {
             }
           }}
           placeholder={isAsk ? "Ask about your code…" : "Message the agent…"}
-          disabled={submitting && !streaming}
+          disabled={busy}
+          data-testid="composer-textarea"
           className="max-h-40 min-h-10 resize-none border-0 bg-transparent px-0.5 pb-2 pt-0 shadow-none focus-visible:ring-0 text-[12.5px] text-[#FAFAFA] placeholder:text-[#52525B]"
         />
 

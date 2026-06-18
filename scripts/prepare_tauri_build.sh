@@ -61,7 +61,7 @@ chmod +x "$HP_DST" 2>/dev/null || true
 # clean by default, so a stale sidecar binary is never shipped.
 echo "==> [3/3] Bundling Gateway sidecar (clean — guarantees fresh backend code)"
 if command -v uv >/dev/null 2>&1; then
-  uv run python3 scripts/bundle_sidecar.py
+  uv run --package zocai-gateway --with pyinstaller python3 scripts/bundle_sidecar.py
 else
   python3 scripts/bundle_sidecar.py
 fi

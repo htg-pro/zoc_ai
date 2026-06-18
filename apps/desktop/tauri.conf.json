@@ -30,7 +30,7 @@
   },
   "bundle": {
     "active": true,
-    "targets": "all",
+    "targets": ["deb", "rpm", "app", "dmg", "nsis", "msi"],
     "category": "DeveloperTool",
     "copyright": "© 2026 Zoc AI contributors",
     "shortDescription": "Local agentic coding desktop app.",

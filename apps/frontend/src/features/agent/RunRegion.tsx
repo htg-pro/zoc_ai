@@ -31,7 +31,8 @@ import { ROW_COMPONENTS, isRecognizedEvent } from "./rows";
 export function RunRegion(): JSX.Element {
   const chat = useApp((s) => s.chat);
   const agentMode = useApp((s) => s.agentMode);
-  const { events } = useAgentStream();
+  const runId = useApp((s) => s.runId);
+  const { events } = useAgentStream({ runId });
 
   const scrollRef = useRef<HTMLDivElement>(null);
 
@@ -70,6 +71,7 @@ export function RunRegion(): JSX.Element {
       role="log"
       aria-live="polite"
       aria-label="Agent conversation and run feed"
+      data-testid="agent-run-region"
     >
       {chat.map((entry) => {
         if (entry.kind === "message" && entry.message) {

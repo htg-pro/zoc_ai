@@ -1,6 +1,6 @@
-import { useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
 import type { Session } from "@zoc-studio/shared-types";
-import { ChevronsDownUp, Pin, PinOff, Plus, Search, Trash2 } from "lucide-react";
+import { Check, ChevronsDownUp, Pencil, Pin, PinOff, Plus, Search, Trash2, X } from "lucide-react";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { useApp } from "@/lib/store";
 import { groupSessions } from "@/lib/session-query";
@@ -57,6 +57,7 @@ export function SessionsPanel() {
   const select = useApp((s) => s.selectSession);
   const setMainView = useApp((s) => s.setMainView);
   const createSession = useApp((s) => s.createSession);
+  const renameSession = useApp((s) => s.renameSession);
   const deleteSession = useApp((s) => s.deleteSession);
   const togglePin = useApp((s) => s.togglePinnedSession);
   const workspaceRoot = useApp((s) => s.workspaceRoot);
@@ -138,6 +139,7 @@ export function SessionsPanel() {
                     setMainView("editor");
                   }}
                   onPin={() => togglePin(s.id)}
+                  onRename={(title) => renameSession(s.id, title)}
                   onDelete={() => void onDelete(s.id, s.title)}
                 />
               ))}
@@ -164,6 +166,7 @@ function SessionRow({
   isPinned,
   onSelect,
   onPin,
+  onRename,
   onDelete,
 }: {
   session: Session;
@@ -171,11 +174,32 @@ function SessionRow({
   isPinned: boolean;
   onSelect: () => void;
   onPin: () => void;
+  onRename: (title: string) => Promise<boolean>;
   onDelete: () => void;
 }) {
   const isRunning = session.status === "active";
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(session.title);
+
+  useEffect(() => {
+    if (!editing) setDraft(session.title);
+  }, [editing, session.title]);
+
+  const submitRename = async () => {
+    const title = draft.trim();
+    if (!title || title === session.title) {
+      setEditing(false);
+      setDraft(session.title);
+      return;
+    }
+    const ok = await onRename(title);
+    if (ok) setEditing(false);
+  };
+
   return (
     <div
+      data-testid="session-row"
+      data-session-id={session.id}
       className={cn(
         "group relative mt-0.5 rounded-lg px-2.5 py-[7px] transition-colors",
         isActive ? "bg-[hsl(var(--primary)/0.10)]" : "hover:bg-accent",
@@ -185,35 +209,101 @@ function SessionRow({
         <span className="absolute left-0 top-1/2 h-[58%] w-[2px] -translate-y-1/2 rounded-r bg-primary" />
       )}
 
-      <button type="button" onClick={onSelect} className="w-full text-left">
-        <div className="flex items-center gap-2">
-          <span
-            className={cn(
-              "h-1.5 w-1.5 shrink-0 rounded-full",
-              isRunning ? "animate-pulse-dot-green bg-success" : "bg-muted-foreground/40",
-            )}
+      {editing ? (
+        <div className="pr-14">
+          <input
+            value={draft}
+            onChange={(e) => setDraft(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") {
+                e.preventDefault();
+                void submitRename();
+              }
+              if (e.key === "Escape") {
+                e.preventDefault();
+                setDraft(session.title);
+                setEditing(false);
+              }
+            }}
+            autoFocus
+            data-testid="session-rename-input"
+            className="h-6 w-full rounded border border-[hsl(var(--border-muted))] bg-background px-1.5 text-[12.5px] text-foreground outline-none focus:border-primary"
+            aria-label={`Rename ${session.title}`}
           />
-          <span
-            className={cn(
-              "truncate text-[12.5px] font-medium",
-              isActive ? "text-foreground" : "text-foreground/85",
-            )}
-          >
-            {session.title}
-          </span>
         </div>
-        <div className="mt-1 flex items-center justify-between gap-2 pl-[14px]">
-          <span className="truncate rounded border border-[hsl(var(--border-muted))] bg-accent/60 px-1 py-px font-mono text-[9.5px] text-muted-foreground">
-            {modelLabel(session.model)}
-          </span>
-          <span className="shrink-0 font-mono text-[9.5px] text-muted-foreground/60">
-            {timeLabel(session.updated_at)}
-          </span>
-        </div>
-      </button>
+      ) : (
+        <button type="button" onClick={onSelect} className="w-full text-left">
+          <div className="flex items-center gap-2">
+            <span
+              className={cn(
+                "h-1.5 w-1.5 shrink-0 rounded-full",
+                isRunning ? "animate-pulse-dot-green bg-success" : "bg-muted-foreground/40",
+              )}
+            />
+            <span
+              className={cn(
+                "truncate text-[12.5px] font-medium",
+                isActive ? "text-foreground" : "text-foreground/85",
+              )}
+            >
+              {session.title}
+            </span>
+          </div>
+          <div className="mt-1 flex items-center justify-between gap-2 pl-[14px]">
+            <span className="truncate rounded border border-[hsl(var(--border-muted))] bg-accent/60 px-1 py-px font-mono text-[9.5px] text-muted-foreground">
+              {modelLabel(session.model)}
+            </span>
+            <span className="shrink-0 font-mono text-[9.5px] text-muted-foreground/60">
+              {timeLabel(session.updated_at)}
+            </span>
+          </div>
+        </button>
+      )}
 
       {/* Hover actions */}
-      <div className="absolute right-1 top-1 flex items-center gap-0.5 opacity-0 transition-opacity group-hover:opacity-100">
+      <div className="absolute right-1 top-1 flex items-center gap-0.5 opacity-0 transition-opacity group-hover:opacity-100 focus-within:opacity-100">
+        {editing ? (
+          <>
+            <button
+              type="button"
+              className="flex h-5 w-5 items-center justify-center rounded text-muted-foreground/60 hover:bg-accent hover:text-success"
+              onClick={(e) => {
+                e.stopPropagation();
+                void submitRename();
+              }}
+              aria-label={`Save ${session.title}`}
+              title="Save name"
+            >
+              <Check className="h-2.5 w-2.5" />
+            </button>
+            <button
+              type="button"
+              className="flex h-5 w-5 items-center justify-center rounded text-muted-foreground/60 hover:bg-accent hover:text-foreground"
+              onClick={(e) => {
+                e.stopPropagation();
+                setDraft(session.title);
+                setEditing(false);
+              }}
+              aria-label={`Cancel rename ${session.title}`}
+              title="Cancel rename"
+            >
+              <X className="h-2.5 w-2.5" />
+            </button>
+          </>
+        ) : (
+          <button
+            type="button"
+            className="flex h-5 w-5 items-center justify-center rounded text-muted-foreground/60 hover:bg-accent hover:text-foreground"
+            onClick={(e) => {
+              e.stopPropagation();
+              setEditing(true);
+            }}
+            aria-label={`Rename ${session.title}`}
+            title="Rename session"
+          >
+            <Pencil className="h-2.5 w-2.5" />
+          </button>
+        )}
         <button
           type="button"
           className={cn(
@@ -226,6 +316,7 @@ function SessionRow({
           }}
           aria-label={isPinned ? `Unpin ${session.title}` : `Pin ${session.title}`}
           title={isPinned ? "Unpin" : "Pin"}
+          disabled={editing}
         >
           {isPinned ? <PinOff className="h-2.5 w-2.5" /> : <Pin className="h-2.5 w-2.5" />}
         </button>
@@ -238,6 +329,7 @@ function SessionRow({
           }}
           aria-label={`Delete ${session.title}`}
           title="Delete session"
+          disabled={editing}
         >
           <Trash2 className="h-2.5 w-2.5" />
         </button>

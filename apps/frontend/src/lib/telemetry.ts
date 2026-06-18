@@ -14,6 +14,7 @@ export type TelemetryKind =
   | "session.created"
   | "session.deleted"
   | "session.message_sent"
+  | "session.renamed"
   | "session.slash_command"
   | "patch.applied"
   | "patch.rejected"

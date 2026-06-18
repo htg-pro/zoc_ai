@@ -5,7 +5,7 @@ description = "Workspace root for Zoc AI Python packages."
 requires-python = ">=3.11"
 
 [tool.uv.workspace]
-members = ["services/gateway", "packages/shared-types/python"]
+members = ["services/gateway", "packages/shared-types/python", "python/zocai_evolution"]
 
 [tool.ruff]
 line-length = 100

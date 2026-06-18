@@ -21,7 +21,7 @@
  * paths), 5.2 / 5.3 (post approve/reject decisions), 6.3 (single transport).
  */
 
-import { agentPort, agentStatus, isTauri } from "@/lib/tauri-bridge";
+import { resolveAgentPort } from "@/lib/agent-port";
 
 /** The two execution modes the Composer's Ask/Agent toggle selects. */
 export type AgentMode = "ask" | "agent";
@@ -52,79 +52,9 @@ export interface AgentRunHandle {
   runId: string;
 }
 
-// ── Port / base-URL resolution ────────────────────────────────────────────
-// The loopback port is published by the Tauri supervisor and surfaced through
-// the existing tauri-bridge resolver. We wait for it (and /health) exactly the
-// way the rest of the app does, so a run is never posted before the sidecar is
-// ready (R2 / R10.3). Outside the desktop shell (browser preview / tests) we
-// fall back to the dev port.
-
-const PORT_WAIT_MS = 30_000;
-const PORT_POLL_MS = 250;
-const HEALTH_WAIT_MS = 30_000;
-const DEFAULT_DEV_PORT = 8765;
-
-function delay(ms: number): Promise<void> {
-  return new Promise((resolve) => globalThis.setTimeout(resolve, ms));
-}
-
-async function waitForHealth(port: number): Promise<void> {
-  const deadline = Date.now() + HEALTH_WAIT_MS;
-  let lastError: string | null = null;
-  const url = `http://127.0.0.1:${port}/health`;
-  while (Date.now() < deadline) {
-    try {
-      const res = await fetch(url);
-      if (res.ok) return;
-      lastError = `http ${res.status}`;
-    } catch (err) {
-      lastError = (err as Error).message;
-    }
-    await delay(PORT_POLL_MS);
-  }
-  throw new Error(`Gateway port ${port} did not pass /health: ${lastError ?? "timed out"}`);
-}
-
-async function waitForDesktopPort(): Promise<number> {
-  const deadline = Date.now() + PORT_WAIT_MS;
-  let lastError: string | null = null;
-  while (Date.now() < deadline) {
-    const status = await agentStatus();
-    if (typeof status?.port === "number" && status.port > 0) {
-      await waitForHealth(status.port);
-      return status.port;
-    }
-    if (status?.last_error) lastError = status.last_error;
-
-    const port = await agentPort();
-    if (typeof port === "number" && port > 0) {
-      await waitForHealth(port);
-      return port;
-    }
-    await delay(PORT_POLL_MS);
-  }
-  throw new Error(
-    lastError
-      ? `Gateway sidecar did not become ready: ${lastError}`
-      : "Gateway sidecar did not become ready before the startup timeout.",
-  );
-}
-
-async function resolvePort(): Promise<number> {
-  const port = await agentPort();
-  if (typeof port === "number" && port > 0) {
-    if (isTauri()) await waitForHealth(port);
-    return port;
-  }
-  if (isTauri()) return waitForDesktopPort();
-  const env = (import.meta as { env?: Record<string, string | undefined> }).env;
-  const fallback = env?.VITE_AGENT_PORT;
-  return fallback ? Number.parseInt(fallback, 10) : DEFAULT_DEV_PORT;
-}
-
 /** Resolve the loopback base URL the canonical `/v1/agent/*` paths hang off. */
 async function resolveBaseUrl(): Promise<string> {
-  const port = await resolvePort();
+  const port = await resolveAgentPort();
   return `http://127.0.0.1:${port}`;
 }
 
@@ -176,11 +106,15 @@ function decisionKind(decision: AgentDecision): "approval" | "budget-continuatio
  * `GET /v1/agent/events`.
  */
 export async function postAgentRun(req: AgentRunRequest): Promise<AgentRunHandle> {
-  const accepted = await postJson<{ runId: string }>("/v1/agent/run", {
+  const accepted = await postJson<{ runId?: string; run_id?: string }>("/v1/agent/run", {
     prompt: req.input,
     mode: req.mode,
   });
-  return { runId: accepted.runId };
+  const runId = accepted.runId ?? accepted.run_id;
+  if (!runId) {
+    throw new Error("Gateway accepted the run without returning a runId.");
+  }
+  return { runId };
 }
 
 /**

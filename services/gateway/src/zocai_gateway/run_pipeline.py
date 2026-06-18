@@ -34,6 +34,7 @@ a default agent run walks INTAKE→…→DONE cleanly.
 from __future__ import annotations
 
 import itertools
+import logging
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -91,7 +92,7 @@ from zocai_gateway.mode_router import (
     ModeRouter,
     SwitchToAgentMessage,
 )
-from zocai_gateway.model_allocator import Allocation, ModelAllocator
+from zocai_gateway.model_allocator import Allocation, AllocationAborted, ModelAllocator
 from zocai_gateway.model_interface import Cloud, Edge, LocalSLM, ModelInterface, ModelTier
 from zocai_gateway.orchestrator import Orchestrator
 from zocai_gateway.remediation import RemediationLoop
@@ -110,6 +111,9 @@ __all__ = [
     "default_workspace_rag_matcher",
     "execute_run",
 ]
+
+
+logger = logging.getLogger(__name__)
 
 #: A sink for the Ask-Mode raw text token channel (R6.6). Re-exported from the
 #: channel module so the app binds the run's SSE text frames to it.
@@ -331,7 +335,13 @@ class RunPipeline:
         """
         payload = dict(event.model_dump(by_alias=True))
         payload["seq"] = self._next_seq()
-        self._channel.emit_event(payload)
+        if not self._channel.emit_event(payload):
+            logger.warning(
+                "run %s dropped event type %r at seq %s",
+                self.run_id,
+                payload.get("type"),
+                payload.get("seq"),
+            )
 
     # -- entrypoint ---------------------------------------------------------
 
@@ -407,11 +417,25 @@ class RunPipeline:
         remediation loop (R5), and a passing check carries the run to SUMMARY
         then DONE — closing the stream (R3.4) and recording the trajectory.
         """
-        signals = self.brain.allocation_signals(self.request)
-        allocation = self.allocator.select(
-            signals.complexity, signals.latency_ms, signals.hardware
-        )
-        context = self._build_context(allocation)
+        stages: list[Stage] = [Stage.INTAKE]
+        try:
+            signals = self.brain.allocation_signals(self.request)
+            allocation = self.allocator.select(
+                signals.complexity, signals.latency_ms, signals.hardware
+            )
+            context = self._build_context(allocation)
+        except AllocationAborted as exc:
+            fsm = FSM(initial=Stage.INTAKE, run_id=self.run_id, emit=self._emit)
+            fsm.fail(f"{type(exc).__name__}: {exc}")
+            stages.append(Stage.ERROR_CLOSED)
+            self._close()
+            return RunResult(
+                mode=Mode.AGENT,
+                run_id=self.run_id,
+                stage=Stage.ERROR_CLOSED,
+                stages=tuple(stages),
+                allocation=None,
+            )
 
         # R1.9: the INTAKE stage entry emits the IntentEvent carrying the tier,
         # window, and any fallback reason as the run's first event.
@@ -437,7 +461,6 @@ class RunPipeline:
             emit=self._emit,
         )
 
-        stages: list[Stage] = [Stage.INTAKE]
         # INTAKE → ANALYZE → MAP_FILES → READ_FILES → PLAN_EDITS (R3.2).
         for _ in range(4):
             stages.append(fsm.advance())
@@ -462,7 +485,21 @@ class RunPipeline:
         the recovery ceiling (R4.4) freezes the loop and serializes state to
         the State_Wrapper for a hot-swap instead of looping forever (R11.1).
         """
-        plan = self.brain.edit_plan(self.request, context)
+        try:
+            plan = self.brain.edit_plan(self.request, context)
+        except Exception as exc:
+            reason = f"edit_plan failed: {type(exc).__name__}: {exc}"
+            logger.exception("run %s failed while planning edits", self.run_id)
+            fsm.fail(reason)
+            stages.append(Stage.ERROR_CLOSED)
+            self._close()
+            return RunResult(
+                mode=Mode.AGENT,
+                run_id=self.run_id,
+                stage=Stage.ERROR_CLOSED,
+                stages=tuple(stages),
+                allocation=allocation,
+            )
         applied: list[Diff] = []
         checks: list[tuple[str, int]] = []
 
@@ -496,7 +533,21 @@ class RunPipeline:
             else:
                 stages.append(fsm.plan_complete(has_changes=False))  # R3.8
 
-            exit_code, command, log = self.brain.run_checks(self.request, plan)
+            try:
+                exit_code, command, log = self.brain.run_checks(self.request, plan)
+            except Exception as exc:
+                reason = f"run_checks failed: {type(exc).__name__}: {exc}"
+                logger.exception("run %s failed while running checks", self.run_id)
+                fsm.fail(reason)
+                stages.append(Stage.ERROR_CLOSED)
+                self._close()
+                return RunResult(
+                    mode=Mode.AGENT,
+                    run_id=self.run_id,
+                    stage=Stage.ERROR_CLOSED,
+                    stages=tuple(stages),
+                    allocation=allocation,
+                )
             checks.append((command, exit_code))
             rem = remediation.on_checks_complete(
                 exit_code, command=command, log=log, prior_plan=plan
@@ -520,9 +571,13 @@ class RunPipeline:
                 stages.append(Stage.PLAN_EDITS)
                 if not orchestrator.budget.before_recovery():
                     # R11.1: recovery ceiling reached → freeze + hot-swap.
+                    resume_stage = fsm.current
                     hot_swap = self._preserve_and_swap(
-                        fsm.current, orchestrator, applied, allocation
+                        resume_stage, orchestrator, applied, allocation
                     )
+                    fsm.pause("recovery budget exhausted; hot-swap required")
+                    stages.append(Stage.PAUSED)
+                    self._close()
                     return RunResult(
                         mode=Mode.AGENT,
                         run_id=self.run_id,
@@ -538,6 +593,7 @@ class RunPipeline:
             # R5.7: no differing remediation → paused, deferred to developer.
             stages.append(Stage.HANDLE_ERROR)
             stages.append(Stage.PAUSED)
+            self._close()
             return RunResult(
                 mode=Mode.AGENT,
                 run_id=self.run_id,
@@ -549,7 +605,14 @@ class RunPipeline:
             )
 
         # Recovery budget exhausted without resolution → freeze + hot-swap.
-        hot_swap = self._preserve_and_swap(fsm.current, orchestrator, applied, allocation)
+        resume_stage = fsm.current
+        hot_swap = self._preserve_and_swap(
+            resume_stage, orchestrator, applied, allocation
+        )
+        if fsm.current is not Stage.PAUSED:
+            fsm.pause("recovery budget exhausted; hot-swap required")
+            stages.append(Stage.PAUSED)
+        self._close()
         return RunResult(
             mode=Mode.AGENT,
             run_id=self.run_id,
@@ -633,16 +696,19 @@ def execute_run(
     This is the single call the gateway endpoint makes to wire and run the
     full backend path for a run.
     """
-    pipeline = RunPipeline(
-        request,
-        run_id,
-        gate=gate,
-        text_sink=text_sink,
-        close=close,
-        workspace_root=workspace_root,
-        state_store=state_store,
-        evolution=evolution,
-        diary_sink=diary_sink,
-        brain=brain,
-    )
-    return pipeline.run()
+    try:
+        pipeline = RunPipeline(
+            request,
+            run_id,
+            gate=gate,
+            text_sink=text_sink,
+            close=close,
+            workspace_root=workspace_root,
+            state_store=state_store,
+            evolution=evolution,
+            diary_sink=diary_sink,
+            brain=brain,
+        )
+        return pipeline.run()
+    finally:
+        close()

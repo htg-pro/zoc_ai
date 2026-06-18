@@ -25,9 +25,12 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
+import threading
 import uuid
 from collections.abc import AsyncIterator, Mapping
 from contextlib import asynccontextmanager
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Literal
 
@@ -36,6 +39,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from sse_starlette.sse import EventSourceResponse
 
 from shared_schema.agent_events import AgentEvent, DoneEvent
+from shared_schema.models import CreateSessionRequest, Session, UpdateSessionRequest
 
 from zocai_evolution import EvolutionEngine
 
@@ -59,9 +63,13 @@ __all__ = [
     "DecisionVerdict",
     "RunAccepted",
     "RunRegistry",
+    "SessionRegistry",
     "create_app",
     "app",
 ]
+
+
+logger = logging.getLogger(__name__)
 
 #: Kinds of decision the control channel accepts (design "Communication
 #: Channels"): explicit approvals (R3.7-style gates) and budget-continuation
@@ -82,7 +90,7 @@ class RunAccepted(BaseModel):
 
     model_config = ConfigDict(populate_by_name=True)
 
-    run_id: str = Field(serialization_alias="runId")
+    run_id: str = Field(alias="runId")
     mode: Mode
     accepted: bool = True
 
@@ -102,7 +110,7 @@ class DecisionAck(BaseModel):
 
     model_config = ConfigDict(populate_by_name=True)
 
-    run_id: str = Field(serialization_alias="runId")
+    run_id: str = Field(alias="runId")
     kind: DecisionKind
     decision: DecisionVerdict
     accepted: bool = True
@@ -119,7 +127,16 @@ class _Run:
     appends to the FIFO queue, so emission order equals production order.
     """
 
-    __slots__ = ("run_id", "path", "queue", "decisions", "emit_gate")
+    __slots__ = (
+        "run_id",
+        "path",
+        "queue",
+        "decisions",
+        "emit_gate",
+        "_loop",
+        "_lock",
+        "_closed",
+    )
 
     def __init__(
         self, run_id: str, path: ExecutionPath, diary: DiaryMirror | None = None
@@ -129,15 +146,25 @@ class _Run:
         self.queue: asyncio.Queue[dict[str, object] | None] = asyncio.Queue()
         self.decisions: list[DecisionRequest] = []
         self.emit_gate = EmitGate(sink=self._enqueue, diary=diary)
+        try:
+            self._loop: asyncio.AbstractEventLoop | None = asyncio.get_running_loop()
+        except RuntimeError:
+            self._loop = None
+        self._lock = threading.Lock()
+        self._closed = False
 
     def _enqueue(self, event: Mapping[str, object]) -> None:
         """FIFO sink for the run's emit gate (R6.5).
 
-        ``put_nowait`` on the unbounded queue never blocks and preserves the
-        order conforming events are emitted, so the SSE generator drains them in
-        exactly FSM production order.
+        Pipeline work can run in a worker thread, while the SSE queue belongs
+        to the FastAPI event loop. Enqueue through the captured loop when one is
+        available so producers never mutate ``asyncio.Queue`` from the wrong
+        thread. The queue is unbounded, so ``put_nowait`` never blocks.
         """
-        self.queue.put_nowait(dict(event))
+        with self._lock:
+            if self._closed:
+                return
+        self._put(dict(event))
 
     def enqueue_text(self, chunk: str) -> None:
         """Ask-Mode text sink: enqueue a raw markdown token chunk (R6.6).
@@ -146,7 +173,24 @@ class _Run:
         bypass the structured contract gate and are enqueued directly as
         ``token`` frames the SSE generator relays in order.
         """
-        self.queue.put_nowait({"type": "token", "text": chunk})
+        with self._lock:
+            if self._closed:
+                return
+        self._put({"type": "token", "text": chunk})
+
+    def enqueue_error(self, message: str) -> None:
+        """Enqueue a best-effort SSE error frame for infrastructure failures."""
+        with self._lock:
+            if self._closed:
+                return
+        self._put(
+            {
+                "type": "error",
+                "runId": self.run_id,
+                "ts": datetime.now(timezone.utc).isoformat(),
+                "message": message,
+            }
+        )
 
     def emit_fsm_event(self, event: AgentEvent) -> None:
         """FSM emit sink that gates each stage event and closes at DONE (R3.4).
@@ -179,7 +223,22 @@ class _Run:
 
     def close(self) -> None:
         """Signal end-of-stream by enqueuing the close sentinel."""
-        self.queue.put_nowait(None)
+        with self._lock:
+            if self._closed:
+                return
+            self._closed = True
+        self._put(None)
+
+    def _put(self, item: dict[str, object] | None) -> None:
+        """Put ``item`` onto the SSE queue from either loop or worker thread."""
+        loop = self._loop
+        if loop is not None and loop.is_running():
+            try:
+                loop.call_soon_threadsafe(self.queue.put_nowait, item)
+                return
+            except RuntimeError:
+                pass
+        self.queue.put_nowait(item)
 
 
 class RunRegistry:
@@ -207,8 +266,64 @@ class RunRegistry:
     def get(self, run_id: str) -> _Run | None:
         return self._runs.get(run_id)
 
+    def remove(self, run_id: str) -> None:
+        """Forget a run after its SSE stream has closed."""
+        self._runs.pop(run_id, None)
 
-async def _event_stream(run: _Run | None) -> AsyncIterator[dict[str, str]]:
+
+class SessionRegistry:
+    """Small in-memory session store for the editor-support session API."""
+
+    def __init__(self) -> None:
+        self._sessions: dict[str, Session] = {}
+
+    def list(self) -> list[Session]:
+        return sorted(
+            self._sessions.values(),
+            key=lambda session: session.updated_at,
+            reverse=True,
+        )
+
+    def get(self, session_id: str) -> Session | None:
+        return self._sessions.get(session_id)
+
+    def create(self, req: CreateSessionRequest) -> Session:
+        session = Session(
+            title=req.title,
+            workspace_root=req.workspace_root,
+            provider=req.provider,
+            model=req.model,
+        )
+        self._sessions[str(session.id)] = session
+        return session
+
+    def update(self, session_id: str, req: UpdateSessionRequest) -> Session | None:
+        session = self._sessions.get(session_id)
+        if session is None:
+            return None
+        update: dict[str, object] = {
+            "updated_at": datetime.now(timezone.utc).replace(tzinfo=None)
+        }
+        if req.title is not None:
+            update["title"] = req.title
+        if req.provider is not None:
+            update["provider"] = req.provider
+        if req.model is not None:
+            update["model"] = req.model
+        next_session = session.model_copy(update=update)
+        self._sessions[session_id] = next_session
+        return next_session
+
+    def delete(self, session_id: str) -> bool:
+        return self._sessions.pop(session_id, None) is not None
+
+
+async def _event_stream(
+    run: _Run | None,
+    *,
+    registry: RunRegistry | None = None,
+    queue_timeout_seconds: float = 300.0,
+) -> AsyncIterator[dict[str, str]]:
     """Yield SSE frames for ``run`` until its close sentinel arrives.
 
     When ``run`` is ``None`` (no/unknown ``runId``) the stream still opens with
@@ -222,15 +337,36 @@ async def _event_stream(run: _Run | None) -> AsyncIterator[dict[str, str]]:
         yield {"event": "ping", "data": ""}
         return
 
-    while True:
-        item = await run.queue.get()
-        if item is None:  # close sentinel
-            break
-        event_type = item.get("type")
-        yield {
-            "event": str(event_type) if event_type is not None else "message",
-            "data": json.dumps(item),
-        }
+    try:
+        while True:
+            try:
+                item = await asyncio.wait_for(
+                    run.queue.get(), timeout=queue_timeout_seconds
+                )
+            except asyncio.TimeoutError:
+                message = "SSE stream timed out waiting for gateway events"
+                yield {
+                    "event": "error",
+                    "data": json.dumps(
+                        {
+                            "type": "error",
+                            "runId": run.run_id,
+                            "message": message,
+                        }
+                    ),
+                }
+                run.close()
+                break
+            if item is None:  # close sentinel
+                break
+            event_type = item.get("type")
+            yield {
+                "event": str(event_type) if event_type is not None else "message",
+                "data": json.dumps(item),
+            }
+    finally:
+        if registry is not None:
+            registry.remove(run.run_id)
 
 
 def create_app(
@@ -318,7 +454,9 @@ def create_app(
     )
 
     registry = RunRegistry(diary=diary)
+    sessions = SessionRegistry()
     app.state.run_registry = registry
+    app.state.session_registry = sessions
     app.state.mode_router = router
     setattr(app.state, STATE_SETTINGS_KEY, resolved_settings)
     app.state.diary = diary
@@ -334,6 +472,68 @@ def create_app(
     @app.get("/health")
     async def health() -> dict[str, str]:
         return {"status": "ok"}
+
+    @app.get(
+        "/v1/sessions",
+        response_model=list[Session],
+        dependencies=[Depends(require_admission)],
+    )
+    async def list_sessions() -> list[Session]:
+        """Return known editor-support sessions."""
+        return sessions.list()
+
+    @app.post(
+        "/v1/sessions",
+        response_model=Session,
+        status_code=status.HTTP_201_CREATED,
+        dependencies=[Depends(require_admission)],
+    )
+    async def create_session(req: CreateSessionRequest) -> Session:
+        """Create an editor-support session in the process-local store."""
+        return sessions.create(req)
+
+    @app.get(
+        "/v1/sessions/{session_id}",
+        response_model=Session,
+        dependencies=[Depends(require_admission)],
+    )
+    async def get_session(session_id: str) -> Session:
+        """Return one editor-support session."""
+        session = sessions.get(session_id)
+        if session is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"unknown session: {session_id}",
+            )
+        return session
+
+    @app.patch(
+        "/v1/sessions/{session_id}",
+        response_model=Session,
+        dependencies=[Depends(require_admission)],
+    )
+    async def update_session(session_id: str, req: UpdateSessionRequest) -> Session:
+        """Partially update an editor-support session, including rename."""
+        session = sessions.update(session_id, req)
+        if session is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"unknown session: {session_id}",
+            )
+        return session
+
+    @app.delete(
+        "/v1/sessions/{session_id}",
+        status_code=status.HTTP_204_NO_CONTENT,
+        dependencies=[Depends(require_admission)],
+    )
+    async def delete_session(session_id: str) -> None:
+        """Delete one editor-support session."""
+        if not sessions.delete(session_id):
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"unknown session: {session_id}",
+            )
 
     @app.post(
         "/v1/agent/run",
@@ -353,18 +553,38 @@ def create_app(
         path = router.route(req)
         run = registry.create(path)
         if drive:
-            execute_run(
-                req,
-                run.run_id,
-                gate=run.emit_gate,
-                text_sink=run.enqueue_text,
-                close=run.close,
-                workspace_root=run_root,
-                state_store=state_store,
-                evolution=engine,
-                diary_sink=diary_sink,
-                brain=brain,
-            )
+            async def drive_run() -> None:
+                try:
+                    await asyncio.wait_for(
+                        asyncio.to_thread(
+                            execute_run,
+                            req,
+                            run.run_id,
+                            gate=run.emit_gate,
+                            text_sink=run.enqueue_text,
+                            close=run.close,
+                            workspace_root=run_root,
+                            state_store=state_store,
+                            evolution=engine,
+                            diary_sink=diary_sink,
+                            brain=brain,
+                        ),
+                        timeout=resolved_settings.run_timeout_seconds,
+                    )
+                except asyncio.TimeoutError:
+                    message = (
+                        "agent run exceeded "
+                        f"{resolved_settings.run_timeout_seconds:g}s timeout"
+                    )
+                    logger.warning("run %s timed out", run.run_id)
+                    run.enqueue_error(message)
+                    run.close()
+                except Exception as exc:  # pragma: no cover - defensive boundary
+                    logger.exception("run %s failed", run.run_id)
+                    run.enqueue_error(f"agent run failed: {type(exc).__name__}: {exc}")
+                    run.close()
+
+            asyncio.create_task(drive_run())
         return RunAccepted(run_id=run.run_id, mode=req.mode)
 
     @app.post(
@@ -390,7 +610,13 @@ def create_app(
     ) -> EventSourceResponse:
         """Subscribe to the single ordered SSE telemetry bus (R6.1)."""
         run = registry.get(run_id) if run_id is not None else None
-        return EventSourceResponse(_event_stream(run))
+        return EventSourceResponse(
+            _event_stream(
+                run,
+                registry=registry,
+                queue_timeout_seconds=resolved_settings.sse_queue_timeout_seconds,
+            )
+        )
 
     @app.get("/v1/agent/diary", dependencies=[Depends(require_admission)])
     async def agent_diary(

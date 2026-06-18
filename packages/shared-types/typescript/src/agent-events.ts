@@ -1,16 +1,19 @@
 /**
- * Zoc AI Ecosystem — Shared Event_Contract (single source of truth).
+ * Shared TypeScript types for Zoc AI.
  *
- * Defines the eight flat row kinds streamed over the SSE bus (R6.3). The TS
- * frontend and the generated Python Pydantic models mirror this contract so
- * the two sides cannot drift.
+ * AUTO-GENERATED from Python Pydantic models.
+ * DO NOT EDIT MANUALLY - changes will be overwritten.
  *
- * Spec: .kiro/specs/zocai-ecosystem-rebuild/design.md
- *       — "Shared Event Schema (packages/shared-types)"
- * Requirements: 6.3 (plus allocator fields R1.6, R1.9 on IntentEvent).
+ * To regenerate: pnpm schema:generate
+ * Source: packages/shared-types/python/shared_schema/agent_events.py
  */
 
-/** The eight row kinds. Exactly one per event type. */
+// Type aliases
+export type UUID = string;
+export type ISODateTime = string;
+
+// ── Enums ─────────────────────────────────────────────────────────────
+
 export type EventType =
   | "intent"
   | "thinking"
@@ -21,34 +24,36 @@ export type EventType =
   | "approval"
   | "done";
 
-/** The model tier selected by the Allocator (R1.9). */
-export type ModelTier = "local-slm" | "edge" | "cloud";
+export type ModelTier =
+  | "local-slm"
+  | "edge"
+  | "cloud";
 
-/** Fields common to every event. `seq` is monotonic and defines order (R6.5). */
+// ── Interfaces ────────────────────────────────────────────────────────
+
+export interface ApprovalEvent extends BaseEvent {
+  type: "approval";
+  prompt: string;
+  decision?: "approve" | "reject" | null;
+}
+
 export interface BaseEvent {
-  type: EventType;
-  seq: number; // monotonically increasing, defines order (R6.5)
+  seq: number;
   runId: string;
-  ts: string; // ISO-8601
+  ts: string;
 }
 
-export interface IntentEvent extends BaseEvent {
-  type: "intent";
-  text: string;
-  modelTier: ModelTier; // R1.9
-  contextWindowTokens: number; // R1.9
-  fallbackReason?: string; // R1.6
+export interface CommandEvent extends BaseEvent {
+  type: "command";
+  command: string;
+  exitCode?: number | null;
+  errorTag?: string | null;
 }
 
-export interface ThinkingEvent extends BaseEvent {
-  type: "thinking";
-  text: string;
-  collapsible: true; // R3.6
-}
-
-export interface ReadFilesEvent extends BaseEvent {
-  type: "read-files";
-  files: { path: string; span?: [number, number] }[];
+export interface DoneEvent extends BaseEvent {
+  type: "done";
+  ok: boolean;
+  reason?: string | null;
 }
 
 export interface EditFileEvent extends BaseEvent {
@@ -57,11 +62,22 @@ export interface EditFileEvent extends BaseEvent {
   diff: string;
 }
 
-export interface CommandEvent extends BaseEvent {
-  type: "command";
-  command: string;
-  exitCode?: number;
-  errorTag?: string;
+export interface IntentEvent extends BaseEvent {
+  type: "intent";
+  text: string;
+  modelTier: "local-slm" | "edge" | "cloud";
+  contextWindowTokens: number;
+  fallbackReason?: string | null;
+}
+
+export interface ReadFileRef {
+  path: string;
+  span?: [number, number] | null;
+}
+
+export interface ReadFilesEvent extends BaseEvent {
+  type: "read-files";
+  files: ReadFileRef[];
 }
 
 export interface SummaryEvent extends BaseEvent {
@@ -69,19 +85,14 @@ export interface SummaryEvent extends BaseEvent {
   text: string;
 }
 
-export interface ApprovalEvent extends BaseEvent {
-  type: "approval";
-  prompt: string;
-  decision?: "approve" | "reject";
+export interface ThinkingEvent extends BaseEvent {
+  type: "thinking";
+  text: string;
+  collapsible: true;
 }
 
-export interface DoneEvent extends BaseEvent {
-  type: "done";
-  ok: boolean;
-  reason?: string;
-}
+// ── Union Types ───────────────────────────────────────────────────────
 
-/** Discriminated union of all eight row kinds. */
 export type AgentEvent =
   | IntentEvent
   | ThinkingEvent

@@ -15,7 +15,7 @@ This script provisions both required binaries for the host triple:
 
 It is **freshness-aware**: a staged binary is rebuilt whenever its source tree
 is newer than the staged file (or the file is missing). This means editing the
-sidecar (``services/agent``) or hotpath (``crates/hotpath``) source and re-running
+sidecar (``services/gateway``) or hotpath (``crates/hotpath``) source and re-running
 ``make dev`` picks up your changes automatically — no more stale binaries.
 Missing toolchains (cargo / PyInstaller) produce a clear warning and a non-zero
 exit instead of a cryptic Tauri error.
@@ -36,7 +36,7 @@ ROOT = Path(__file__).resolve().parent.parent
 BIN_OUT = ROOT / "apps" / "desktop" / "binaries"
 HOTPATH_CRATE = "zoc-studio-hotpath"
 HOTPATH_SRC = ROOT / "crates" / "hotpath"
-AGENT_SRC = ROOT / "services" / "agent" / "src"
+AGENT_SRC = ROOT / "services" / "gateway" / "src"
 SHARED_SRC = ROOT / "packages" / "shared-types" / "python"
 
 
