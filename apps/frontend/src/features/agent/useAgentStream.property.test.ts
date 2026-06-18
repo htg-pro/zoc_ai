@@ -10,9 +10,12 @@
 import { describe, expect, it } from "vitest";
 import fc from "fast-check";
 
-import type { AgentEvent } from "@zoc-studio/shared-types";
+import type { AgentEvents } from "@zoc-studio/shared-types";
 
 import { mergeEventBySeq, mergeEvents } from "./useAgentStream";
+
+/** The flat row-based Event_Contract union consumed by `useAgentStream`. */
+type AgentEvent = AgentEvents.AgentEvent;
 
 /**
  * Arbitrary producing a valid `AgentEvent` for a given `seq`. A monotonic

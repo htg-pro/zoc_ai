@@ -57,8 +57,9 @@ vi.mock("./ContextBar", () => ({
 vi.mock("./ContextLimitDialog", () => ({
   ContextLimitDialog: () => null,
 }));
-vi.mock("./AgentRunFeed", () => ({
-  default: () => <div data-testid="run-feed-stub" />,
+vi.mock("./RunRegion", () => ({
+  RunRegion: () => <div data-testid="run-region-stub" />,
+  default: () => <div data-testid="run-region-stub" />,
 }));
 vi.mock("./Composer", () => ({
   Composer: () => <div data-testid="composer-stub" />,

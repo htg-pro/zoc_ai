@@ -2,3 +2,13 @@ packages:
   - "apps/*"
   - "packages/*/typescript"
   - "zoc-model"
+
+minimumReleaseAgeExclude:
+  - dompurify@3.4.11
+
+# Security: force patched versions of transitive dependencies flagged by the
+# SCA scan. dompurify (<3.4.9) is pulled in by monaco-editor; js-yaml (<4.2.0)
+# by @eslint/eslintrc. Both bumps stay within the same major (API-compatible).
+overrides:
+  "dompurify@<3.4.9": "^3.4.11"
+  "js-yaml@<4.2.0": "^4.2.0"
