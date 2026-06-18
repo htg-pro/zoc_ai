@@ -1,4 +1,4 @@
-// ESLint v9 flat config for @llama-studio/frontend.
+// ESLint v9 flat config for @zoc-studio/frontend.
 //
 // ESLint 9 no longer reads `.eslintrc.cjs` by default; this flat config
 // restores `pnpm lint` (and `make lint`). It mirrors the previous eslintrc:

@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { File as FileIcon, Folder, Code } from "lucide-react";
-import type { ContextCandidate } from "@llama-studio/shared-types";
+import type { ContextCandidate } from "@zoc-studio/shared-types";
 import { useApp } from "@/lib/store";
 import { cn } from "@/lib/utils";
 

@@ -52,8 +52,8 @@ async def run_test():
         # Assert: The workspace path '/tmp' is visible in the header, indicating the shell is loaded.
         await expect(page.locator("xpath=/html/body/div[1]/div/header/div[1]/div[3]/span").nth(0)).to_be_visible(timeout=15000), "The workspace path '/tmp' is visible in the header, indicating the shell is loaded."
         await page.locator("xpath=/html/body/div[1]/div/div/div/div[1]/div/aside/div[2]/div/div/div/div/div/button[1]").nth(0).scroll_into_view_if_needed()
-        # Assert: The Explorer root 'llama-studio' is visible in the sidebar, showing the project tree is present.
-        await expect(page.locator("xpath=/html/body/div[1]/div/div/div/div[1]/div/aside/div[2]/div/div/div/div/div/button[1]").nth(0)).to_be_visible(timeout=15000), "The Explorer root 'llama-studio' is visible in the sidebar, showing the project tree is present."
+        # Assert: The Explorer root 'zoc-studio' is visible in the sidebar, showing the project tree is present.
+        await expect(page.locator("xpath=/html/body/div[1]/div/div/div/div[1]/div/aside/div[2]/div/div/div/div/div/button[1]").nth(0)).to_be_visible(timeout=15000), "The Explorer root 'zoc-studio' is visible in the sidebar, showing the project tree is present."
         await page.locator("xpath=/html/body/div[1]/div/div/div/div[3]/div/div/div[1]/div/div/div[1]/div/div[1]/button[1]").nth(0).scroll_into_view_if_needed()
         # Assert: The editor tab 'App.tsx' is visible, confirming the main editor pane is open.
         await expect(page.locator("xpath=/html/body/div[1]/div/div/div/div[3]/div/div/div[1]/div/div/div[1]/div/div[1]/button[1]").nth(0)).to_be_visible(timeout=15000), "The editor tab 'App.tsx' is visible, confirming the main editor pane is open."

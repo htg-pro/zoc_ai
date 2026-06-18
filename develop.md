@@ -1573,7 +1573,7 @@ Expected behavior:
 
 Backend source:
 
-- `services/agent/src/llama_studio_agent/v1/agent_run.py`
+- `services/agent/src/zoc_studio_agent/v1/agent_run.py`
   - Lines 67-84 define Ask mode as read-only by restricting real tools to
     read/search/status tools.
   - Lines 242-246 pass only `allowed_tools=ASK_MODE_TOOLS` when
@@ -1583,7 +1583,7 @@ Backend source:
   - Result: Ask mode is read-only for filesystem writes, but still plans and
     updates to-dos.
 
-- `services/agent/src/llama_studio_agent/agent/orchestrator.py`
+- `services/agent/src/zoc_studio_agent/agent/orchestrator.py`
   - Lines 376-379 force the model to call `todo_write` before doing anything.
   - Lines 383-384 expose `allowed_tools` and `skip_planner` in
     `OrchestratorConfig`.
@@ -1639,7 +1639,7 @@ Frontend source:
 
 1. Add an explicit Ask run profile.
 
-In `services/agent/src/llama_studio_agent/v1/agent_run.py`, compute an
+In `services/agent/src/zoc_studio_agent/v1/agent_run.py`, compute an
 `is_ask` flag and pass Ask-specific orchestration config:
 
 ```python
@@ -1657,7 +1657,7 @@ config=OrchestratorConfig(
 
 2. Extend `OrchestratorConfig`.
 
-In `services/agent/src/llama_studio_agent/agent/orchestrator.py`:
+In `services/agent/src/zoc_studio_agent/agent/orchestrator.py`:
 
 ```python
 enable_todos: bool = True

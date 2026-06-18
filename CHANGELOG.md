@@ -14,7 +14,7 @@ removed.
 - **Agent**: FastAPI sidecar (Python 3.11+) shipped as a single-file
   PyInstaller binary via Tauri's `externalBin`. No system Python required at
   runtime.
-- **Hot path**: Standalone Rust crate `llama-studio-hotpath` (PTY, fs watcher,
+- **Hot path**: Standalone Rust crate `zoc-studio-hotpath` (PTY, fs watcher,
   code indexer) invoked as a child CLI from the agent. No PyO3 coupling.
 - **Shared schema**: Pydantic v2 models are the single source of truth and are
   projected to TypeScript via `pnpm schema:generate`.
@@ -38,7 +38,7 @@ removed.
 
 - The Electron app, its IPC protocol, and the `legacy/python/` agent are
   removed. Workspaces created by the legacy app can be imported on first run.
-- Configuration files moved from `~/.config/llama-studio-electron/` to the
+- Configuration files moved from `~/.config/zoc-studio-electron/` to the
   platform-appropriate Tauri config directory.
 - Plugin/extension surface from the legacy app is **not** carried over.
 

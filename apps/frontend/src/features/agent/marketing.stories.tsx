@@ -1,8 +1,8 @@
 import type { Story } from "@ladle/react";
 import { useEffect, type ReactNode } from "react";
 import { Paperclip, Send, Sparkles } from "lucide-react";
-import type { Message, ToolCall, ToolDescriptor } from "@llama-studio/shared-types";
-import { AgentTimeline } from "./AgentTimeline";
+import type { Message, ToolCall, ToolDescriptor } from "@zoc-studio/shared-types";
+import { AgentRunFeedView } from "./AgentRunFeed";
 import { MessageItem } from "./MessageItem";
 import { ToolCallCard } from "./ToolCallCard";
 import { MOCK_PLAN } from "@/lib/mock-data";
@@ -153,7 +153,7 @@ export const WorkflowPlanView: Story = () => {
   return (
     <PanelFrame>
       <div className="flex-1 overflow-auto py-3">
-        <AgentTimeline />
+        <AgentRunFeedView events={[]} />
       </div>
     </PanelFrame>
   );
@@ -192,7 +192,7 @@ export const ToolApproval: Story = () => {
   return (
     <PanelFrame>
       <div className="flex-1 space-y-2 overflow-auto px-3 py-3">
-        <AgentTimeline />
+        <AgentRunFeedView events={[]} />
       </div>
     </PanelFrame>
   );

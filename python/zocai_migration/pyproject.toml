@@ -1,0 +1,34 @@
+[build-system]
+requires = ["hatchling>=1.25"]
+build-backend = "hatchling.build"
+
+[project]
+name = "zocai-migration"
+version = "0.1.0"
+description = "Build-gated clean-rebuild migration controller for the Zoc AI Ecosystem (Requirement 13)."
+requires-python = ">=3.11"
+license = { text = "MIT" }
+dependencies = []
+
+[project.scripts]
+zocai-migration = "zocai_migration.cli:main"
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8",
+    "hypothesis>=6.0",
+    "ruff>=0.6",
+    "mypy>=1.11",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/zocai_migration"]
+
+[tool.hatch.build.targets.sdist]
+include = ["src/zocai_migration"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = [
+    "integration: real-toolchain integration tests that invoke live language builds (may be slow)",
+]

@@ -1,7 +1,7 @@
 /**
  * Shared fast-check arbitraries for the studio-ui-redesign property tests.
  *
- * These generate values over the real `@llama-studio/shared-types` unions so
+ * These generate values over the real `@zoc-studio/shared-types` unions so
  * the property tests exercise the same shapes the runtime consumes. Edge cases
  * called out in the design prework (empty lists, whitespace-only messages, odd
  * diffs, `total = 0` plans, out-of-order / duplicate `seq`, reduced-motion
@@ -19,7 +19,7 @@ import type {
   SessionStatus,
   ToolCall,
   ToolCallStatus,
-} from "@llama-studio/shared-types";
+} from "@zoc-studio/shared-types";
 
 const PLAN_STEP_STATUSES: PlanStepStatus[] = [
   "pending",

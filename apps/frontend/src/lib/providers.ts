@@ -39,7 +39,7 @@ export interface ProviderConfig {
   modelsFetchedAt?: string;
 }
 
-const STORE_KEY = "llama-studio.providers.v1";
+const STORE_KEY = "zoc-studio.providers.v1";
 
 /** Built-in OpenAI-compatible providers, shown by default. */
 export const BUILTIN_PROVIDERS: ProviderConfig[] = [

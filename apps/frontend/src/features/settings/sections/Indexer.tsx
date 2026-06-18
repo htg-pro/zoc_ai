@@ -4,7 +4,7 @@ import type {
   EmbeddingProvider,
   EmbeddingSettings,
   IndexConfig,
-} from "@llama-studio/shared-types";
+} from "@zoc-studio/shared-types";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";

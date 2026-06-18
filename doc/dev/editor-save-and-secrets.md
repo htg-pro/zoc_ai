@@ -83,7 +83,7 @@ the key appeared lost across restarts.
 
 The Tauri-vs-browser branch is gated on `isTauri()` (from `tauri-bridge`) rather
 than probing `import("@tauri-apps/api/core")`, which is both faster and
-unambiguous. Shadow keys are namespaced under `llama-studio.secret.<key>`.
+unambiguous. Shadow keys are namespaced under `zoc-studio.secret.<key>`.
 
 ### Why the picker showed "NO KEY" while Settings said "configured"
 
@@ -125,7 +125,7 @@ These are frontend changes bundled into the Tauri binary at build time
 them — rebuild so the fresh Vite bundle is packaged:
 
 ```bash
-pnpm --filter @llama-studio/desktop build   # runs tauri:prepare → vite build → dist
+pnpm --filter @zoc-studio/desktop build   # runs tauri:prepare → vite build → dist
 # or, full release:  make release
 ```
 

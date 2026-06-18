@@ -6,12 +6,12 @@ The Tauri bundle is the Rust shell **plus three prebuilt artifacts**:
 
 | Artifact | Produced by | Where it lands |
 |----------|-------------|----------------|
-| Frontend (`dist/`) | `pnpm --filter @llama-studio/frontend build` | `apps/frontend/dist` (`frontendDist`) |
-| Hot-path CLI | `cargo build --release -p llama-studio-hotpath` | `apps/desktop/binaries/llama-studio-hotpath-<triple>` (`externalBin`) |
-| FastAPI **sidecar** | `scripts/bundle_sidecar.py` (PyInstaller) | `apps/desktop/binaries/llama-studio-agent-<triple>` (`externalBin`) |
+| Frontend (`dist/`) | `pnpm --filter @zoc-studio/frontend build` | `apps/frontend/dist` (`frontendDist`) |
+| Hot-path CLI | `cargo build --release -p zoc-studio-hotpath` | `apps/desktop/binaries/zoc-studio-hotpath-<triple>` (`externalBin`) |
+| FastAPI **sidecar** | `scripts/bundle_sidecar.py` (PyInstaller) | `apps/desktop/binaries/zoc-studio-agent-<triple>` (`externalBin`) |
 
 Most application logic lives in the **Python sidecar**. The Rust shell spawns
-it via Tauri's `shell().sidecar("llama-studio-agent")`, which resolves the
+it via Tauri's `shell().sidecar("zoc-studio-agent")`, which resolves the
 bundled `externalBin` next to the executable — there is no fallback to a repo
 `target/` path in an installed build.
 
@@ -20,7 +20,7 @@ bundled `externalBin` next to the executable — there is no fallback to a repo
 Previously, `beforeBuildCommand` only rebuilt the **frontend**. The sidecar and
 hotpath `externalBin`s were whatever stale binaries happened to be sitting in
 `apps/desktop/binaries/`. So a direct `tauri build` (or an IDE build, or
-`pnpm --filter @llama-studio/desktop build`) would package an **old Python
+`pnpm --filter @zoc-studio/desktop build`) would package an **old Python
 backend** even though you'd changed the source — the classic "I rebuilt but the
 app's functions didn't update" symptom, on every platform.
 
@@ -43,7 +43,7 @@ invoked, on Linux / macOS / Windows.
 
 `scripts/release.sh` already builds the frontend, hotpath, and sidecar itself
 before invoking Tauri. To avoid bundling the (slow) sidecar twice, it runs the
-Tauri build with `LLAMA_STUDIO_SKIP_PREPARE=1`, which makes
+Tauri build with `ZOC_STUDIO_SKIP_PREPARE=1`, which makes
 `prepare_tauri_build.sh` a no-op. Use the same flag if you've just bundled the
 sidecar yourself and want a faster Tauri build.
 
@@ -71,5 +71,5 @@ make release
 pnpm -w run tauri:prepare
 
 # Direct Tauri build — now always ships fresh code
-pnpm --filter @llama-studio/desktop build
+pnpm --filter @zoc-studio/desktop build
 ```

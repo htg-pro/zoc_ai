@@ -1,5 +1,4 @@
 import { Button } from "@/components/ui/button";
-import { useEffect } from "react";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
@@ -10,13 +9,12 @@ import { Kbd } from "@/components/ui/kbd";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Separator } from "@/components/ui/separator";
-import { AgentTimeline } from "@/features/agent/AgentTimeline";
+import { AgentRunFeedView } from "@/features/agent/AgentRunFeed";
 import { ToolCallCard } from "@/features/agent/ToolCallCard";
 import { DiffCard } from "@/features/agent/DiffCard";
 import { MessageItem } from "@/features/agent/MessageItem";
-import { MOCK_DIFF, MOCK_MESSAGES, MOCK_PLAN, MOCK_TOOL_CALL } from "@/lib/mock-data";
-import { useApp } from "@/lib/store";
-import type { ToolCall } from "@llama-studio/shared-types";
+import { MOCK_DIFF, MOCK_MESSAGES, MOCK_TOOL_CALL } from "@/lib/mock-data";
+import type { ToolCall } from "@zoc-studio/shared-types";
 
 const TOOL_STATES: ToolCall[] = (["pending", "running", "succeeded", "failed", "needs_approval"] as const).map((status, i) => ({
   ...MOCK_TOOL_CALL,
@@ -100,7 +98,7 @@ export function ShowcaseView() {
 
         <Story title="Agent workflow timeline">
           <div className="max-w-sm">
-            <AgentWorkflowShowcase />
+            <AgentRunFeedView events={[]} />
           </div>
         </Story>
 
@@ -151,23 +149,6 @@ export function ShowcaseView() {
       </div>
     </ScrollArea>
   );
-}
-
-function AgentWorkflowShowcase() {
-  useEffect(() => {
-    useApp.setState({
-      agentItems: [
-        {
-          type: "plan",
-          id: `plan-${MOCK_PLAN.id}`,
-          plan: MOCK_PLAN,
-          status: "pending",
-          createdAt: MOCK_PLAN.created_at,
-        },
-      ],
-    });
-  }, []);
-  return <AgentTimeline />;
 }
 
 function Story({ title, children }: { title: string; children: React.ReactNode }) {

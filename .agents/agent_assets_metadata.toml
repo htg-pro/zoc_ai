@@ -3,6 +3,6 @@ outputs = []
 
 [[generated]]
 id = "xa484RySAKwqtaY_4OR_P"
-uri = "file://attached_assets/generated_images/llama_studio_icon_source.png"
+uri = "file://attached_assets/generated_images/zoc_studio_icon_source.png"
 type = "image"
 title = "generated_image"

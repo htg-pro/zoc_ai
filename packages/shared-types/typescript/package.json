@@ -1,5 +1,5 @@
 {
-  "name": "@llama-studio/shared-types",
+  "name": "@zoc-studio/shared-types",
   "version": "2.0.0",
   "private": true,
   "type": "module",

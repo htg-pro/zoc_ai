@@ -82,8 +82,8 @@ export const DEFAULT_TOP_K = 40;
 export const DEFAULT_REPEAT_PENALTY = 1.1;
 export const DEFAULT_MAX_TOKENS = 4096;
 
-const MODELS_KEY = "llama-studio.local-models.v1";
-const DEFAULTS_KEY = "llama-studio.task-defaults.v1";
+const MODELS_KEY = "zoc-studio.local-models.v1";
+const DEFAULTS_KEY = "zoc-studio.task-defaults.v1";
 
 // Pub/sub so other surfaces (e.g. the right-panel ModelPicker) can react
 // when the Settings page adds or removes a local model. localStorage only

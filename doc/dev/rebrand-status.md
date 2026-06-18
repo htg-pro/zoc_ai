@@ -2,13 +2,13 @@
 
 ## ✅ Done (this pass) — user-facing branding
 
-Every **display** occurrence of "Llama Studio" → **"Zoc AI"** across all 41
+Every **display** occurrence of "Zoc Studio" → **"Zoc AI"** across all 41
 files that contained it (README, docs, `CHANGELOG`, `tauri.conf.json`
 `productName` + window title, `package.json`/`pyproject.toml` descriptions, UI
 strings in `TopBar`, `OnboardingWizard`, `Appearance`, `ShowcaseView`,
 `mock-data`, the agent system prompt, etc.).
 
-This is safe because "Llama Studio" (with a space) is **only ever display
+This is safe because "Zoc Studio" (with a space) is **only ever display
 text** — it never appears in a code identifier. Verified: **197 backend + 122
 frontend tests pass**, configs still valid JSON.
 
@@ -25,12 +25,12 @@ this environment). They must be renamed as **one atomic, verified pass**:
 
 | Current | Proposed | Referenced by (must change together) |
 |---------|----------|--------------------------------------|
-| Python pkg `llama_studio_agent` (dir + ~162 refs) | `zoc_agent` | all `src`/`tests` imports, `pyproject.toml` packaging, `bundle_sidecar.py` (`--name`, `--paths`, `--collect-submodules`), `scripts/launch.py`, entry points |
-| npm scope `@llama-studio/*` | `@zoc/*` | every `pnpm --filter` in `package.json`, `Makefile`, `release.sh`, `tauri.conf.json` `beforeDev/BuildCommand`, each workspace `package.json` |
-| cargo crates `llama-studio`, `llama-studio-hotpath` | `zoc`, `zoc-hotpath` | `Cargo.toml` workspace + crate manifests, `cargo build -p` invocations |
-| binaries `llama-studio-agent`, `llama-studio-hotpath` | `zoc-agent`, `zoc-hotpath` | `tauri.conf.json` `externalBin`, `apps/desktop/src/sidecar.rs` `shell().sidecar("…")`, `bundle_sidecar.py` output name, `release.sh`/`prepare_tauri_build.sh` staging paths |
-| env vars `LLAMA_STUDIO_*` | `ZOC_*` | Rust shell, Python settings, scripts (`LLAMA_STUDIO_AGENT_PORT` handshake, `LLAMA_STUDIO_SKIP_PREPARE`, `LLAMA_STUDIO_TARGET_TRIPLE`, …) |
-| Tauri `identifier` `ai.llama.studio` | `ai.zoc.studio` | changes the OS app-data dir + keychain namespace (a deliberate, one-time decision) |
+| Python pkg `zoc_studio_agent` (dir + ~162 refs) | `zoc_agent` | all `src`/`tests` imports, `pyproject.toml` packaging, `bundle_sidecar.py` (`--name`, `--paths`, `--collect-submodules`), `scripts/launch.py`, entry points |
+| npm scope `@zoc-studio/*` | `@zoc/*` | every `pnpm --filter` in `package.json`, `Makefile`, `release.sh`, `tauri.conf.json` `beforeDev/BuildCommand`, each workspace `package.json` |
+| cargo crates `zoc-studio`, `zoc-studio-hotpath` | `zoc`, `zoc-hotpath` | `Cargo.toml` workspace + crate manifests, `cargo build -p` invocations |
+| binaries `zoc-studio-agent`, `zoc-studio-hotpath` | `zoc-agent`, `zoc-hotpath` | `tauri.conf.json` `externalBin`, `apps/desktop/src/sidecar.rs` `shell().sidecar("…")`, `bundle_sidecar.py` output name, `release.sh`/`prepare_tauri_build.sh` staging paths |
+| env vars `ZOC_STUDIO_*` | `ZOC_*` | Rust shell, Python settings, scripts (`ZOC_STUDIO_AGENT_PORT` handshake, `ZOC_STUDIO_SKIP_PREPARE`, `ZOC_STUDIO_TARGET_TRIPLE`, …) |
+| Tauri `identifier` `ai.zoc.studio` | `ai.zoc.studio` | changes the OS app-data dir + keychain namespace (a deliberate, one-time decision) |
 
 **How to do it safely (recommended):** one PR, change all references for a
 single identifier at a time, running `cargo check`, `pytest`, `vitest`, and

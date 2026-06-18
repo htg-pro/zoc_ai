@@ -8,7 +8,7 @@ Tauri v2 binary with a bundled FastAPI sidecar.
 ## Architecture
 
 ```
-llama-studio/
+zoc-studio/
 ├── apps/
 │   ├── desktop/          # Tauri v2 shell (Rust) — owns sidecar + window
 │   └── frontend/         # React + Vite + TS + Tailwind + shadcn/ui
@@ -60,7 +60,7 @@ pnpm dev
 pnpm dev               # full stack via Tauri
 pnpm dev:frontend      # frontend only (Vite on :1420)
 pnpm dev:agent         # agent only (auto-picked loopback port)
-cargo run -p llama-studio-hotpath -- version
+cargo run -p zoc-studio-hotpath -- version
 ```
 
 Quality gates:
@@ -80,7 +80,7 @@ fans it out to every manifest (`package.json`, `Cargo.toml`,
 
 ```bash
 make release           # frontend → sidecar → hotpath → Tauri → dist/
-make zip               # release + produce llama-studio-v<version>.zip
+make zip               # release + produce zoc-studio-v<version>.zip
 ```
 
 Both the release script and the zip script **fail hard** if installers are
@@ -104,17 +104,17 @@ make zip-source-only       # also runs verify_zip.py --source-only
 What `make release` does, step by step:
 
 1. `python3 scripts/stamp_version.py` — stamp `VERSION` everywhere.
-2. `pnpm --filter @llama-studio/frontend build` — Vite production bundle.
-3. `cargo build --release -p llama-studio-hotpath` — Rust hot-path crate.
+2. `pnpm --filter @zoc-studio/frontend build` — Vite production bundle.
+3. `cargo build --release -p zoc-studio-hotpath` — Rust hot-path crate.
 4. `python3 scripts/bundle_sidecar.py` — PyInstaller `--onefile` build of the
    FastAPI agent, copied to
-   `apps/desktop/binaries/llama-studio-agent-<rust-target-triple>` so Tauri's
+   `apps/desktop/binaries/zoc-studio-agent-<rust-target-triple>` so Tauri's
    `externalBin` picks it up.
-5. `pnpm --filter @llama-studio/desktop build` — Tauri bundler. Both
-   `llama-studio-agent` (PyInstaller) and `llama-studio-hotpath` (Rust) are
+5. `pnpm --filter @zoc-studio/desktop build` — Tauri bundler. Both
+   `zoc-studio-agent` (PyInstaller) and `zoc-studio-hotpath` (Rust) are
    registered as `externalBin` in `tauri.conf.json`, so the installer ships
    the hotpath binary next to the main executable. At runtime the Tauri shell
-   resolves it via `current_exe()` and exports `LLAMA_STUDIO_HOTPATH_BIN` to
+   resolves it via `current_exe()` and exports `ZOC_STUDIO_HOTPATH_BIN` to
    the agent sidecar — no reliance on `PATH` or a developer's `target/` dir.
    Outputs land under `target/release/bundle/`; the script collects all
    installer file types **and** macOS `.app` bundles (directories) into
@@ -148,7 +148,7 @@ uploaded as workflow artifacts (`installers-linux`, `installers-macos`,
 
 A follow-up `package` job downloads every per-OS `dist/` tree, merges them
 into a single `dist/installers/`, and runs `bash scripts/make_zip.sh` (plus
-`scripts/verify_zip.py`) to publish the combined `llama-studio-v<version>.zip`.
+`scripts/verify_zip.py`) to publish the combined `zoc-studio-v<version>.zip`.
 
 Triggers:
 
@@ -180,7 +180,7 @@ The Tauri updater is **disabled by default**. To enable, in
 "plugins": {
   "updater": {
     "active": true,
-    "endpoints": ["https://releases.llama.studio/updates/{{target}}/{{arch}}/{{current_version}}"],
+    "endpoints": ["https://releases.zoc.studio/updates/{{target}}/{{arch}}/{{current_version}}"],
     "pubkey": "<your minisign pubkey>"
   }
 }
@@ -192,13 +192,13 @@ and host signed update manifests at that endpoint. See
 ## Troubleshooting
 
 - **`tauri: command not found`** — install the Tauri CLI:
-  `pnpm --filter @llama-studio/desktop add -D @tauri-apps/cli`.
+  `pnpm --filter @zoc-studio/desktop add -D @tauri-apps/cli`.
 - **Sidecar bundling fails** — install PyInstaller:
   `uv pip install pyinstaller`. Re-run `make sidecar`.
 - **Webview missing on Linux** — install `webkit2gtk-4.1`, `libsoup-3.0`,
   and platform Tauri prerequisites.
 - **Frontend can't reach agent** — check the workflow logs; the agent prints
-  `LLAMA_STUDIO_AGENT_PORT=<n>` on startup. The Tauri shell only forwards
+  `ZOC_STUDIO_AGENT_PORT=<n>` on startup. The Tauri shell only forwards
   loopback URLs.
 - **Schema drift CI failure** — edit Pydantic models, run
   `pnpm schema:generate`, commit both Python and TS sides.
@@ -207,7 +207,7 @@ and host signed update manifests at that endpoint. See
   `scripts/prepare_tauri_build.sh` to rebuild the frontend **and** regenerate
   those binaries on every `tauri build`, so a direct build can't ship an old
   sidecar. If you bundle the sidecar yourself first, set
-  `LLAMA_STUDIO_SKIP_PREPARE=1` to skip the (slow) re-bundle.
+  `ZOC_STUDIO_SKIP_PREPARE=1` to skip the (slow) re-bundle.
 
 ## Conventions
 

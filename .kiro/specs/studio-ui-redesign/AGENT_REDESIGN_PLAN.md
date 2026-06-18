@@ -265,21 +265,21 @@ Key UI differences from today:
 
 ### Backend (in this order)
 
-**1. `services/agent/src/llama_studio_agent/agent/orchestrator.py`**
+**1. `services/agent/src/zoc_studio_agent/agent/orchestrator.py`**
 - Add a `TODO_WRITE_TOOL` schema: `{name: "todo_write", input: {todos: [{content, status}]}}`.
 - Extend the system prompt: *"Before doing anything else, call `todo_write` with a short checklist specific to this request. Update it as you complete each item."*
 - In the dispatch loop, special-case `todo_write`: don't route it to the filesystem tool dispatcher — instead update `run.todos` in memory and emit a `todo_update` SSE event, then return a tool result like `"Todo list updated."` so the LLM continues normally.
 - Track `has_changes`: set `True` the first time `write_file` / `apply_patch` / `run_command` (with side effects) is dispatched. On the **first** such call, trigger checkpoint creation (see #3) and emit `checkpoint.created`.
 - Remove the call to `build_plan()` / any pre-generated step list — the to-do list now comes from the LLM itself via `todo_write`.
 
-**2. `services/agent/src/llama_studio_agent/v1/agent_run.py`**
+**2. `services/agent/src/zoc_studio_agent/v1/agent_run.py`**
 - `POST /agent/run`: create one `AgentRun` row (`mode`, `session_id`). For `mode="agent"`, call `prepare_workspace()` once (your existing `shutil.copytree`) to create the isolated copy — do this **before** opening the SSE stream, not per-task.
 - On loop end: if `has_changes` → `build_workspace_diff()` once, store on `run.diff`, set `status="awaiting_review"`, emit `diff.ready`. If not → `status="applied"`, emit `run.applied` directly (no review step).
 - New endpoint `POST /agent/runs/{run_id}/apply`: copy changed files from isolated copy → main workspace using the diff already computed; set `status="applied"`; emit `run.applied`.
 - New endpoint `POST /agent/runs/{run_id}/discard`: `shutil.rmtree(isolated_copy)`; set `status="discarded"`; emit `run.discarded`.
 - For `mode="ask"`: skip `prepare_workspace`, checkpoint, and diff entirely — orchestrator runs directly against the main workspace read-only tools.
 
-**3. `services/agent/src/llama_studio_agent/agent/replit_workflow.py`**
+**3. `services/agent/src/zoc_studio_agent/agent/replit_workflow.py`**
 - **Delete** `_task_specs()` — the keyword-based "website? agent workflow? generic?" template generator. This is the single biggest source of Bug 3.
 - **Delete** `_run_task()` and the per-task `_validate_repair_loop()` — folded into the orchestrator's single end-of-run validation.
 - **Keep** `prepare_workspace()`, `build_workspace_diff()`, `run_validation_suite()` — these are good primitives, just called once per run instead of once per task.
@@ -287,11 +287,11 @@ Key UI differences from today:
 - **Add** `apply_run(run, main_workspace_path)`: apply `run.diff` to `main_workspace_path` (file copy or `git apply`).
 - **Add** `discard_run(run)`: remove the isolated copy.
 
-**4. `services/agent/src/llama_studio_agent/v1/replit_workflow.py`**
+**4. `services/agent/src/zoc_studio_agent/v1/replit_workflow.py`**
 - **Remove** the `POST /plans` route and all `ReplitPlan` / `ReplitTask` CRUD.
 - Optional: add `GET /sessions/{id}/runs` returning past `AgentRun` summaries (for a run-history view) — repurposes the old plan-history concept without the CRUD/approval lifecycle.
 
-**5. `services/agent/src/llama_studio_agent/agent/planner.py`**
+**5. `services/agent/src/zoc_studio_agent/agent/planner.py`**
 - Either delete entirely, or repurpose its one LLM call as an *optional, non-blocking* Ask/Agent mode suggestion (pre-selects the toggle in the UI based on the prompt — purely cosmetic, never gates execution). Lowest priority; safe to leave for later.
 
 ### Frontend (in this order)

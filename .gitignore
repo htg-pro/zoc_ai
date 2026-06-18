@@ -26,8 +26,8 @@ apps/desktop/target/
 # Release artifacts
 dist/
 dist/sidecar/
-apps/desktop/binaries/llama-studio-agent-*
-llama-studio-v*.zip
+apps/desktop/binaries/zoc-studio-agent-*
+zoc-studio-v*.zip
 
 # Editor
 .vscode/

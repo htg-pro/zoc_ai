@@ -9,7 +9,7 @@ import {
   Undo2,
   WholeWord,
 } from "lucide-react";
-import type { EmbedderInfo, IndexQueryResult } from "@llama-studio/shared-types";
+import type { EmbedderInfo, IndexQueryResult } from "@zoc-studio/shared-types";
 import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Badge } from "@/components/ui/badge";

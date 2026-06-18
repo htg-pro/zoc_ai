@@ -23,7 +23,7 @@ import {
   sessionStats,
   tabCounts as computeTabCounts,
 } from "@/lib/session-query";
-import type { Session } from "@llama-studio/shared-types";
+import type { Session } from "@zoc-studio/shared-types";
 
 /* ── helpers ───────────────────────────────────────────────────── */
 

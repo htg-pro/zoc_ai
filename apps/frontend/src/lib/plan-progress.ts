@@ -8,7 +8,7 @@
  *   queued     → "pending"
  * A step counts as complete only when its status is exactly `done` (R9.1).
  */
-import type { Plan, PlanStep, TodoItem } from "@llama-studio/shared-types";
+import type { Plan, PlanStep, TodoItem } from "@zoc-studio/shared-types";
 
 export interface PlanProgress {
   /** Number of steps whose status is exactly `done`. */

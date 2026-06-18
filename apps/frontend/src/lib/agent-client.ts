@@ -1,12 +1,21 @@
 /**
- * Typed client for the FastAPI agent sidecar (Phase 4 wiring).
+ * Typed client for the FastAPI sidecar (editor-support + slash-command paths).
  *
  * Resolves its loopback port via the Tauri `agent_port` command and falls
- * back to `VITE_AGENT_PORT` in browser-only dev. Streaming endpoints are
- * built by opening a GET SSE subscription on `/agent/events` while POSTing
- * the trigger (`/agent/run` or `/commands/{id}/run`) in the background, so
- * a single `AsyncIterable<AgentEvent>` cleanly covers both ad-hoc prompts
- * and slash commands.
+ * back to `VITE_AGENT_PORT` in browser-only dev.
+ *
+ * NOTE (zoc-agent-ecosystem-merge, task 9.2): the legacy **agent run / event /
+ * approval transport** that previously lived here has been removed. The agent
+ * run is now driven by the Gateway via `features/agent/gateway-client.ts`
+ * (`postAgentRun` / `postAgentDecision`) and consumed by the single SSE client
+ * `features/agent/useAgentStream.ts`. The `runAgent` streaming method, the
+ * bespoke `/agent/events` SSE machinery (`eventStream`/`pumpSse`/
+ * `resilientEventStream`), the `seq-cursor`/`reconnect` resume helpers, and the
+ * legacy `resolveApproval`/`retryApproval` approval transport are all gone
+ * (design.md "Deduplication and Collision-Resolution Map", table C). What
+ * remains are the editor-support endpoints (sessions, messages, review,
+ * inline-edit, providers, settings, indexer, terminal, memory, permissions,
+ * tools) and the slash-command list/run path the surviving UI still uses.
  */
 import type {
   AgentEvent,
@@ -26,7 +35,6 @@ import type {
   PostMessageRequest,
   ProjectRulesInfo,
   ProviderDescriptor,
-  RunAgentRequest,
   RunSlashCommandRequest,
   Session,
   SettingsSnapshot,
@@ -37,55 +45,15 @@ import type {
   ToolGrant,
   UpdateIndexConfigRequest,
   UpdateSettingsRequest,
-} from "@llama-studio/shared-types";
+} from "@zoc-studio/shared-types";
 
-import { sseJson } from "./sse";
 import { agentPort, agentStatus, isTauri } from "./tauri-bridge";
-import { nextReconnect } from "./reconnect";
-import { advance, initialCursor, subscribeCursor, type SeqCursor } from "./seq-cursor";
-
-/**
- * Thrown when the agent event stream is interrupted and cannot be
- * re-established within the bounded number of reconnection attempts (R8.9).
- * The store consumes this as an `error` lifecycle transition.
- */
-export class StreamLostError extends Error {
-  constructor(detail: string) {
-    super(detail);
-    this.name = "StreamLostError";
-  }
-}
 
 let cached: AgentClient | null = null;
 let cachedPort: number | null = null;
 const DESKTOP_AGENT_PORT_WAIT_MS = 20_000;
 const DESKTOP_AGENT_PORT_POLL_MS = 250;
 const DESKTOP_AGENT_HEALTH_WAIT_MS = 10_000;
-
-/**
- * Per-session sequence cursor — the single seq authority (R1.4, R1.5) shared
- * with ingestion and the run machine. Used to suppress replay of historical
- * events when (re)subscribing to `/agent/events` after a previous run on the
- * same session: the `since_seq` resubscribe cursor is sourced from
- * `subscribeCursor(cursor)` so it always matches what ingestion has applied,
- * and the floor is preserved across run starts (never reset to 0). Exported
- * for tests via the `__setLastSeq`/`__resetLastSeq` hooks.
- */
-const cursors = new Map<string, SeqCursor>();
-
-function getCursor(sessionId: string): SeqCursor {
-  return cursors.get(sessionId) ?? initialCursor();
-}
-
-export function __setLastSeq(sessionId: string, seq: number): void {
-  const cursor = getCursor(sessionId);
-  cursors.set(sessionId, advance(cursor, seq));
-}
-
-export function __resetLastSeq(sessionId?: string): void {
-  if (sessionId) cursors.delete(sessionId);
-  else cursors.clear();
-}
 
 export interface SpawnTerminalOpts {
   args?: string[];
@@ -153,7 +121,6 @@ export interface AgentClient {
   deleteSession(id: string): Promise<void>;
   listMessages(sessionId: string): Promise<Message[]>;
   postMessage(sessionId: string, req: PostMessageRequest): Promise<Message>;
-  runAgent(sessionId: string, req: RunAgentRequest, signal?: AbortSignal): AsyncIterable<AgentEvent>;
   /** Apply an isolated (review-before-apply) run's changes onto the real
    *  workspace. The single explicit approval gate for agent-authored edits. */
   applyRun(sessionId: string, runId: string): Promise<ApplyRunResult>;
@@ -182,8 +149,6 @@ export interface AgentClient {
   setPermissions(sessionId: string, grants: PermissionGrant[]): Promise<PermissionGrant[]>;
   listToolGrants(sessionId: string): Promise<ToolGrant[]>;
   setToolGrants(sessionId: string, grants: ToolGrant[]): Promise<ToolGrant[]>;
-  resolveApproval(sessionId: string, callId: string, allowed: boolean): Promise<{ resolved: boolean }>;
-  retryApproval(sessionId: string, callId: string, signal?: AbortSignal): AsyncIterable<AgentEvent>;
   listTools(): Promise<ToolDescriptor[]>;
   listProviders(): Promise<ProviderDescriptor[]>;
   discoverModels(baseUrl: string, apiKey: string | null): Promise<DiscoveredModel[]>;
@@ -299,81 +264,49 @@ async function jsonFetch<T>(url: string, init: RequestInit = {}): Promise<T> {
 }
 
 /**
- * Open the session's SSE event stream, fire the given trigger POST, and
- * yield events until the trigger has settled and a `done`/`error` event
- * arrives (or the caller aborts).
- *
- * The agent backend's run / slash-command endpoints return their final
- * payload synchronously over POST while publishing events on a shared
- * per-session bus, which the `/agent/events` SSE handler replays-then-
- * subscribes. To make this reliable for the UI we must:
- *
- *   1. Open the SSE response *first*, awaiting headers, so the
- *      subscription is registered on the bus before the trigger fires.
- *   2. Pass `since_seq=<lastSeenForSession>` so we don't replay events
- *      from previous runs on the same session.
- *   3. Only treat a `done`/`error` event as the end of the stream once
- *      the trigger POST has actually settled — otherwise a replayed
- *      `done` from a prior run could close the iterator before the new
- *      run emits anything.
+ * Minimal text/event-stream parser exposed as an async iterator over typed
+ * JSON payloads (inlined from the former `lib/sse.ts`, which was removed in the
+ * agent-transport dedup). Used by `terminalStream` and the slash-command run
+ * path. Each yielded value is the parsed `data:` line; multi-line `data:`
+ * blocks are concatenated with newlines per the SSE spec.
  */
-/** Open the `/agent/events` SSE subscription from the current resume cursor. */
-async function openEventsSse(
-  v1: string,
-  sessionId: string,
-  signal?: AbortSignal,
-): Promise<Response> {
-  const since = subscribeCursor(getCursor(sessionId));
-  const eventsUrl = `${v1}/sessions/${sessionId}/agent/events?since_seq=${since}`;
-  const eventsHeaders = new Headers({ Accept: "text/event-stream" });
-  // Send Last-Event-ID header for SSE reconnection support.
-  if (since > 0) {
-    eventsHeaders.set("Last-Event-ID", String(since));
+async function* sseJson<T = unknown>(
+  url: string,
+  init: RequestInit & { signal?: AbortSignal } = {},
+): AsyncIterable<T> {
+  const headers = new Headers(init.headers ?? {});
+  headers.set("Accept", "text/event-stream");
+  if (init.body && !headers.has("Content-Type")) {
+    headers.set("Content-Type", "application/json");
   }
-  const res = await fetch(eventsUrl, { headers: eventsHeaders, signal });
+  const res = await fetch(url, { ...init, headers });
   if (!res.ok || !res.body) {
-    throw new Error(`SSE ${eventsUrl} → http ${res.status}`);
+    const detail =
+      res.status === 404
+        ? `SSE ${url} → http 404 (session not found — the agent may need a valid session created first)`
+        : `SSE ${url} → http ${res.status}`;
+    throw new Error(detail);
   }
-  return res;
-}
-
-/**
- * Parse an open SSE response body into typed events, advancing the per-session
- * `SeqCursor` (so a reconnect resumes after the last processed event).
- * Terminates the stream on `error`, or on `done` once `shouldEndOnDone()` is
- * true. The reader is always cancelled on exit.
- */
-async function* pumpSse(
-  reader: ReadableStreamDefaultReader<Uint8Array>,
-  sessionId: string,
-  shouldEndOnDone: () => boolean,
-): AsyncIterable<AgentEvent> {
+  const reader = res.body.getReader();
   const decoder = new TextDecoder("utf-8");
   let buffer = "";
   try {
-    outer: while (true) {
+    while (true) {
       const { value, done } = await reader.read();
-      if (done) break;
+      if (done) {
+        if (buffer.trim()) {
+          const ev = parseSsePayload(buffer);
+          if (ev !== undefined) yield ev as T;
+        }
+        return;
+      }
       buffer += decoder.decode(value, { stream: true });
       let sep: number;
       while ((sep = nextSseSeparator(buffer)) !== -1) {
         const raw = buffer.slice(0, sep);
         buffer = buffer.slice(sep + (buffer[sep] === "\r" ? 4 : 2));
-        const parsed = parseSseEvent(raw);
-        if (!parsed || !parsed.data) continue;
-        const ev = parsed.data as AgentEvent;
-        if (parsed.id !== undefined) {
-          const seq = parseInt(parsed.id, 10);
-          if (!isNaN(seq)) {
-            cursors.set(sessionId, advance(getCursor(sessionId), seq));
-          }
-        }
-        if (typeof ev.seq === "number") {
-          cursors.set(sessionId, advance(getCursor(sessionId), ev.seq));
-        }
-        yield ev;
-        if (ev.type === "error") break outer;
-        if (ev.type === "done" && shouldEndOnDone()) break outer;
+        const ev = parseSsePayload(raw);
+        if (ev !== undefined) yield ev as T;
       }
     }
   } finally {
@@ -385,7 +318,41 @@ async function* pumpSse(
   }
 }
 
-async function* eventStream(
+function nextSseSeparator(buf: string): number {
+  const a = buf.indexOf("\n\n");
+  const b = buf.indexOf("\r\n\r\n");
+  if (a === -1) return b;
+  if (b === -1) return a;
+  return Math.min(a, b);
+}
+
+function parseSsePayload(raw: string): unknown {
+  const lines = raw.split(/\r?\n/);
+  const dataLines: string[] = [];
+  for (const line of lines) {
+    if (line.startsWith(":")) continue; // comment / heartbeat
+    if (line.startsWith("data:")) {
+      dataLines.push(line.slice(5).replace(/^\s/, ""));
+    }
+  }
+  if (dataLines.length === 0) return undefined;
+  const payload = dataLines.join("\n");
+  try {
+    return JSON.parse(payload);
+  } catch {
+    return payload;
+  }
+}
+
+/**
+ * Self-contained slash-command stream: open the session's `/agent/events` SSE
+ * subscription, fire the slash-command trigger POST, and yield typed events
+ * until the trigger settles and a `done`/`error` arrives (or the caller
+ * aborts). This is intentionally simpler than the removed agent-run transport
+ * — there is no seq-cursor resume or bounded reconnect (those belonged to the
+ * retired agent run loop, now owned by the Gateway's `useAgentStream`).
+ */
+async function* slashCommandStream(
   v1: string,
   sessionId: string,
   trigger: { url: string; body: unknown },
@@ -394,10 +361,15 @@ async function* eventStream(
   if (!sessionId) {
     throw new Error("Cannot open event stream: no active session. Create or select a session first.");
   }
-  // 1. Establish the SSE connection (headers received) before triggering.
-  const res = await openEventsSse(v1, sessionId, signal);
+  const eventsUrl = `${v1}/sessions/${sessionId}/agent/events`;
+  const res = await fetch(eventsUrl, {
+    headers: new Headers({ Accept: "text/event-stream" }),
+    signal,
+  });
+  if (!res.ok || !res.body) {
+    throw new Error(`SSE ${eventsUrl} → http ${res.status}`);
+  }
 
-  // 2. Fire the trigger; we'll observe `triggerSettled` to gate stream end.
   let triggerError: Error | null = null;
   let triggerSettled = false;
   const triggerPromise = jsonFetch(trigger.url, {
@@ -412,172 +384,39 @@ async function* eventStream(
       triggerSettled = true;
     });
 
-  // 3. Parse SSE and yield typed events; cancel the reader if the trigger fails.
-  const reader = res.body!.getReader();
+  const reader = res.body.getReader();
   void triggerPromise.then(() => {
-    if (triggerError) {
-      void reader.cancel();
-    }
+    if (triggerError) void reader.cancel();
   });
-  yield* pumpSse(reader, sessionId, () => triggerSettled);
+
+  const decoder = new TextDecoder("utf-8");
+  let buffer = "";
+  try {
+    outer: while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      let sep: number;
+      while ((sep = nextSseSeparator(buffer)) !== -1) {
+        const raw = buffer.slice(0, sep);
+        buffer = buffer.slice(sep + (buffer[sep] === "\r" ? 4 : 2));
+        const payload = parseSsePayload(raw);
+        if (payload === undefined) continue;
+        const ev = payload as AgentEvent;
+        yield ev;
+        if (ev.type === "error") break outer;
+        if (ev.type === "done" && triggerSettled) break outer;
+      }
+    }
+  } finally {
+    try {
+      await reader.cancel();
+    } catch {
+      /* ignore */
+    }
+  }
   await triggerPromise;
   if (triggerError) throw triggerError;
-}
-
-/**
- * Re-subscribe to `/agent/events` WITHOUT re-firing a trigger — used on
- * reconnect, when the run is already in flight on the backend. A `done` event
- * always terminates here.
- */
-async function* subscribeOnlyStream(
-  v1: string,
-  sessionId: string,
-  signal?: AbortSignal,
-): AsyncIterable<AgentEvent> {
-  const res = await openEventsSse(v1, sessionId, signal);
-  yield* pumpSse(res.body!.getReader(), sessionId, () => true);
-}
-
-/**
- * Resilient wrapper (R7.4, R8.6, R8.9): runs the triggered `eventStream`, and
- * if the connection drops *before* a terminal event, re-subscribes from the
- * shared `SeqCursor` for up to `MAX_RECONNECTS` attempts (no re-trigger). When
- * reconnection is exhausted it throws `StreamLostError`. A legacy-schema
- * validation error on the first attempt is re-thrown unchanged so the caller's
- * legacy-body fallback can handle it.
- */
-async function* resilientEventStream(
-  v1: string,
-  sessionId: string,
-  trigger: { url: string; body: unknown },
-  signal?: AbortSignal,
-): AsyncIterable<AgentEvent> {
-  let attempts = 0;
-  let firstAttempt = true;
-  while (true) {
-    try {
-      if (firstAttempt) {
-        yield* eventStream(v1, sessionId, trigger, signal);
-      } else {
-        yield* subscribeOnlyStream(v1, sessionId, signal);
-      }
-      return; // normal terminal completion — no reconnect
-    } catch (err) {
-      if (signal?.aborted) throw err;
-      // Let the caller's legacy-body fallback handle a schema rejection.
-      if (firstAttempt && isLegacyRunAgentValidationError(err)) throw err;
-      const decision = nextReconnect(subscribeCursor(getCursor(sessionId)), attempts);
-      if (decision.kind === "give-up") {
-        throw new StreamLostError(decision.detail);
-      }
-      attempts = decision.attempt;
-      firstAttempt = false;
-      await new Promise((resolve) => setTimeout(resolve, Math.min(1000, 200 * attempts)));
-    }
-  }
-}
-
-async function* runAgentStream(
-  v1: string,
-  sessionId: string,
-  req: RunAgentRequest,
-  signal?: AbortSignal,
-): AsyncIterable<AgentEvent> {
-  const url = `${v1}/sessions/${sessionId}/agent/run`;
-  try {
-    for await (const ev of resilientEventStream(v1, sessionId, { url, body: req }, signal)) {
-      yield ev;
-    }
-  } catch (err) {
-    if (signal?.aborted || !isLegacyRunAgentValidationError(err)) {
-      throw err;
-    }
-    for await (const ev of resilientEventStream(
-      v1,
-      sessionId,
-      { url, body: legacyRunAgentRequest(req) },
-      signal,
-    )) {
-      yield ev;
-    }
-  }
-}
-
-function legacyRunAgentRequest(req: RunAgentRequest): { prompt: string } {
-  const prompt = req.prompt ?? req.message ?? "";
-  const context = legacyWorkspaceContext(req);
-  if (!context) return { prompt };
-  return {
-    prompt: `${prompt}\n\n---\nCurrent workspace context from the editor:\n${context}\nUse this already-open workspace. Inspect the workspace root directly; do not ask the user to upload or paste project files.`,
-  };
-}
-
-function isLegacyRunAgentValidationError(err: unknown): boolean {
-  const message = err instanceof Error ? err.message : String(err);
-  return message.includes("extra_forbidden") || message.includes("Extra inputs are not permitted");
-}
-
-function legacyWorkspaceContext(req: RunAgentRequest): string {
-  const lines: string[] = [];
-  if (req.workspacePath) lines.push(`workspace_root: ${req.workspacePath}`);
-  if (req.activeFile) lines.push(`active_file: ${req.activeFile}`);
-  if (req.selectedText) {
-    lines.push("selected_text:");
-    lines.push(fenced(clip(req.selectedText, 8_000)));
-  }
-  if (req.editorContent) {
-    lines.push("active_editor_content:");
-    lines.push(fenced(clip(req.editorContent, 16_000)));
-  }
-  const openFiles = req.openFiles ?? [];
-  if (openFiles.length) {
-    lines.push("open_files:");
-    for (const file of openFiles.slice(0, 12)) {
-      const dirty = file.dirty ? " dirty" : "";
-      lines.push(`- ${file.path} (${file.language || "text"}${dirty})`);
-      if (!req.editorContent && file.path === req.activeFile && file.content) {
-        lines.push(fenced(clip(file.content, 12_000)));
-      }
-    }
-  }
-  return lines.join("\n");
-}
-
-function fenced(value: string): string {
-  return `\`\`\`\n${value}\n\`\`\``;
-}
-
-function clip(value: string, limit: number): string {
-  return value.length > limit ? `${value.slice(0, limit)}\n...[truncated]` : value;
-}
-
-function nextSseSeparator(buf: string): number {
-  const a = buf.indexOf("\n\n");
-  const b = buf.indexOf("\r\n\r\n");
-  if (a === -1) return b;
-  if (b === -1) return a;
-  return Math.min(a, b);
-}
-
-function parseSseEvent(raw: string): { id?: string; data: unknown } | null {
-  const lines = raw.split(/\r?\n/);
-  const data: string[] = [];
-  let id: string | undefined;
-  for (const line of lines) {
-    if (line.startsWith(":")) continue;
-    if (line.startsWith("id:")) {
-      id = line.slice(3).trim();
-    } else if (line.startsWith("data:")) {
-      data.push(line.slice(5).replace(/^\s/, ""));
-    }
-  }
-  if (data.length === 0) return null;
-  const payload = data.join("\n");
-  try {
-    return { id, data: JSON.parse(payload) };
-  } catch {
-    return { id, data: payload };
-  }
 }
 
 function makeClient(port: number): AgentClient {
@@ -598,7 +437,6 @@ function makeClient(port: number): AgentClient {
         method: "POST",
         body: JSON.stringify(req),
       }),
-    runAgent: (sessionId, req, signal) => runAgentStream(v1, sessionId, req, signal),
     applyRun: (sessionId, runId) =>
       jsonFetch<ApplyRunResult>(`${v1}/sessions/${sessionId}/agent/runs/${runId}/apply`, {
         method: "POST",
@@ -614,7 +452,7 @@ function makeClient(port: number): AgentClient {
       ),
     listSlashCommands: () => jsonFetch<SlashCommandDescriptor[]>(`${v1}/commands`),
     runSlashCommand: (sessionId, req, signal) =>
-      eventStream(
+      slashCommandStream(
         v1,
         sessionId,
         { url: `${v1}/commands/${sessionId}/run`, body: req },
@@ -672,18 +510,6 @@ function makeClient(port: number): AgentClient {
         method: "POST",
         body: JSON.stringify(grants),
       }),
-    resolveApproval: (sessionId, callId, allowed) =>
-      jsonFetch<{ resolved: boolean }>(
-        `${v1}/sessions/${sessionId}/agent/approvals/${callId}`,
-        { method: "POST", body: JSON.stringify({ allowed }) },
-      ),
-    retryApproval: (sessionId, callId, signal) =>
-      eventStream(
-        v1,
-        sessionId,
-        { url: `${v1}/sessions/${sessionId}/agent/approvals/${callId}/retry`, body: {} },
-        signal,
-      ),
     listTools: () => jsonFetch<ToolDescriptor[]>(`${v1}/tools`),
     listProviders: () => jsonFetch<ProviderDescriptor[]>(`${v1}/providers`),
     discoverModels: async (baseUrl, apiKey) => {

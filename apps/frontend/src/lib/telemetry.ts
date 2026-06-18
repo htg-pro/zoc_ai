@@ -1,6 +1,6 @@
 /**
  * Local-only, opt-in telemetry. Events are forwarded to the Tauri shell
- * which writes them to `~/.llama-studio/logs/telemetry.log` *only if* the
+ * which writes them to `~/.zoc-studio/logs/telemetry.log` *only if* the
  * user explicitly opted in via the onboarding wizard / settings panel.
  *
  * Nothing here ever talks to the network. When the shell is unavailable

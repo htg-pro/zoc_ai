@@ -1,4 +1,4 @@
-# Developer Guide — Llama Studio / Zoc AI
+# Developer Guide — Zoc Studio / Zoc AI
 
 Onboarding notes for the next developer. This complements the top-level
 [`README.md`](../../README.md) (which covers build/release) by documenting how
@@ -40,7 +40,7 @@ the agent actually works internally and where to make changes safely.
 
 ## 30-second mental model
 
-Llama Studio is a **local-first agentic coding desktop app**: a Tauri v2 shell
+Zoc Studio is a **local-first agentic coding desktop app**: a Tauri v2 shell
 spawns a bundled FastAPI sidecar (the "agent"), and a React webview talks to it
 over loopback HTTP/SSE. The agent runs an LLM tool-use loop (read/write/run
 files, etc.) and streams progress back as `AgentEvent`s.
@@ -57,11 +57,11 @@ React webview  ──HTTP/SSE──►  FastAPI agent  ──child CLI──► 
 
 | Area | Path |
 |------|------|
-| FastAPI routes (v1) | `services/agent/src/llama_studio_agent/v1/` |
-| Agent orchestrator (LLM tool loop) | `services/agent/src/llama_studio_agent/agent/orchestrator.py` |
-| Isolated run (review-before-apply) | `services/agent/src/llama_studio_agent/agent/zoc_run.py` |
-| Workspace copy/diff primitives | `services/agent/src/llama_studio_agent/agent/replit_workflow.py` |
-| LLM providers (llama.cpp, OpenAI-compat, …) | `services/agent/src/llama_studio_agent/providers/` |
+| FastAPI routes (v1) | `services/agent/src/zoc_studio_agent/v1/` |
+| Agent orchestrator (LLM tool loop) | `services/agent/src/zoc_studio_agent/agent/orchestrator.py` |
+| Isolated run (review-before-apply) | `services/agent/src/zoc_studio_agent/agent/zoc_run.py` |
+| Workspace copy/diff primitives | `services/agent/src/zoc_studio_agent/agent/replit_workflow.py` |
+| LLM providers (llama.cpp, OpenAI-compat, …) | `services/agent/src/zoc_studio_agent/providers/` |
 | Shared schema (Pydantic) | `packages/shared-types/python/shared_schema/models.py` |
 | Shared schema (TS mirror) | `packages/shared-types/typescript/src/index.ts` |
 | Frontend store (Zustand) | `apps/frontend/src/lib/store.ts` |

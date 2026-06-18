@@ -1,14 +1,14 @@
 //! Workspace text search & replace (develop.md Phase 3).
 //!
 //! Thin Tauri command layer over the hot-path search engine
-//! (`llama_studio_hotpath::search`). Every command validates the active
+//! (`zoc_studio_hotpath::search`). Every command validates the active
 //! workspace root (and, for replace, each targeted path) so a renderer can't
 //! search or rewrite files outside the user's chosen workspace.
 
 use std::path::Path;
 use std::sync::Arc;
 
-use llama_studio_hotpath::search::{
+use zoc_studio_hotpath::search::{
     grep, replace_apply, replace_preview, FileReplace, ReplaceOptions, ReplaceSummary,
     SearchOptions, SearchResults,
 };

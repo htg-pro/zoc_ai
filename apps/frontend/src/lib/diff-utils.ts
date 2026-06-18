@@ -58,7 +58,7 @@ export function parseUnifiedDiff(diff: string): { hunks: DiffHunk[]; adds: numbe
 // "Review Pending" aggregation, change-position navigation with clamping,
 // per-file apply/undo set operations, and applied-id persistence.
 
-import type { DiffPatch } from "@llama-studio/shared-types";
+import type { DiffPatch } from "@zoc-studio/shared-types";
 
 export type LineKind = DiffLine["kind"];
 

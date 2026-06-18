@@ -1,5 +1,5 @@
 import { useMemo } from "react";
-import type { Session } from "@llama-studio/shared-types";
+import type { Session } from "@zoc-studio/shared-types";
 import { ChevronsDownUp, Pin, PinOff, Plus, Search, Trash2 } from "lucide-react";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { useApp } from "@/lib/store";

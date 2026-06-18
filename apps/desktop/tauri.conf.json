@@ -2,12 +2,12 @@
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "Zoc AI",
   "version": "2.0.0",
-  "identifier": "ai.llama.studio",
-  "mainBinaryName": "llama-studio",
+  "identifier": "ai.zoc.studio",
+  "mainBinaryName": "zoc-studio",
   "build": {
     "frontendDist": "../frontend/dist",
     "devUrl": "http://127.0.0.1:1420",
-    "beforeDevCommand": "pnpm --filter @llama-studio/frontend dev",
+    "beforeDevCommand": "pnpm --filter @zoc-studio/frontend dev",
     "beforeBuildCommand": "pnpm -w run tauri:prepare"
   },
   "app": {
@@ -43,8 +43,8 @@
       "icons/icon.ico"
     ],
     "externalBin": [
-      "binaries/llama-studio-agent",
-      "binaries/llama-studio-hotpath"
+      "binaries/zoc-studio-agent",
+      "binaries/zoc-studio-hotpath"
     ],
     "resources": [],
     "linux": {
@@ -70,7 +70,7 @@
     "updater": {
       "active": false,
       "endpoints": [
-        "https://releases.llama.studio/updates/{{target}}/{{arch}}/{{current_version}}"
+        "https://releases.zoc.studio/updates/{{target}}/{{arch}}/{{current_version}}"
       ],
       "dialog": true,
       "pubkey": ""

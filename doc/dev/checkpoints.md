@@ -23,7 +23,7 @@ Restore is the exact inverse of the apply:
 
 ## Backend
 
-- `services/agent/src/llama_studio_agent/agent/checkpoints.py` — persistent
+- `services/agent/src/zoc_studio_agent/agent/checkpoints.py` — persistent
   snapshot store under `tempfile.gettempdir()/zoc-agent-checkpoints/<hash>`,
   keyed by run id, surviving the isolated-run cleanup. Per-file capture is
   resilient (an unsnapshottable file is skipped, not fatal).

@@ -33,12 +33,12 @@ async def run_test():
         page = await context.new_page()
 
         # Interact with the page elements to simulate user flow
-        # -> Click the 'Reload' button on the browser error page to attempt reloading the application and then observe whether the Llama Studio UI (for example the chat composer or a 'Search files' input) appears.
+        # -> Click the 'Reload' button on the browser error page to attempt reloading the application and then observe whether the Zoc Studio UI (for example the chat composer or a 'Search files' input) appears.
         # Reload button
         elem = page.locator('[id="reload-button"]')
         await elem.click(timeout=10000)
         
-        # -> Click the 'Reload' button on the browser error page to retry loading the application and then check whether the Llama Studio UI (e.g., 'Search files' input or chat composer) appears.
+        # -> Click the 'Reload' button on the browser error page to retry loading the application and then check whether the Zoc Studio UI (e.g., 'Search files' input or chat composer) appears.
         # Reload button
         elem = page.locator('[id="reload-button"]')
         await elem.click(timeout=10000)

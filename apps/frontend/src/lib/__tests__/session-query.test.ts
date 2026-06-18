@@ -1,7 +1,7 @@
 // Feature: chat-memory-session-system, Task 4.3
 // Unit tests for `localDayIndex` boundary and NaN cases (Requirements 3.3, 3.4).
 import { describe, expect, it } from "vitest";
-import type { Session, SessionStatus } from "@llama-studio/shared-types";
+import type { Session, SessionStatus } from "@zoc-studio/shared-types";
 import { groupSessions, localDayIndex } from "../session-query";
 
 const MS_PER_DAY = 86_400_000;

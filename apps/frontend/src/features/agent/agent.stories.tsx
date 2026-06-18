@@ -1,11 +1,11 @@
 import type { Story } from "@ladle/react";
 import { useEffect } from "react";
-import { AgentTimeline } from "./AgentTimeline";
+import { AgentRunFeedView } from "./AgentRunFeed";
 import { ToolCallCard } from "./ToolCallCard";
 import { DiffCard } from "./DiffCard";
 import { MessageItem } from "./MessageItem";
 import { MOCK_DIFF, MOCK_MESSAGES, MOCK_PLAN, MOCK_TOOL_CALL } from "@/lib/mock-data";
-import type { ToolCall } from "@llama-studio/shared-types";
+import type { ToolCall } from "@zoc-studio/shared-types";
 import { useApp } from "@/lib/store";
 
 export default { title: "Agent" };
@@ -57,7 +57,7 @@ export const Plan: Story = () => {
   }, []);
   return (
     <div className="max-w-xl">
-      <AgentTimeline />
+      <AgentRunFeedView events={[]} />
     </div>
   );
 };

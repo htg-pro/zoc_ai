@@ -54,7 +54,7 @@ These are **untracked** (not in git), so deleting them can't be undone. They
 look abandoned but may be intentional local experiments — please confirm before
 removing:
 
-- `python/` (root) — contains `llama_studio_neural/` and `tests/`. **Not** a uv
+- `python/` (root) — contains `zoc_studio_neural/` and `tests/`. **Not** a uv
   workspace member (`pyproject.toml` lists only `services/agent` and
   `packages/shared-types/python`) and not referenced by any build. Almost
   certainly an old experiment. To remove: `rm -rf python/` (after confirming

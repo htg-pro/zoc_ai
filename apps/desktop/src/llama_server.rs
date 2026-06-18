@@ -128,7 +128,7 @@ fn port_free(host: &str, port: u16) -> Result<(), String> {
 
 fn runtime_state_path() -> std::path::PathBuf {
     let base = dirs::home_dir()
-        .map(|h| h.join(".llama-studio"))
+        .map(|h| h.join(".zoc-studio"))
         .unwrap_or_else(|| std::path::PathBuf::from("."));
     let _ = std::fs::create_dir_all(&base);
     base.join(RUNTIME_STATE_FILENAME)
@@ -149,7 +149,7 @@ fn write_runtime_state(status: &LlamaServerStatus) {
 
 fn log_file_path() -> std::path::PathBuf {
     let base = dirs::home_dir()
-        .map(|h| h.join(".llama-studio").join("logs"))
+        .map(|h| h.join(".zoc-studio").join("logs"))
         .unwrap_or_else(|| std::path::PathBuf::from("./logs"));
     let _ = std::fs::create_dir_all(&base);
     base.join("llama-server.log")
@@ -322,7 +322,7 @@ pub async fn llamacpp_load<R: Runtime>(
                 let mut s = sup_for_drain.status.lock();
                 if s.running {
                     s.last_error =
-                        Some("llama-server exited unexpectedly; see ~/.llama-studio/logs/llama-server.log".into());
+                        Some("llama-server exited unexpectedly; see ~/.zoc-studio/logs/llama-server.log".into());
                 }
                 s.running = false;
                 s.host = None;
@@ -369,7 +369,7 @@ pub async fn llamacpp_load<R: Runtime>(
         if Instant::now() > deadline {
             sup.kill_child();
             let err = format!(
-                "llama-server did not become healthy within {}s; check ~/.llama-studio/logs/llama-server.log",
+                "llama-server did not become healthy within {}s; check ~/.zoc-studio/logs/llama-server.log",
                 LOAD_TIMEOUT.as_secs()
             );
             sup.status.lock().last_error = Some(err.clone());
@@ -385,11 +385,11 @@ pub async fn llamacpp_load<R: Runtime>(
             let elapsed = start_time.elapsed();
             let err = if elapsed < Duration::from_secs(5) {
                 format!(
-                    "llama-server exited immediately after startup (likely port {} conflict or missing binary); check ~/.llama-studio/logs/llama-server.log",
+                    "llama-server exited immediately after startup (likely port {} conflict or missing binary); check ~/.zoc-studio/logs/llama-server.log",
                     actual_port
                 )
             } else {
-                "llama-server exited during startup; see ~/.llama-studio/logs/llama-server.log".to_string()
+                "llama-server exited during startup; see ~/.zoc-studio/logs/llama-server.log".to_string()
             };
             sup.status.lock().last_error = Some(err.clone());
             let snap = sup.snapshot();

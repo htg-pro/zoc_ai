@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { Database, RefreshCw, Activity } from "lucide-react";
-import type { IndexStatus } from "@llama-studio/shared-types";
+import type { IndexStatus } from "@zoc-studio/shared-types";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";

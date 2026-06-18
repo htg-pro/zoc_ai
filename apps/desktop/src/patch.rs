@@ -1,12 +1,12 @@
 //! Apply unified-diff patches to disk. Used by diff-card accept in the UI.
 //!
-//! Uses the shared fuzzy patch implementation from llama-studio-hotpath for
+//! Uses the shared fuzzy patch implementation from zoc-studio-hotpath for
 //! robust patch application with tolerance for line drift.
 
 use std::path::Path;
 use std::sync::Arc;
 
-use llama_studio_hotpath::patch::apply_unified_fuzzy;
+use zoc_studio_hotpath::patch::apply_unified_fuzzy;
 use serde::{Deserialize, Serialize};
 
 use crate::workspace::{ensure_within_workspace, WorkspaceState};
@@ -86,7 +86,7 @@ fn unified_is_full_delete(diff: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use llama_studio_hotpath::patch::apply_unified_fuzzy;
+    use zoc_studio_hotpath::patch::apply_unified_fuzzy;
 
     #[test]
     fn applies_simple_hunk() {

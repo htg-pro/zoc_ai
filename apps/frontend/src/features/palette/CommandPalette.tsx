@@ -58,7 +58,7 @@ import {
 } from "@/lib/commands";
 import { recentFiles } from "@/lib/recents";
 import { cn } from "@/lib/utils";
-import type { ContextCandidate } from "@llama-studio/shared-types";
+import type { ContextCandidate } from "@zoc-studio/shared-types";
 
 const ICONS: Record<string, ComponentType<{ className?: string }>> = {
   AlertTriangle,

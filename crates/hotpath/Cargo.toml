@@ -1,5 +1,5 @@
 [package]
-name = "llama-studio-hotpath"
+name = "zoc-studio-hotpath"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -7,11 +7,11 @@ license.workspace = true
 description = "Hot-path Rust crate for Zoc AI: PTY, fs watch, search, and code indexer."
 
 [lib]
-name = "llama_studio_hotpath"
+name = "zoc_studio_hotpath"
 path = "src/lib.rs"
 
 [[bin]]
-name = "llama-studio-hotpath"
+name = "zoc-studio-hotpath"
 path = "src/bin/cli.rs"
 
 [dependencies]

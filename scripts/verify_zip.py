@@ -2,7 +2,7 @@
 """Validate a Zoc AI release zip.
 
 Asserts:
-  * top-level directory is ``llama-studio-v<version>/``
+  * top-level directory is ``zoc-studio-v<version>/``
   * cleaned source tree (no node_modules/target/legacy/etc.)
   * required files present (Cargo.toml, package.json, VERSION, README,
     CHANGELOG, scripts/release.sh, tauri.conf.json)
@@ -71,8 +71,8 @@ def main() -> int:
         print(f"!! Expected a single top-level dir, got: {sorted(tops)}", file=sys.stderr)
         return 2
     top = next(iter(tops))
-    if not re.fullmatch(r"llama-studio-v\d+\.\d+\.\d+", top):
-        print(f"!! Top-level dir must match llama-studio-v<semver>, got: {top!r}",
+    if not re.fullmatch(r"zoc-studio-v\d+\.\d+\.\d+", top):
+        print(f"!! Top-level dir must match zoc-studio-v<semver>, got: {top!r}",
               file=sys.stderr)
         return 2
 

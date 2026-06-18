@@ -10,7 +10,7 @@ import type {
   AgentEvent,
   PlanStep,
   ToolCallStatus,
-} from "@llama-studio/shared-types";
+} from "@zoc-studio/shared-types";
 
 export type IngestDecision = "apply" | "buffer" | "discard";
 

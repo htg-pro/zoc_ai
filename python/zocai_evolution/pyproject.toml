@@ -1,0 +1,30 @@
+[build-system]
+requires = ["hatchling>=1.25"]
+build-backend = "hatchling.build"
+
+[project]
+name = "zocai-evolution"
+version = "0.1.0"
+description = "Parametric hardware evolution engine for the Zoc AI Ecosystem (Layer 5)."
+requires-python = ">=3.11"
+license = { text = "MIT" }
+dependencies = [
+    "pydantic>=2.9",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8",
+    "hypothesis>=6.0",
+    "ruff>=0.6",
+    "mypy>=1.11",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/zocai_evolution"]
+
+[tool.hatch.build.targets.sdist]
+include = ["src/zocai_evolution"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

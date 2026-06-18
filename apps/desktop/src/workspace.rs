@@ -1,7 +1,7 @@
 //! Workspace + legacy-migration helpers.
 //!
 //! The frontend's onboarding flow asks the user to pick a workspace, then
-//! we persist that choice in `~/.llama-studio/desktop.json` and check the
+//! we persist that choice in `~/.zoc-studio/desktop.json` and check the
 //! `legacy/` directory for an old Zoc AI config we can import.
 //!
 //! Additionally exposes a `WorkspaceState` shared via Tauri-managed state
@@ -112,7 +112,7 @@ pub struct DesktopConfig {
 
 fn config_path() -> PathBuf {
     let base = dirs::home_dir()
-        .map(|h| h.join(".llama-studio"))
+        .map(|h| h.join(".zoc-studio"))
         .unwrap_or_else(|| PathBuf::from("."));
     let _ = std::fs::create_dir_all(&base);
     base.join("desktop.json")
@@ -172,7 +172,7 @@ pub struct LegacyDetection {
 fn detect_legacy_dirs() -> Vec<PathBuf> {
     let mut out = Vec::new();
     if let Some(home) = dirs::home_dir() {
-        for cand in [".llama-studio-legacy", ".llamastudio", ".config/llama-studio"] {
+        for cand in [".zoc-studio-legacy", ".llamastudio", ".config/zoc-studio"] {
             let p = home.join(cand);
             if p.exists() {
                 out.push(p);
@@ -266,7 +266,7 @@ pub fn telemetry_log(event: TelemetryEvent) -> Result<(), String> {
         return Ok(());
     }
     let dir = dirs::home_dir()
-        .map(|h| h.join(".llama-studio").join("logs"))
+        .map(|h| h.join(".zoc-studio").join("logs"))
         .ok_or_else(|| "no home dir".to_string())?;
     std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
     let path = dir.join("telemetry.log");

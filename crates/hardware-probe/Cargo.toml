@@ -1,0 +1,20 @@
+[package]
+name = "hardware-probe"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Deterministic, low-latency hardware introspection for the Zoc AI Model_Allocator (GPU/system memory probing)."
+
+[lib]
+name = "hardware_probe"
+path = "src/lib.rs"
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+# Pinned to an exact version for deterministic, reproducible hardware probing.
+# Only the `system` feature is enabled (memory introspection); disk/network/
+# component/process probing is excluded to keep the probe fast and focused.
+sysinfo = { version = "=0.33.1", default-features = false, features = ["system"] }

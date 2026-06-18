@@ -5,7 +5,7 @@
 // Feature: studio-ui-redesign, Property 5: Pin persistence round-trips
 import { describe, expect, it } from "vitest";
 import fc from "fast-check";
-import type { Session } from "@llama-studio/shared-types";
+import type { Session } from "@zoc-studio/shared-types";
 import {
   type SessionFilter,
   type SortOption,

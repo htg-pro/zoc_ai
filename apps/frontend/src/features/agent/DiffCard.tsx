@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import type { DiffPatch } from "@llama-studio/shared-types";
+import type { DiffPatch } from "@zoc-studio/shared-types";
 import { Check, ChevronDown, FileDiff, X } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
