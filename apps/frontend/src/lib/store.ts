@@ -14,7 +14,6 @@ import type {
   Plan,
   PlanStep,
   ProjectRulesInfo,
-  RunAgentRequest,
   Session,
   SlashCommandName,
   TestGenerationResult,
@@ -22,7 +21,7 @@ import type {
   ToolCall,
   ToolDescriptor,
   ToolGrant,
-} from "@llama-studio/shared-types";
+} from "@zoc-studio/shared-types";
 
 import type { AgentClient, CodeReviewRequest, TestGenRequest } from "./agent-client";
 import { getAgentClient } from "./agent-client";
@@ -124,6 +123,12 @@ import { track } from "./telemetry";
 import { buildInlineEditPatch, spliceText, stripCodeFence } from "./inline-edit";
 import type { AutonomyLevel } from "./run-machine";
 import { decideIngest } from "./event-ingest";
+// The single agent transport (gateway-client) + the pure Composer run-decision
+// helper (prepare-agent-run). The Composer submit path posts runs to the
+// Gateway through these and lets `useAgentStream` drive the feed — no legacy
+// run/event transport is touched (task 4.1; R2.1, R4.x, R6.5).
+import { postAgentRun } from "@/features/agent/gateway-client";
+import { prepareAgentRun } from "@/features/agent/prepare-agent-run";
 import { resolveSessionIntent } from "./session-lifecycle";
 import { effectiveSettings, setSetting } from "./settings";
 import { checkAction } from "./trust";
@@ -645,10 +650,10 @@ export interface AppState {
   ) => void;
 }
 
-const STORAGE_KEY = "llama-studio.layout.v2";
-const APPLIED_PATCHES_KEY = "llama-studio.applied-patches.v1";
-const PINNED_SESSIONS_KEY = "llama-studio.pinned-sessions.v1";
-const LAST_ACTIVE_SESSION_KEY = "llama-studio.last-active-session.v1";
+const STORAGE_KEY = "zoc-studio.layout.v2";
+const APPLIED_PATCHES_KEY = "zoc-studio.applied-patches.v1";
+const PINNED_SESSIONS_KEY = "zoc-studio.pinned-sessions.v1";
+const LAST_ACTIVE_SESSION_KEY = "zoc-studio.last-active-session.v1";
 
 const DEFAULT_LAYOUT: LayoutState = {
   sidePanelOpen: true,
@@ -2128,10 +2133,10 @@ export const useApp = create<AppState>((set, get) => ({
 
   sendUserMessage: async (content) => {
     if (!content.trim()) return;
-    let sessionId = get().activeSessionId;
+    const sessionId = get().activeSessionId;
     const outgoing = expandFileMentions(content, get());
     // Ask mode is pure read-only Q&A. Explicit slash commands are honored
-    // below; everything else falls through to the streaming agent run.
+    // below; everything else is submitted to the Gateway as a run.
 
     // Slash command routing: `/name arg1 arg2…` → `runSlashCommand`.
     const slash = parseSlash(outgoing);
@@ -2150,45 +2155,47 @@ export const useApp = create<AppState>((set, get) => ({
       return;
     }
 
-    const runPayload = buildRunAgentRequest(get(), outgoing);
-    if (!runPayload) {
-      appendErrorChat(set, "sendUserMessage", new Error("No workspace selected."));
+    // Single run-decision + validation point (task 4.1). `prepareAgentRun`
+    // trims the input, maps the Composer's Ask/Agent toggle to the Gateway
+    // `mode` (R4.1, R4.2), and rejects empty/whitespace-only input by
+    // producing NO request (R4.5). It is the only validation gate on this
+    // path — no legacy `buildRunAgentRequest` payload is built here.
+    const request = prepareAgentRun(outgoing, get().agentMode);
+    if (!request) {
+      // Empty / whitespace-only (or otherwise invalid) input — send nothing.
       return;
     }
 
     const userMsg: Message = {
       id: `local-${Date.now()}`,
       role: "user",
-      content: outgoing,
+      content: request.input,
       created_at: new Date().toISOString(),
     };
-    // Client-supplied, deterministic run id derived from the just-appended
-    // user message. The backend reuses it as the run's authoritative id and
-    // echoes it on every emitted event (R1.2, R1.7), so we can bind the run to
-    // this exact message up-front and discard events from a superseded run.
-    const runId = `run-${userMsg.id}`;
-    // Terminate any previous in-flight stream BEFORE assigning the new run id
-    // so a stale stream's terminal `finally` can't clobber the new run's
-    // state (fixes bug #4 — run-start ordering race).
+
+    // Terminate any previous in-flight (e.g. slash-command) stream before
+    // starting a new run so a stale stream's terminal handler can't clobber
+    // the new run's state.
     currentAbort?.abort();
     currentAbort = null;
 
-    // Bind the run to THIS message: adopt the deterministic run id as the
-    // active run and record `boundMessageId = userMsg.id` (R1.1, R1.3). This
-    // mirrors the run-machine `start` action — a run is bound to exactly one
-    // user message, which is always present here because we just appended it.
+    // Echo the user message into the panel and mark a run active. The Gateway
+    // issues the authoritative `runId` (set below once accepted); the single
+    // SSE client `useAgentStream` — mounted in the run feed — drives the feed
+    // from `GET /v1/agent/events` (R3.1). It renders text chunks while Ask is
+    // active and structured Event_Rows while Agent is active (R4.3, R4.4).
     set((s) => ({
       chat: [...s.chat, { kind: "message", id: userMsg.id, message: userMsg }],
       agentItems: upsertWorkflowMessage(s.agentItems, userMsg),
       streaming: true,
       isRunning: true,
-      runId,
+      runId: null,
       boundMessageId: userMsg.id,
     }));
     await track("session.message_sent", { id: sessionId });
 
     if (!get().liveMode) {
-      // Mock fallback for browser preview.
+      // Mock fallback for browser preview (no sidecar reachable).
       setTimeout(() => {
         const reply: Message = {
           id: `m-${Date.now() + 1}`,
@@ -2207,46 +2214,26 @@ export const useApp = create<AppState>((set, get) => ({
       return;
     }
 
-    const abort = new AbortController();
-    currentAbort = abort;
+    // Route the run to the Gateway — the single agent transport (R2.1, R2.6).
+    // No legacy `agent-client` run/event/approval path is touched (R6.5).
+    // `postAgentRun` resolves when the run is *accepted*; the run's lifecycle
+    // (and completion) is observed on the SSE feed by `useAgentStream`.
     try {
-      const client = await getAgentClient();
-      // Ensure a valid session exists on the backend before streaming.
-      sessionId = await ensureBackendSession(client, get, set);
-      // Resolve bring-your-own cloud creds for the selected model and merge
-      // them into the run payload so the backend routes to the right endpoint.
-      const creds = await resolveProviderCreds(get());
-      const payloadWithCreds: RunAgentRequest = {
-        ...runPayload,
-        runId,
-        provider: creds.provider,
-        apiKey: creds.apiKey,
-        baseUrl: creds.baseUrl,
-      };
-      await consumeStream(
-        client.runAgent(sessionId, payloadWithCreds, abort.signal),
-        set,
-        { mode: runPayload.mode === "ask" ? "ask" : "agent", activeRunId: runId },
-      );
+      const { runId } = await postAgentRun(request);
+      set({ runId });
     } catch (err) {
       appendErrorChat(set, "sendUserMessage", err);
-    } finally {
-      // Only flip streaming off if a newer send hasn't taken ownership;
-      // otherwise we'd hide the spinner mid-stream.
-      if (currentAbort === abort) {
-        currentAbort = null;
-        set({ streaming: false, isRunning: false, runId: null });
-        // Release the next queued message (if any) when this run reaches a
-        // terminal state. Remaining messages stay queued and chain as each
-        // subsequent run completes (R4.11 / R4.14).
-        const [next, ...rest] = get().messageQueue;
-        if (next) {
-          set({ messageQueue: rest });
-          void get().sendUserMessage(next.content);
-        }
+      set({ streaming: false, isRunning: false, runId: null });
+      // The submit failed and no run is active — release the next queued
+      // message (if any) so the queue does not stall.
+      const [next, ...rest] = get().messageQueue;
+      if (next) {
+        set({ messageQueue: rest });
+        void get().sendUserMessage(next.content);
       }
-      // Refresh the memory snapshot so the indicator reflects the new
-      // turn. Best-effort — failure leaves the stale snapshot alone.
+    } finally {
+      // Refresh the memory snapshot so the indicator reflects the new turn.
+      // Best-effort — failure leaves the stale snapshot alone.
       void get().loadMemoryStats();
     }
   },
@@ -2748,49 +2735,20 @@ export const useApp = create<AppState>((set, get) => ({
   },
 
   resolveApproval: async (callId, allowed) => {
-    const sessionId = get().activeSessionId;
-    if (!get().liveMode) {
-      await track("permission.resolve_approval", { callId, allowed, mock: true });
-      return true;
-    }
-    try {
-      const client = await getAgentClient();
-      await client.resolveApproval(sessionId, callId, allowed);
-      await track("permission.resolve_approval", { callId, allowed });
-      return true;
-    } catch (err) {
-      await track("error", {
-        stage: "resolveApproval",
-        message: (err as Error).message,
-      }).catch(() => undefined);
-      return false;
-    }
+    // Legacy agent approval transport removed in the agent-ecosystem merge
+    // (task 9.2). Agent approvals are now resolved through the Gateway via the
+    // ApprovalRow → postAgentDecision path (gateway-client.ts); this
+    // permission-grant shim only records the decision locally.
+    await track("permission.resolve_approval", { callId, allowed });
+    return true;
   },
 
   retryApproval: async (callId) => {
-    const sessionId = get().activeSessionId;
-    if (!get().liveMode) {
-      await track("permission.retry_approval", { callId, mock: true });
-      return true;
-    }
-    const abort = new AbortController();
-    currentAbort?.abort();
-    currentAbort = abort;
-    set({ streaming: true, isRunning: true, runId: `run-${Date.now()}` });
+    // Legacy agent approval-retry transport removed in the agent-ecosystem
+    // merge (task 9.2). The Gateway run loop owns run lifecycle/retries now;
+    // this shim records the intent without re-driving a legacy run.
     await track("permission.retry_approval", { callId });
-    try {
-      const client = await getAgentClient();
-      await consumeStream(client.retryApproval(sessionId, callId, abort.signal), set);
-      return true;
-    } catch (err) {
-      appendErrorChat(set, "retryApproval", err);
-      return false;
-    } finally {
-      if (currentAbort === abort) {
-        currentAbort = null;
-        set({ streaming: false, isRunning: false, runId: null });
-      }
-    }
+    return true;
   },
 
   cancelStream: () => {
@@ -3801,7 +3759,7 @@ function appendErrorChat(set: SetState, stage: string, err: unknown): void {
 
 /**
  * Maps each slash command to the single string field its backend recipe
- * expects (see `services/agent/src/llama_studio_agent/commands/recipes.py`).
+ * expects (see `services/agent/src/zoc_studio_agent/commands/recipes.py`).
  * `review`, `test`, `explain`, `refactor`, `docs` use `target`; `fix`,
  * `grok` use `query`. Anything else falls through as a normal prompt.
  */
@@ -3870,10 +3828,6 @@ async function ensureBackendSession(
   return session.id;
 }
 
-function activeEditorFile(state: AppState): OpenFile | null {
-  return state.openFiles.find((f) => f.path === state.activeFile) ?? null;
-}
-
 function expandFileMentions(content: string, state: AppState): string {
   const active = state.activeFile;
   if (!active || !content.includes("@file")) return content;
@@ -3901,42 +3855,6 @@ async function resolveProviderCreds(state: AppState): Promise<ProviderCreds> {
   if (!cfg) return { provider: providerId, apiKey: null, baseUrl: null };
   const apiKey = await secureStore.get(`provider.${providerId}.api_key`);
   return { provider: providerId, apiKey: apiKey?.trim() || null, baseUrl: cfg.baseUrl };
-}
-
-function buildRunAgentRequest(
-  state: AppState,
-  content: string,
-): RunAgentRequest | null {
-  const workspacePath = activeWorkspaceRoot(state);
-  if (!workspacePath) return null;
-  const active = activeEditorFile(state);
-  return {
-    sessionId: state.activeSessionId || null,
-    message: content,
-    prompt: content,
-    workspacePath,
-    activeFile: state.activeFile,
-    openFiles: state.openFiles.slice(0, 12).map((file) => ({
-      path: file.path,
-      name: file.name,
-      language: file.language,
-      content: file.content,
-      dirty: file.dirty,
-    })),
-    selectedText: null,
-    editorContent: active?.content ?? null,
-    mode: state.agentMode === "ask" ? "ask" : "agent",
-    model: state.selectedModel.model || null,
-    provider: state.selectedModel.provider ?? null,
-    apiKey: null,
-    baseUrl: null,
-    // Agent mode runs review-before-apply: edits land in an isolated copy of
-    // the workspace and only touch the real project when the user clicks
-    // Apply. Ask mode is read-only, so the flag is irrelevant there.
-    reviewChanges: state.agentMode === "agent",
-    maxIterations: 20,
-    maxRepairAttempts: 2,
-  };
 }
 
 function parseSlash(

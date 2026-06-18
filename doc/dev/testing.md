@@ -66,8 +66,8 @@ describe("my-module (Property N)", () => {
 ## Rust (hotpath)
 
 ```bash
-cargo test -p llama-studio-hotpath
-cargo clippy -p llama-studio-hotpath
+cargo test -p zoc-studio-hotpath
+cargo clippy -p zoc-studio-hotpath
 ```
 
 ## All gates at once

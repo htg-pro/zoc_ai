@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
-import type { EmbedderInfo, IndexQueryResult, IndexStatus } from "@llama-studio/shared-types";
+import type { EmbedderInfo, IndexQueryResult, IndexStatus } from "@zoc-studio/shared-types";
 
 const indexQuery = vi.fn();
 const indexStatus = vi.fn();

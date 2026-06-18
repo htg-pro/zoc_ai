@@ -6,7 +6,7 @@ import type {
   ProviderDescriptor,
   Session,
   ToolCall,
-} from "@llama-studio/shared-types";
+} from "@zoc-studio/shared-types";
 
 export interface FileNode {
   id: string;
@@ -20,7 +20,7 @@ export interface FileNode {
 export const MOCK_TREE: FileNode[] = [
   {
     id: "root",
-    name: "llama-studio",
+    name: "zoc-studio",
     path: "/",
     kind: "dir",
     children: [
@@ -95,7 +95,7 @@ def health():
   },
   "/package.json": {
     language: "json",
-    content: `{\n  "name": "llama-studio",\n  "private": true\n}\n`,
+    content: `{\n  "name": "zoc-studio",\n  "private": true\n}\n`,
   },
   "/src/components/Button.tsx": {
     language: "typescript",
@@ -200,7 +200,7 @@ export const MOCK_SESSIONS: Session[] = [
     id: "sess-1",
     title: "Add settings screen",
     status: "active",
-    workspace_root: "/home/me/llama-studio",
+    workspace_root: "/home/me/zoc-studio",
     provider: "llamacpp",
     model: "qwen2.5-coder-32b",
     created_at: nowIso(3_600_000),
@@ -213,7 +213,7 @@ export const MOCK_SESSIONS: Session[] = [
     id: "sess-2",
     title: "Refactor agent loop",
     status: "idle",
-    workspace_root: "/home/me/llama-studio",
+    workspace_root: "/home/me/zoc-studio",
     provider: "openai",
     model: "gpt-4o-mini",
     created_at: nowIso(86_400_000),
@@ -226,7 +226,7 @@ export const MOCK_SESSIONS: Session[] = [
     id: "sess-3",
     title: "Onboarding flow polish",
     status: "closed",
-    workspace_root: "/home/me/llama-studio",
+    workspace_root: "/home/me/zoc-studio",
     provider: "anthropic",
     model: "claude-3-5-sonnet",
     created_at: nowIso(86_400_000 * 3),
@@ -369,7 +369,7 @@ export const MOCK_FILE_STATUS: Record<string, "A" | "M" | "D"> = {
 };
 
 export const MOCK_INDEX_STATUS: IndexStatus = {
-  workspace_root: "/home/me/llama-studio",
+  workspace_root: "/home/me/zoc-studio",
   file_count: 1284,
   chunk_count: 5217,
   last_indexed_at: nowIso(45_000),

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Bundle the FastAPI agent sidecar into a single-file executable.
 
-Uses PyInstaller to produce ``llama-studio-agent`` (or ``.exe`` on Windows)
+Uses PyInstaller to produce ``zoc-studio-agent`` (or ``.exe`` on Windows)
 and copies it into ``apps/desktop/binaries/`` under the Tauri ``externalBin``
 naming convention: ``<name>-<rust-target-triple>``.
 
@@ -19,14 +19,14 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-SERVICE = ROOT / "services" / "agent"
+SERVICE = ROOT / "services" / "gateway"
 DIST = ROOT / "dist" / "sidecar"
 BIN_OUT = ROOT / "apps" / "desktop" / "binaries"
-ENTRY = SERVICE / "src" / "llama_studio_agent" / "scripts" / "launch.py"
+ENTRY = SERVICE / "src" / "zocai_gateway" / "scripts" / "launch.py"
 
 
 def _detect_triple() -> str:
-    explicit = os.environ.get("LLAMA_STUDIO_TARGET_TRIPLE")
+    explicit = os.environ.get("ZOC_STUDIO_TARGET_TRIPLE")
     if explicit:
         return explicit
     try:
@@ -78,7 +78,7 @@ def main() -> int:
     BIN_OUT.mkdir(parents=True, exist_ok=True)
     work = DIST / "build"
     out = DIST / "dist"
-    spec = DIST / "llama-studio-agent.spec"
+    spec = DIST / "zoc-studio-agent.spec"
     if args.clean:
         print("==> Cleaning PyInstaller cache (work/dist/spec) for a fresh build")
         for p in (work, out):
@@ -110,13 +110,17 @@ def main() -> int:
         cmd.append("--clean")
     cmd += [
         "--name",
-        "llama-studio-agent",
+        "zoc-studio-agent",
         "--paths",
         str(SERVICE / "src"),
         "--paths",
+        str(ROOT / "python" / "zocai_evolution" / "src"),
+        "--paths",
         str(ROOT / "packages" / "shared-types" / "python"),
         "--collect-submodules",
-        "llama_studio_agent",
+        "zocai_gateway",
+        "--collect-submodules",
+        "zocai_evolution",
         "--collect-submodules",
         "shared_schema",
         "--hidden-import",
@@ -144,12 +148,12 @@ def main() -> int:
     subprocess.check_call(cmd, timeout=600)
 
     suffix = ".exe" if platform.system().lower() == "windows" else ""
-    produced = out / f"llama-studio-agent{suffix}"
+    produced = out / f"zoc-studio-agent{suffix}"
     if not produced.exists():
         print(f"!! PyInstaller did not produce {produced}", file=sys.stderr)
         return 2
 
-    target = BIN_OUT / f"llama-studio-agent-{triple}{suffix}"
+    target = BIN_OUT / f"zoc-studio-agent-{triple}{suffix}"
     tmp_target = target.with_name(f".{target.name}.tmp")
     shutil.copy2(produced, tmp_target)
     os.replace(tmp_target, target)

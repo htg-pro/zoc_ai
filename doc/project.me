@@ -43,7 +43,7 @@ The React UI talks to the agent over loopback HTTP + Server-Sent Events. The age
 ## 3. Repository layout (A to Z)
 
 ```
-llama-studio/
+zoc-studio/
 ├── apps/
 │   ├── desktop/          Tauri v2 shell (Rust)
 │   │   ├── src/          Rust source: sidecar supervisor, fs commands,
@@ -90,13 +90,13 @@ llama-studio/
 │       └── package.json
 ├── services/
 │   └── agent/            FastAPI sidecar (Python 3.11+)
-│       ├── src/llama_studio_agent/
+│       ├── src/zoc_studio_agent/
 │       │   ├── app.py                 FastAPI factory
 │       │   ├── config.py              Env-driven Settings (pydantic-settings)
 │       │   ├── state.py               AppState (sessions, indexer per root)
 │       │   ├── deps.py                FastAPI dependency wiring
 │       │   ├── scripts/launch.py      Picks free port, prints
-│       │   │                          LLAMA_STUDIO_AGENT_PORT=<n>, runs uvicorn
+│       │   │                          ZOC_STUDIO_AGENT_PORT=<n>, runs uvicorn
 │       │   ├── v1/                    Versioned HTTP + SSE routes
 │       │   │                          (sessions, agent run, terminal…)
 │       │   ├── agent/                 Orchestrator loop + tool dispatch
@@ -112,7 +112,7 @@ llama-studio/
 │       │   ├── events/                Event bus for SSE streaming
 │       │   └── hotpath.py             Bridge to the Rust hotpath CLI
 │       ├── tests/                     pytest (60+ unit, plus opt-in smoke)
-│       │   └── smoke/                 LLAMA_STUDIO_SMOKE=1 → real LLM tests
+│       │   └── smoke/                 ZOC_STUDIO_SMOKE=1 → real LLM tests
 │       └── pyproject.toml
 ├── crates/
 │   └── hotpath/          Rust crate + CLI
@@ -155,7 +155,7 @@ llama-studio/
 ## 4. How it works (data flow)
 
 1. **You launch Zoc AI.** Tauri shell opens the window AND spawns the Python sidecar as a child process.
-2. **Sidecar handshake.** The sidecar picks a free loopback port and prints `LLAMA_STUDIO_AGENT_PORT=<n>` on stdout. The Tauri shell reads that line and stores the port.
+2. **Sidecar handshake.** The sidecar picks a free loopback port and prints `ZOC_STUDIO_AGENT_PORT=<n>` on stdout. The Tauri shell reads that line and stores the port.
 3. **Frontend asks for the port.** React calls `invoke('agent_port')` and gets the port.
 4. **Workspace scope.** First-run wizard asks you to pick a folder. Tauri pins all file I/O to that root via `WorkspaceState` — paths outside the root are rejected.
 5. **You chat.** UI POSTs the message to `/v1/sessions/{id}/agent/run`, opens an SSE subscription to `/v1/sessions/{id}/agent/events`, and streams tokens, tool calls, plan steps, and diffs back into the UI.
@@ -212,7 +212,7 @@ llama-studio/
 
 ```bash
 git clone <repo>
-cd llama-studio
+cd zoc-studio
 make install        # pnpm install + uv sync + cargo fetch
 ```
 
@@ -223,14 +223,14 @@ pnpm dev            # full stack: Tauri window + Vite + sidecar + hotpath
 # or run pieces individually:
 pnpm dev:frontend   # Vite on :1420
 pnpm dev:agent      # sidecar only (prints chosen port)
-cargo run -p llama-studio-hotpath -- version
+cargo run -p zoc-studio-hotpath -- version
 ```
 
 ### 6.4 Build a release installer
 
 ```bash
 make release        # stamp version → build everything → produce installer
-make zip            # also produce llama-studio-v<VERSION>.zip
+make zip            # also produce zoc-studio-v<VERSION>.zip
 ```
 
 Both fail hard if installers are missing — a "release" with no installer is a bug, not a soft warning. The installer for your current OS lands in `dist/installers/`.
@@ -247,7 +247,7 @@ Cross-OS bundles are NOT supported — run `make release` once per OS, or use a 
 
 ### 6.5 End-user install (the people you ship to)
 
-- **Linux**: download the `.AppImage`, `chmod +x`, double-click. OR install the `.deb` with `sudo apt install ./llama-studio_*.deb`.
+- **Linux**: download the `.AppImage`, `chmod +x`, double-click. OR install the `.deb` with `sudo apt install ./zoc-studio_*.deb`.
 - **macOS**: open the `.dmg`, drag Zoc AI to Applications. If unsigned, right-click → Open the first time.
 - **Windows**: run the `.msi` or NSIS `.exe` installer.
 
@@ -262,7 +262,7 @@ make check          # lint + typecheck + tests across JS / Python / Rust
 make lint
 make typecheck
 make fmt
-pnpm --filter @llama-studio/frontend test    # frontend vitest
+pnpm --filter @zoc-studio/frontend test    # frontend vitest
 make test           # tests across JS / Python / Rust
 pytest services/agent/tests        # backend tests
 pytest services/agent/tests/smoke  # opt-in real-LLM smoke (needs llama-server)
@@ -284,9 +284,9 @@ pytest services/agent/tests/smoke  # opt-in real-LLM smoke (needs llama-server)
 | Symptom                                | First file to open                                              |
 |----------------------------------------|-----------------------------------------------------------------|
 | Window opens but UI is blank           | Browser devtools (Tauri inspector) + `apps/frontend/src/App.tsx`|
-| "Can't reach agent"                    | `~/.llama-studio/logs/agent.log` + `apps/desktop/src/sidecar.rs`|
+| "Can't reach agent"                    | `~/.zoc-studio/logs/agent.log` + `apps/desktop/src/sidecar.rs`|
 | Permission denied on a file            | `apps/desktop/src/workspace.rs` (scope guard)                   |
-| Tool call hangs                        | `services/agent/src/llama_studio_agent/agent/`                  |
-| Bad search results                     | `services/agent/src/llama_studio_agent/indexer/embeddings.py`   |
+| Tool call hangs                        | `services/agent/src/zoc_studio_agent/agent/`                  |
+| Bad search results                     | `services/agent/src/zoc_studio_agent/indexer/embeddings.py`   |
 | Release zip rejected                   | Run `python scripts/verify_zip.py <zip>` for the exact reason   |
 reason   |

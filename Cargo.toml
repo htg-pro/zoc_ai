@@ -3,6 +3,7 @@ resolver = "2"
 members = [
     "apps/desktop",
     "crates/hotpath",
+    "crates/hardware-probe",
 ]
 
 [workspace.package]
@@ -10,7 +11,7 @@ version = "2.0.0"
 edition = "2021"
 rust-version = "1.77.2"
 license = "MIT"
-repository = "https://github.com/llama-studio/llama-studio"
+repository = "https://github.com/zoc-studio/zoc-studio"
 
 [workspace.dependencies]
 serde = { version = "1.0", features = ["derive"] }

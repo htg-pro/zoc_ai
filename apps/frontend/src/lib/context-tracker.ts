@@ -5,7 +5,7 @@
  */
 
 import type { AgentClient } from "./agent-client";
-import type { ContextStatus } from "@llama-studio/shared-types";
+import type { ContextStatus } from "@zoc-studio/shared-types";
 
 const POLL_INTERVAL_MS = 10_000; // Poll every 10 seconds
 

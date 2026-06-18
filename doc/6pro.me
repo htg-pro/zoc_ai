@@ -23,7 +23,7 @@ Make every tagged release produce **signed, notarized, auto-updating** installer
    - **Windows**: `WINDOWS_CERTIFICATE` (base64 PFX) + `WINDOWS_CERTIFICATE_PASSWORD`. The `.msi` and NSIS `.exe` must be Authenticode-signed.
    - **Linux**: AppImage signed with `--sign` using a project minisign key (`MINISIGN_PRIVATE_KEY` + password).
 3. Auto-update endpoint:
-   - Set `plugins.updater.active=true` in `tauri.conf.json` with endpoint `https://releases.llama.studio/updates/{{target}}/{{arch}}/{{current_version}}` and the project's minisign pubkey.
+   - Set `plugins.updater.active=true` in `tauri.conf.json` with endpoint `https://releases.zoc.studio/updates/{{target}}/{{arch}}/{{current_version}}` and the project's minisign pubkey.
    - Add `scripts/publish_update_manifest.py` that generates `latest.json` per target/arch and uploads it (S3 or Cloudflare R2 — pick one, document the env vars).
    - Wire the upload into `release.yml` so each tag publishes manifests.
 4. Crash reporting (opt-in):
@@ -40,7 +40,7 @@ Make every tagged release produce **signed, notarized, auto-updating** installer
 - Existing fail-hard behavior of `release.sh` / `make_zip.sh` / `verify_zip.py` must remain intact.
 
 **Acceptance criteria.**
-- Tag `v2.1.0`, push, wait — within 60 minutes the GitHub Release page shows: AppImage (x86_64 + arm64), `.deb` (both arches), signed `.dmg` (Intel + AS), notarized `.app`, signed `.msi` + `.exe`, the combined `llama-studio-v2.1.0.zip`, and SHA256SUMS.
+- Tag `v2.1.0`, push, wait — within 60 minutes the GitHub Release page shows: AppImage (x86_64 + arm64), `.deb` (both arches), signed `.dmg` (Intel + AS), notarized `.app`, signed `.msi` + `.exe`, the combined `zoc-studio-v2.1.0.zip`, and SHA256SUMS.
 - Installing the macOS `.dmg` shows no Gatekeeper warning.
 - Installing the Windows `.msi` shows the publisher as the signing org, not "Unknown".
 - A v2.1.1 release auto-updates a running v2.1.0 install on each OS.
@@ -79,7 +79,7 @@ A first-time user with zero AI / coding-agent context is productive in under 5 m
    - Detect git repo, parse `.gitignore`, respect it in the indexer and file tree.
    - Show "X files, Y MB, Z file types" preview before indexing.
 7. Demo project:
-   - "Try a demo project" button on the welcome screen clones a curated small repo (e.g. https://github.com/llama-studio/demo) to `~/.llama-studio/demos/` and opens it as the workspace.
+   - "Try a demo project" button on the welcome screen clones a curated small repo (e.g. https://github.com/zoc-studio/demo) to `~/.zoc-studio/demos/` and opens it as the workspace.
 8. Splash + About screen (revive Task #18):
    - Add `apps/frontend/src/features/about/AboutDialog.tsx` showing logo, version, build hash, license, links.
    - Splash on cold boot for ~800ms while sidecar starts.
@@ -120,14 +120,14 @@ Give heavy daily users the workflows they keep asking for: persistent permission
    - Agent `AppState.indexer_for` keyed by sorted root tuple. Indexer operates over the union.
    - File tree shows roots as top-level entries.
 3. **Diff history**:
-   - Every applied patch is journaled to `~/.llama-studio/diff-journal/<workspace-hash>.jsonl` (timestamp, files, hunks, message ID).
+   - Every applied patch is journaled to `~/.zoc-studio/diff-journal/<workspace-hash>.jsonl` (timestamp, files, hunks, message ID).
    - New `apps/frontend/src/features/history/HistoryView.tsx`: scrollable timeline with "Revert this patch" button that generates an inverse patch and applies it.
 4. **Custom slash commands**:
-   - Convention: `.llama-studio/commands/*.md` in the workspace, with YAML frontmatter (`name`, `args`, `tools`).
+   - Convention: `.zoc-studio/commands/*.md` in the workspace, with YAML frontmatter (`name`, `args`, `tools`).
    - Loader in `services/agent/.../commands/recipes.py` registers them at workspace mount time and on fs-watch change.
    - Commands appear in the slash autocomplete with their description.
 5. **MCP support** (Model Context Protocol):
-   - Add `services/agent/.../mcp/` client that connects to a list of MCP servers from `~/.llama-studio/mcp.json`.
+   - Add `services/agent/.../mcp/` client that connects to a list of MCP servers from `~/.zoc-studio/mcp.json`.
    - MCP tools merged into the agent's tool registry, prefixed `mcp.<server>.<tool>`. Permissions identical to native tools.
    - Settings → MCP UI to add/remove servers, see exposed tools, test connection.
 
@@ -140,7 +140,7 @@ Give heavy daily users the workflows they keep asking for: persistent permission
 - A user grants `read_file` once per workspace and is never prompted again for that workspace.
 - Opening a workspace with two roots indexes both; cross-root semantic search returns hits from either.
 - Reverting yesterday's patch from the history view restores the files exactly.
-- A community-shipped `.llama-studio/commands/migrate-to-typescript.md` works out of the box after `git pull`.
+- A community-shipped `.zoc-studio/commands/migrate-to-typescript.md` works out of the box after `git pull`.
 - Connecting to a public MCP server (e.g. `mcp-server-git`) exposes its tools in chat.
 
 **Out of scope.**
@@ -207,10 +207,10 @@ Make it natural to share context, with privacy-preserving primitives.
 **Deliverables.**
 1. **Session export / import**:
    - New `/v1/sessions/{id}/export` returns a single signed `.llamasession` file (JSON + zstd, includes transcript, applied diffs, attached files inlined or hashed).
-   - Import via UI drag-drop or `llama-studio --import session.llamasession`.
+   - Import via UI drag-drop or `zoc-studio --import session.llamasession`.
    - Optional cloud paste: if user is signed in (Year 3 introduces auth — until then, gist-only via GitHub token in keyring), one-click upload to a public/private gist and copy URL.
 2. **Workspace profiles**:
-   - Convention: `.llama-studio/profile.toml` checked into a repo.
+   - Convention: `.zoc-studio/profile.toml` checked into a repo.
    - Schema: `model`, `provider`, `allowed_tools[]`, `slash_commands_dir`, `ignore_patterns[]`, `embedding_model`.
    - Loader merges into the user's settings on workspace open with a "Use team defaults?" prompt.
 3. **Pair mode (experimental, flag-gated)**:
@@ -234,7 +234,7 @@ Make it natural to share context, with privacy-preserving primitives.
 
 **Acceptance criteria.**
 - Two users on a flight can share a debugging session via the exported file and see the same transcript + diffs.
-- A community repo with `.llama-studio/profile.toml` configures a new contributor's app on first open.
+- A community repo with `.zoc-studio/profile.toml` configures a new contributor's app on first open.
 - VS Code extension shows the live chat from the desktop app.
 - "Open as PR" produces a real GitHub PR with the applied diff.
 
@@ -279,7 +279,7 @@ Ship v3.0.0 to ProductHunt and Hacker News with a marketing site, demo video, co
 6. **v3.0.0 release**:
    - Run the full Month 1 release pipeline.
    - Coordinate Show HN + ProductHunt for the same day; have responders ready.
-   - Press kit at `llama.studio/press` (logos, screenshots, fact sheet, founder bios).
+   - Press kit at `zoc.studio/press` (logos, screenshots, fact sheet, founder bios).
 
 **Constraints.**
 - No new features in this month — everything is polish + launch ops.

@@ -14,7 +14,7 @@ import type {
   AgentEventBase,
   DoneEvent,
   MessageEvent,
-} from "@llama-studio/shared-types";
+} from "@zoc-studio/shared-types";
 
 const roundTrip = <T>(value: T): T => JSON.parse(JSON.stringify(value)) as T;
 

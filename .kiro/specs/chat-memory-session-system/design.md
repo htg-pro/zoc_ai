@@ -2,7 +2,7 @@
 
 ## Overview
 
-Zoc AI ("Llama Studio") is a Tauri/React + Python agent IDE that streams agent
+Zoc AI ("Zoc Studio") is a Tauri/React + Python agent IDE that streams agent
 runs over SSE. A cluster of high-impact defects all stem from the same missing
 abstraction: there is no single, authoritative association between **a user
 message**, **the run it triggered**, and **the events that run emits**. Three
@@ -168,7 +168,7 @@ the "always select `sessions[0]`" auto-resume.
 
 ```typescript
 // session-lifecycle.ts (NEW) — pure functions, no I/O
-import type { Session } from "@llama-studio/shared-types";
+import type { Session } from "@zoc-studio/shared-types";
 
 export type LifecycleTrigger = "app-open" | "new-chat" | "select" | "delete-active";
 
@@ -308,7 +308,7 @@ The shared event type gains an optional `run_id`. Existing events without it are
 treated as belonging to the active run (backward compatible).
 
 ```typescript
-// @llama-studio/shared-types — AgentEventBase gains run_id
+// @zoc-studio/shared-types — AgentEventBase gains run_id
 export interface AgentEventBase {
   session_id: string;
   seq: number;
@@ -323,7 +323,7 @@ export interface AgentEventBase {
 
 ### Model 2: `Session` (unchanged) + `SessionIntent` (new, frontend-only)
 
-`Session` from `@llama-studio/shared-types` is unchanged (`id`, `title`,
+`Session` from `@zoc-studio/shared-types` is unchanged (`id`, `title`,
 `status`, `workspace_root`, `created_at`, `updated_at`, `messages`, …). The new
 `SessionIntent` is a pure frontend discriminated union (Component 2). A
 persisted `lastActiveId: string | null` is stored in `localStorage` (alongside
@@ -669,7 +669,7 @@ brute-force cosine scan over a few hundred rows per session.
 
 ## Dependencies
 
-- **Frontend**: existing `@llama-studio/shared-types`, `zustand` store, fast-check
+- **Frontend**: existing `@zoc-studio/shared-types`, `zustand` store, fast-check
   (dev) for PBT. New files: `seq-cursor.ts`, `session-lifecycle.ts`.
 - **Backend**: existing FastAPI sidecar, `EventBus`, `RunRegistry`,
   `RecallService` / `MessageVectorStore`; hypothesis + pytest (dev) for PBT.

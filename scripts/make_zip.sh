@@ -15,7 +15,7 @@ for arg in "$@"; do
 done
 
 VERSION="$(cat VERSION | tr -d '[:space:]')"
-ZIP="llama-studio-v${VERSION}.zip"
+ZIP="zoc-studio-v${VERSION}.zip"
 
 # Integrity gate: refuse to produce a "release" zip with no installers,
 # unless the caller explicitly opts in (e.g. source-only delivery, or a
@@ -74,7 +74,7 @@ EOF
 fi
 
 STAGE="$(mktemp -d)"
-TOP="${STAGE}/llama-studio-v${VERSION}"
+TOP="${STAGE}/zoc-studio-v${VERSION}"
 mkdir -p "$TOP"
 
 echo "==> Staging release tree at ${TOP}"
@@ -111,7 +111,7 @@ EXCLUDES=(
   --exclude='./.upm'
   --exclude='./legacy'
   --exclude='./zipFile.zip'
-  --exclude='./llama-studio-v*.zip'
+  --exclude='./zoc-studio-v*.zip'
   --exclude='*.egg-info'
   --exclude='./dist/sidecar/build'
   --exclude='./dist'
@@ -142,9 +142,9 @@ rm -f "$ROOT/$ZIP"
 } > "$TOP/RELEASE_MANIFEST.txt"
 
 if command -v zip >/dev/null 2>&1; then
-  (cd "$STAGE" && zip -qr "$ROOT/$ZIP" "llama-studio-v${VERSION}")
+  (cd "$STAGE" && zip -qr "$ROOT/$ZIP" "zoc-studio-v${VERSION}")
 else
-  python3 - "$STAGE" "llama-studio-v${VERSION}" "$ROOT/$ZIP" <<'PY'
+  python3 - "$STAGE" "zoc-studio-v${VERSION}" "$ROOT/$ZIP" <<'PY'
 import os, sys, zipfile
 stage, top, out = sys.argv[1], sys.argv[2], sys.argv[3]
 root = os.path.join(stage, top)

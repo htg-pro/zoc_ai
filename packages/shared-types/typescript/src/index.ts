@@ -515,6 +515,18 @@ export interface UpdateSettingsRequest {
   embedding?: EmbeddingSettings | null;
 }
 
+// ── Event_Contract (single source of truth for SSE events) ─────────────
+//
+// The new ecosystem SSE Event_Contract lives in `agent-events.ts` and is the
+// Single_Source_Of_Truth for the eight typed SSE rows (R6.2, R6.6). It is
+// re-exported here under the `AgentEvents` namespace so consumers import a
+// single surface: `import { AgentEvents } from "@zoc-studio/shared-types"`
+// then reference `AgentEvents.AgentEvent`, `AgentEvents.EventType`,
+// `AgentEvents.IntentEvent`, etc. The namespace keeps the new contract's
+// `AgentEvent`/`DoneEvent` distinct from the legacy run/tool-call types below,
+// which surviving editor-support UI still imports until separately retired.
+export * as AgentEvents from "./agent-events";
+
 // ── Union Types ───────────────────────────────────────────────────────
 
 export type AgentEvent =

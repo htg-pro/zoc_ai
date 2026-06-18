@@ -1,6 +1,6 @@
 import { Brain } from "lucide-react";
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
-import type { MemoryStats } from "@llama-studio/shared-types";
+import type { MemoryStats } from "@zoc-studio/shared-types";
 import {
   DEFAULT_CONTEXT_WINDOW,
   getLocalModelsSnapshot,

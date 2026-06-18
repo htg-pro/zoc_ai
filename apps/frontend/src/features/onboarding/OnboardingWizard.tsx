@@ -208,7 +208,7 @@ export function OnboardingWizard({ onComplete }: Props) {
             </div>
             <p className="text-sm text-muted-foreground">
               Opt in to local-only event logs (written to{" "}
-              <code className="font-mono">~/.llama-studio/logs/telemetry.log</code>).
+              <code className="font-mono">~/.zoc-studio/logs/telemetry.log</code>).
               Nothing leaves your machine. You can change this anytime in Settings.
             </p>
             <label className="flex items-center justify-between rounded border border-border bg-card/60 p-3 text-sm">

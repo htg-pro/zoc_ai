@@ -13,7 +13,7 @@
 ### Deliverables
 - CI matrix building Linux (x86_64 + arm64), macOS (Intel + Apple Silicon), Windows (x64) installers on every tagged release. (Task #10, #20)
 - macOS notarization + Windows Authenticode signing wired into CI secrets. (Task #19)
-- Auto-update endpoint live: `releases.llama.studio/updates/{target}/{arch}/{version}` serving signed Tauri update manifests.
+- Auto-update endpoint live: `releases.zoc.studio/updates/{target}/{arch}/{version}` serving signed Tauri update manifests.
 - Crash reporting — opt-in Sentry (or self-hosted GlitchTip) for sidecar + Rust shell.
 - Public download page (static site) with checksums + GPG signatures.
 
@@ -51,7 +51,7 @@
 - **Persistent tool permissions** between sessions (Task #12). "Always allow `read_file` in this workspace" toggle.
 - **Multi-root workspaces**: open more than one folder; indexer + chat operate over the union.
 - **Diff history**: undo any agent-applied patch from a timeline view.
-- **Custom slash commands**: `.llama-studio/commands/*.md` files in the repo define team-shared prompts.
+- **Custom slash commands**: `.zoc-studio/commands/*.md` files in the repo define team-shared prompts.
 - **MCP (Model Context Protocol) support**: connect external MCP servers as tools.
 
 ### Success criteria
@@ -84,14 +84,14 @@
 
 ### Deliverables
 - **Session export**: share a chat + diff as a single signed file (or paste-able URL via opt-in cloud gist).
-- **Shared workspace profiles**: `.llama-studio/profile.toml` checked into a repo configures team defaults (model, allowed tools, slash commands, ignore patterns).
+- **Shared workspace profiles**: `.zoc-studio/profile.toml` checked into a repo configures team defaults (model, allowed tools, slash commands, ignore patterns).
 - **Pair mode** (experimental): two Zoc AI instances on the same LAN sync chat + cursor over WebRTC. Local-only, end-to-end encrypted.
 - **GitHub / GitLab integration**: open a PR from an applied diff stack; pull a PR's diff into the review panel.
 - **VS Code / JetBrains adapter** (read-only): show Zoc AI chat inside another editor.
 
 ### Success criteria
 - A team can hand off a debugging session via a single shareable file.
-- At least one open-source project ships a `.llama-studio/profile.toml`.
+- At least one open-source project ships a `.zoc-studio/profile.toml`.
 
 ---
 
@@ -103,7 +103,7 @@
 - Full design pass: empty states, error states, loading skeletons everywhere.
 - Accessibility audit: keyboard-only navigation, screen-reader pass, color-contrast AA.
 - Localization scaffold: en + es + zh + ja + de + fr; community-driven for the rest.
-- Marketing site: <llama.studio> with feature pages, comparison table vs Cursor/Codex/Continue, 90-second demo video.
+- Marketing site: <zoc.studio> with feature pages, comparison table vs Cursor/Codex/Continue, 90-second demo video.
 - Public Discord / GitHub Discussions, weekly office hours for the first month.
 - v3.0.0 tag with everything above. Public launch.
 

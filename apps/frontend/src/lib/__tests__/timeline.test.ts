@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { buildTimeline } from "@/lib/timeline";
 import type { GitCommit } from "@/lib/tauri-bridge";
-import type { CheckpointInfo } from "@llama-studio/shared-types";
+import type { CheckpointInfo } from "@zoc-studio/shared-types";
 
 const commit = (over: Partial<GitCommit>): GitCommit => ({
   hash: "abc123",

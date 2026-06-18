@@ -1,4 +1,4 @@
-import type { SlashCommandName } from "@llama-studio/shared-types";
+import type { SlashCommandName } from "@zoc-studio/shared-types";
 
 /**
  * Local command list shown by `SlashAutocomplete`. `name` is the shared

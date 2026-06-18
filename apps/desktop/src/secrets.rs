@@ -4,7 +4,7 @@
 
 use keyring::Entry;
 
-const SERVICE: &str = "ai.llama.studio";
+const SERVICE: &str = "ai.zoc.studio";
 
 fn entry(key: &str) -> Result<Entry, String> {
     Entry::new(SERVICE, key).map_err(|e| e.to_string())

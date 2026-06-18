@@ -3,7 +3,7 @@ import { useApp } from "@/lib/store";
 import { cn } from "@/lib/utils";
 import { contextUsage } from "@/lib/context-usage";
 import { todoProgress } from "@/lib/plan-progress";
-import type { TodoItem } from "@llama-studio/shared-types";
+import type { TodoItem } from "@zoc-studio/shared-types";
 
 export function ContextBar() {
   const contextStatus = useApp((s) => s.contextStatus);

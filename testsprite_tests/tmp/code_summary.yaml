@@ -15,7 +15,7 @@ routes:
   - path: /
     file: src/App.tsx
     auth_required: false
-    description: Single-page Llama Studio desktop shell with activity bar, side panel, agent panel, bottom dock, and Settings overlay
+    description: Single-page Zoc Studio desktop shell with activity bar, side panel, agent panel, bottom dock, and Settings overlay
 features:
   - name: Settings -> Providers -> Groq BYOK key flow
     description: |
@@ -167,7 +167,7 @@ known_limitations:
     location: src/lib/agent-client.ts
     impact: Tests must explicitly assert the response is NOT the mock string to verify real streaming
   - issue: Backend's OpenAIProvider is hard-wired to base_url https://api.openai.com/v1 with a static catalogue
-    location: services/agent/src/llama_studio_agent/providers/openai.py
+    location: services/agent/src/zoc_studio_agent/providers/openai.py
     impact: |
       A real Groq run requires the OpenAIProvider's base_url to be overridable per-session. The Settings
       Discover-Models flow still works (it accepts a base_url in the request body), but the actual

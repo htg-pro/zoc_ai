@@ -14,7 +14,7 @@ doctor:
 	@printf "uv        : "; uv --version 2>/dev/null || echo "MISSING (https://docs.astral.sh/uv)"
 	@printf "rustc     : "; rustc --version 2>/dev/null || echo "MISSING (https://rustup.rs)"
 	@printf "cargo     : "; cargo --version 2>/dev/null || echo "MISSING"
-	@printf "tauri-cli : "; (cargo tauri --version 2>/dev/null || pnpm --filter @llama-studio/desktop exec tauri --version 2>/dev/null) || echo "MISSING (pnpm --filter @llama-studio/desktop add -D @tauri-apps/cli)"
+	@printf "tauri-cli : "; (cargo tauri --version 2>/dev/null || pnpm --filter @zoc-studio/desktop exec tauri --version 2>/dev/null) || echo "MISSING (pnpm --filter @zoc-studio/desktop add -D @tauri-apps/cli)"
 	@printf "pyinstaller (release only): "; uv run python -c "import PyInstaller; print(PyInstaller.__version__)" 2>/dev/null || echo "MISSING (uv pip install pyinstaller — only needed for release)"
 	@echo ""
 	@echo "==> Linux runtime deps (Tauri webview):"
@@ -35,7 +35,7 @@ lint:
 
 typecheck:
 	pnpm -r typecheck
-	uv run mypy services/agent/src packages/shared-types/python
+	uv run mypy services/gateway/src packages/shared-types/python
 
 fmt:
 	pnpm -r format
@@ -72,11 +72,11 @@ release-source-only: version
 
 zip: release
 	bash scripts/make_zip.sh
-	python3 scripts/verify_zip.py llama-studio-v$$(cat VERSION).zip
+	python3 scripts/verify_zip.py zoc-studio-v$$(cat VERSION).zip
 
 zip-source-only: release-source-only
 	bash scripts/make_zip.sh --allow-empty-installers
-	python3 scripts/verify_zip.py llama-studio-v$$(cat VERSION).zip --source-only
+	python3 scripts/verify_zip.py zoc-studio-v$$(cat VERSION).zip --source-only
 
 clean:
 	pnpm -r clean || true

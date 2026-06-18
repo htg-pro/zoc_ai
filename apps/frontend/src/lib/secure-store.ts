@@ -13,7 +13,7 @@
  */
 import { isTauri } from "./tauri-bridge";
 
-const PREFIX = "llama-studio.secret.";
+const PREFIX = "zoc-studio.secret.";
 
 function storage(): Storage | null {
   if (typeof localStorage === "undefined") return null;

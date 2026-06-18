@@ -1,4 +1,4 @@
-import type { DiffPatch } from "@llama-studio/shared-types";
+import type { DiffPatch } from "@zoc-studio/shared-types";
 import { parseUnifiedDiff } from "@/lib/diff-utils";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { cn } from "@/lib/utils";

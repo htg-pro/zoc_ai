@@ -6,7 +6,7 @@
  * so the merge/sort logic is unit-testable; the panel supplies the live data.
  */
 import type { GitCommit } from "./tauri-bridge";
-import type { CheckpointInfo } from "@llama-studio/shared-types";
+import type { CheckpointInfo } from "@zoc-studio/shared-types";
 
 export type TimelineKind = "commit" | "checkpoint";
 

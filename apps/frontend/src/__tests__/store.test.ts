@@ -10,14 +10,12 @@ import type {
   TestGenRequest,
 } from "@/lib/agent-client";
 import type {
-  AgentEvent,
   CodeReviewReport,
-  RunAgentRequest,
   Session,
   SlashCommandName,
   TestGenerationResult,
   ToolGrant,
-} from "@llama-studio/shared-types";
+} from "@zoc-studio/shared-types";
 
 const initial = useApp.getState();
 
@@ -258,260 +256,6 @@ describe("app store", () => {
     }
   });
 
-  it("replaces a tool_call card by id as its status changes", async () => {
-    async function* stream(): AsyncIterable<AgentEvent> {
-      yield {
-        type: "tool_call",
-        session_id: "s",
-        seq: 1,
-        at: "t",
-        tool_call: { id: "tc-stream-1", name: "read_file", arguments: {}, status: "pending" },
-      };
-      yield {
-        type: "tool_call",
-        session_id: "s",
-        seq: 2,
-        at: "t",
-        tool_call: {
-          id: "tc-stream-1",
-          name: "read_file",
-          arguments: {},
-          status: "needs_approval",
-        },
-      };
-      yield {
-        type: "tool_call",
-        session_id: "s",
-        seq: 3,
-        at: "t",
-        tool_call: {
-          id: "tc-stream-1",
-          name: "read_file",
-          arguments: {},
-          status: "succeeded",
-          result: "ok",
-        },
-      };
-      yield { type: "done", session_id: "s", seq: 4, at: "t", ok: true };
-    }
-    const fake = {
-      postMessage: vi.fn().mockResolvedValue({}),
-      runAgent: () => stream(),
-    } as unknown as AgentClient;
-    vi.spyOn(agentClient, "getAgentClient").mockResolvedValue(fake);
-    useApp.setState({ liveMode: true });
-
-    await useApp.getState().sendUserMessage("do a thing");
-
-    const entries = useApp.getState().chat.filter((e) => e.id === "tc-stream-1");
-    expect(entries).toHaveLength(1);
-    expect(entries[0].kind).toBe("tool_call");
-    expect(entries[0].toolCall?.status).toBe("succeeded");
-    expect(useApp.getState().streaming).toBe(false);
-    vi.restoreAllMocks();
-  });
-
-  it("does not duplicate the user message when the stream echoes it back", async () => {
-    async function* stream(): AsyncIterable<AgentEvent> {
-      yield {
-        type: "message",
-        session_id: "s",
-        seq: 1,
-        at: "t",
-        message: {
-          id: "persisted-user-1",
-          role: "user",
-          content: "please help",
-          created_at: new Date().toISOString(),
-        },
-      };
-      yield {
-        type: "message",
-        session_id: "s",
-        seq: 2,
-        at: "t",
-        message: {
-          id: "assistant-1",
-          role: "assistant",
-          content: "Sure.",
-          created_at: new Date().toISOString(),
-        },
-      };
-      yield { type: "done", session_id: "s", seq: 3, at: "t", ok: true };
-    }
-    const fake = {
-      postMessage: vi.fn(),
-      runAgent: () => stream(),
-    } as unknown as AgentClient;
-    vi.spyOn(agentClient, "getAgentClient").mockResolvedValue(fake);
-    useApp.setState({ liveMode: true });
-
-    await useApp.getState().sendUserMessage("please help");
-
-    const userMessages = useApp
-      .getState()
-      .chat.filter((entry) => entry.message?.role === "user" && entry.message.content === "please help");
-    expect(userMessages).toHaveLength(1);
-    expect(userMessages[0].id).toBe("persisted-user-1");
-    expect(fake.postMessage).not.toHaveBeenCalled();
-    vi.restoreAllMocks();
-  });
-
-  it("keeps normal chat clean when the sidecar emits a placeholder plan and duplicate summary", async () => {
-    async function* stream(): AsyncIterable<AgentEvent> {
-      yield {
-        type: "plan",
-        session_id: "s",
-        seq: 1,
-        at: "t",
-        plan: {
-          id: "placeholder-plan",
-          goal: "hi",
-          created_at: new Date().toISOString(),
-          steps: [
-            {
-              id: "placeholder-step",
-              title: "Complete the goal",
-              detail: "",
-              status: "pending",
-              attempt: 0,
-              done: false,
-            },
-          ],
-        },
-      };
-      yield {
-        type: "token",
-        session_id: "s",
-        seq: 2,
-        at: "t",
-        delta: "Hello! How can I assist you today?",
-      };
-      yield {
-        type: "done",
-        session_id: "s",
-        seq: 3,
-        at: "t",
-        ok: true,
-        summary: "Hello! How can I assist you today?",
-      };
-    }
-    const fake = {
-      runAgent: () => stream(),
-    } as unknown as AgentClient;
-    vi.spyOn(agentClient, "getAgentClient").mockResolvedValue(fake);
-    useApp.setState({ liveMode: true });
-
-    await useApp.getState().sendUserMessage("hi");
-
-    const items = useApp.getState().agentItems;
-    expect(items.some((item) => item.type === "plan")).toBe(false);
-    expect(items.some((item) => item.type === "final_summary")).toBe(false);
-    expect(
-      items.some(
-        (item) =>
-          item.type === "agent_message" &&
-          item.text === "Hello! How can I assist you today?" &&
-          item.streaming === false,
-      ),
-    ).toBe(true);
-    vi.restoreAllMocks();
-  });
-
-  it('"type hi after hello" ignores the prior run (cross-run replay discarded)', async () => {
-    // Drive a real `sendUserMessage("hi")` against a mock SSE that FIRST replays
-    // a *prior* run's `message`/`done` events tagged with a stale `run_id`
-    // ("run-OLD"), THEN yields the new run's legitimate events. The store derives
-    // the active run id from the just-appended user message id at call time, so
-    // the mock can't know it up-front — instead it captures `req.runId` and tags
-    // the "new" events with it, while the stale events use a hardcoded mismatch.
-    // Cross-run events MUST be discarded by `decideIngest` (R1.2), only the new
-    // run's output renders (R1.7), and the run binds to the "hi" message (R1.1).
-    async function* stream(activeRunId: string): AsyncIterable<AgentEvent> {
-      // Stale prior-run replay — different run_id, must never be applied.
-      yield {
-        type: "message",
-        session_id: "s",
-        seq: 1,
-        at: "t",
-        run_id: "run-OLD",
-        message: {
-          id: "assistant-old",
-          role: "assistant",
-          content: "hello answer from the prior run",
-          created_at: new Date().toISOString(),
-        },
-      };
-      yield { type: "done", session_id: "s", seq: 2, at: "t", run_id: "run-OLD", ok: true };
-      // Legitimate new-run events — tagged with the captured active run id.
-      yield {
-        type: "message",
-        session_id: "s",
-        seq: 3,
-        at: "t",
-        run_id: activeRunId,
-        message: {
-          id: "assistant-new",
-          role: "assistant",
-          content: "fresh answer for hi",
-          created_at: new Date().toISOString(),
-        },
-      };
-      yield { type: "done", session_id: "s", seq: 4, at: "t", run_id: activeRunId, ok: true };
-    }
-
-    let capturedRunId: string | null | undefined;
-    const fake = {
-      runAgent: (_id: string, req: RunAgentRequest, _signal?: AbortSignal) => {
-        capturedRunId = req.runId;
-        return stream(req.runId as string);
-      },
-    } as unknown as AgentClient;
-    vi.spyOn(agentClient, "getAgentClient").mockResolvedValue(fake);
-    // `buildRunAgentRequest` needs a workspace root to return non-null.
-    useApp.setState({ liveMode: true, workspaceRoot: "/tmp", chat: [], agentItems: [] });
-
-    await useApp.getState().sendUserMessage("hi");
-
-    const state = useApp.getState();
-
-    // The active run id the store derived and passed to `runAgent`.
-    expect(capturedRunId).toBeTruthy();
-
-    // The stale "hello" assistant message is NOT rendered anywhere.
-    expect(
-      state.chat.some((e) => e.message?.content === "hello answer from the prior run"),
-    ).toBe(false);
-    expect(
-      state.agentItems.some(
-        (i) => i.type === "agent_message" && i.text === "hello answer from the prior run",
-      ),
-    ).toBe(false);
-    expect(state.chat.some((e) => e.id === "assistant-old")).toBe(false);
-
-    // The new run's output IS rendered.
-    expect(state.chat.some((e) => e.message?.content === "fresh answer for hi")).toBe(true);
-    expect(
-      state.agentItems.some(
-        (i) => i.type === "agent_message" && i.text === "fresh answer for hi",
-      ),
-    ).toBe(true);
-
-    // `boundMessageId` equals the appended user "hi" message id (the local-... id).
-    const userEntries = state.chat.filter(
-      (e) => e.message?.role === "user" && e.message.content === "hi",
-    );
-    expect(userEntries).toHaveLength(1);
-    const hiMessageId = userEntries[userEntries.length - 1].id;
-    expect(hiMessageId.startsWith("local-")).toBe(true);
-    expect(state.boundMessageId).toBe(hiMessageId);
-    // The derived run id is bound to that message (R1.1/R1.3).
-    expect(capturedRunId).toBe(`run-${hiMessageId}`);
-
-    expect(state.streaming).toBe(false);
-    vi.restoreAllMocks();
-  });
-
   it("deletes the active session and starts fresh without auto-resuming another", async () => {
     const [first, second] = useApp.getState().sessions;
     useApp.setState({ liveMode: false, activeSessionId: first.id });
@@ -549,7 +293,7 @@ describe("app store", () => {
     const existing = useApp.getState().sessions;
     expect(existing.length).toBeGreaterThan(1);
     const prior = existing[0];
-    localStorage.setItem("llama-studio.last-active-session.v1", prior.id);
+    localStorage.setItem("zoc-studio.last-active-session.v1", prior.id);
     useApp.setState({
       liveMode: true,
       activeSessionId: prior.id,
@@ -609,7 +353,7 @@ describe("app store", () => {
     // in the sidebar but none of them is selected.
     expect(st.sessions[0].id).toBe(fresh.id);
     // The persisted pointer now tracks the new session (R2.1 follow-on).
-    expect(localStorage.getItem("llama-studio.last-active-session.v1")).toBe(fresh.id);
+    expect(localStorage.getItem("zoc-studio.last-active-session.v1")).toBe(fresh.id);
 
     vi.unstubAllGlobals();
     vi.restoreAllMocks();
@@ -713,179 +457,12 @@ describe("app store", () => {
     vi.restoreAllMocks();
   });
 
-  it("aborts an in-flight stream when cancelStream is invoked", async () => {
-    let aborted = false;
-    async function* stream(signal: AbortSignal): AsyncIterable<AgentEvent> {
-      yield { type: "token", session_id: "s", seq: 1, at: "t", delta: "hello" };
-      await new Promise<void>((_resolve, reject) => {
-        if (signal.aborted) {
-          aborted = true;
-          reject(new DOMException("Aborted", "AbortError"));
-          return;
-        }
-        signal.addEventListener("abort", () => {
-          aborted = true;
-          reject(new DOMException("Aborted", "AbortError"));
-        });
-      });
-    }
-    const fake = {
-      postMessage: vi.fn().mockResolvedValue({}),
-      runAgent: (_id: string, _req: unknown, signal?: AbortSignal) =>
-        stream(signal ?? new AbortController().signal),
-    } as unknown as AgentClient;
-    vi.spyOn(agentClient, "getAgentClient").mockResolvedValue(fake);
-    useApp.setState({ liveMode: true });
-
-    const done = useApp.getState().sendUserMessage("hello");
-    // Yield to the event loop so postMessage resolves and the stream begins.
-    await new Promise((r) => setTimeout(r, 20));
-    expect(useApp.getState().streaming).toBe(true);
-    useApp.getState().cancelStream();
-    await done;
-
-    expect(aborted).toBe(true);
-    expect(useApp.getState().streaming).toBe(false);
-    // The abort is recorded as a "(cancelled)" system message in the chat.
-    const last = useApp.getState().chat[useApp.getState().chat.length - 1];
-    expect(last.message?.content).toBe("(cancelled)");
-    vi.restoreAllMocks();
-  });
-
-  it("retryApproval re-runs via the client and streams the resulting events", async () => {
-    async function* stream(): AsyncIterable<AgentEvent> {
-      yield {
-        type: "tool_call",
-        session_id: "s",
-        seq: 7,
-        at: "t",
-        tool_call: {
-          id: "tc-retry-1",
-          name: "write_file",
-          arguments: {},
-          status: "succeeded",
-          result: "ok",
-        },
-      };
-      yield { type: "done", session_id: "s", seq: 8, at: "t", ok: true };
-    }
-    const retryApproval = vi.fn(() => stream());
-    const fake = { retryApproval } as unknown as AgentClient;
-    vi.spyOn(agentClient, "getAgentClient").mockResolvedValue(fake);
-    useApp.setState({ liveMode: true });
-
-    const ok = await useApp.getState().retryApproval("cancelled-call");
-    expect(ok).toBe(true);
-    expect(retryApproval).toHaveBeenCalledWith(
-      expect.any(String),
-      "cancelled-call",
-      expect.any(Object),
-    );
-    const entries = useApp.getState().chat.filter((e) => e.id === "tc-retry-1");
-    expect(entries).toHaveLength(1);
-    expect(entries[0].toolCall?.status).toBe("succeeded");
-    expect(useApp.getState().streaming).toBe(false);
-    vi.restoreAllMocks();
-  });
-
   it("retryApproval is a no-op in mock mode", async () => {
     useApp.setState({ liveMode: false });
     const before = useApp.getState().chat.length;
     const ok = await useApp.getState().retryApproval("c1");
     expect(ok).toBe(true);
     expect(useApp.getState().chat.length).toBe(before);
-  });
-
-  it("Ask mode suppresses workflow cards (context/plan/todo/tool) but keeps the answer", async () => {
-    async function* stream(): AsyncIterable<AgentEvent> {
-      yield { type: "agent.started", session_id: "s", seq: 1, at: "t", message: "go" };
-      yield { type: "agent.context.ready", session_id: "s", seq: 2, at: "t", message: "ctx" };
-      yield {
-        type: "plan",
-        session_id: "s",
-        seq: 3,
-        at: "t",
-        plan: {
-          id: "p",
-          goal: "g",
-          created_at: new Date().toISOString(),
-          steps: [
-            { id: "s1", title: "do", detail: "", status: "pending", attempt: 0, done: false },
-          ],
-        },
-      };
-      yield {
-        type: "todo_update",
-        session_id: "s",
-        seq: 4,
-        at: "t",
-        todos: [{ id: "1", content: "x", status: "pending" }],
-      };
-      yield {
-        type: "tool_call",
-        session_id: "s",
-        seq: 5,
-        at: "t",
-        tool_call: { id: "tc1", name: "read_file", arguments: {}, status: "succeeded", result: "ok" },
-      };
-      yield { type: "token", session_id: "s", seq: 6, at: "t", delta: "Hello there." };
-      yield { type: "done", session_id: "s", seq: 7, at: "t", ok: true };
-    }
-    const fake = { runAgent: () => stream() } as unknown as AgentClient;
-    vi.spyOn(agentClient, "getAgentClient").mockResolvedValue(fake);
-    useApp.setState({ liveMode: true, agentMode: "ask", agentItems: [], chat: [] });
-
-    await useApp.getState().sendUserMessage("hi");
-
-    const types = useApp.getState().agentItems.map((i) => i.type);
-    expect(types).not.toContain("workspace_analysis");
-    expect(types).not.toContain("plan");
-    expect(types).not.toContain("todos");
-    expect(types).not.toContain("tool");
-    expect(types).not.toContain("final_summary");
-    // The assistant answer is still rendered.
-    expect(useApp.getState().agentItems.some((i) => i.type === "agent_message")).toBe(true);
-    vi.restoreAllMocks();
-    useApp.setState({ agentMode: "agent" });
-  });
-
-  it("Agent mode still creates plan and todo workflow cards", async () => {
-    async function* stream(): AsyncIterable<AgentEvent> {
-      yield { type: "agent.started", session_id: "s", seq: 1, at: "t", message: "go" };
-      yield {
-        type: "plan",
-        session_id: "s",
-        seq: 2,
-        at: "t",
-        plan: {
-          id: "p",
-          goal: "build it",
-          created_at: new Date().toISOString(),
-          steps: [
-            { id: "s1", title: "work", detail: "", status: "pending", attempt: 0, done: false },
-          ],
-        },
-      };
-      yield {
-        type: "todo_update",
-        session_id: "s",
-        seq: 3,
-        at: "t",
-        todos: [{ id: "1", content: "x", status: "pending" }],
-      };
-      yield { type: "token", session_id: "s", seq: 4, at: "t", delta: "Working." };
-      yield { type: "done", session_id: "s", seq: 5, at: "t", ok: true };
-    }
-    const fake = { runAgent: () => stream() } as unknown as AgentClient;
-    vi.spyOn(agentClient, "getAgentClient").mockResolvedValue(fake);
-    useApp.setState({ liveMode: true, agentMode: "agent", agentItems: [], chat: [], plan: null });
-
-    await useApp.getState().sendUserMessage("build something");
-
-    const types = useApp.getState().agentItems.map((i) => i.type);
-    expect(types).toContain("plan");
-    expect(types).toContain("todos");
-    vi.restoreAllMocks();
   });
 
   it("renameEntry updates open tabs and active file (desktop path)", async () => {

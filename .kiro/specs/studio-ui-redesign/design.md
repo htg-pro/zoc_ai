@@ -7,7 +7,7 @@ This design redesigns the Zoc AI frontend (`apps/frontend`) to render the three 
 canvases at high fidelity and to harden the agent run workflow they depict. It is a **frontend +
 client-logic** change: the React/Vite/TypeScript/Tailwind/shadcn app and the zustand store and
 agent client that back it. The FastAPI agent sidecar contract (over HTTP/SSE to
-`127.0.0.1:<port>`) and the `@llama-studio/shared-types` schemas are treated as fixed inputs; this
+`127.0.0.1:<port>`) and the `@zoc-studio/shared-types` schemas are treated as fixed inputs; this
 design adapts the frontend to consume them correctly rather than changing them.
 
 The work has four pillars, mapped to requirements:
@@ -35,11 +35,11 @@ Key facts established by reading the code, which this design builds on rather th
   reconnection loop yet.
 - **SSE parsing** is shared between `agent-client.ts` (inline) and `src/lib/sse.ts` (`sseJson`).
 - **Diff state**: `pendingPatches: DiffPatch[]`, per-file `acceptedHunks`, and an
-  `appliedPatchIds: Set<string>` persisted to `localStorage` (`llama-studio.applied-patches.v1`).
+  `appliedPatchIds: Set<string>` persisted to `localStorage` (`zoc-studio.applied-patches.v1`).
   `applyPatch()` writes through the Tauri `applyPatch` command and filters the patch out of
   `pendingPatches` on success.
 - **Layout**: `Shell.tsx` uses `react-resizable-panels` (`Group`/`Panel`/`Separator`). Sizes are
-  percentages persisted to `localStorage` (`llama-studio.layout.v2`) via `setLayoutSizes` and
+  percentages persisted to `localStorage` (`zoc-studio.layout.v2`) via `setLayoutSizes` and
   `sanitizeLayout`. Visibility flags `sidePanelOpen`/`rightPanelOpen`/`bottomDockOpen` are persisted.
 - **Tokens**: `globals.css` already defines a `.dark` HSL token set close to the canvas palette, and
   `tailwind.config.ts` maps semantic Tailwind colors to those CSS variables. Many components,
@@ -285,7 +285,7 @@ This guarantees the previous run is `stopped` before the new id exists (R7.9).
 ## Data Models
 
 These are frontend models. Backend types (`AgentEvent`, `Plan`, `PlanStep`, `Session`, `DiffPatch`,
-`ReplitCheckpoint`, `ContextStatus`) come unchanged from `@llama-studio/shared-types`.
+`ReplitCheckpoint`, `ContextStatus`) come unchanged from `@zoc-studio/shared-types`.
 
 ### Run configuration and lifecycle
 
@@ -357,7 +357,7 @@ interface PendingComposerMessage { text: string; } // held in store while a run 
 ### Layout / visibility (existing `LayoutState`, persisted)
 
 `sidePanelOpen`, `rightPanelOpen`, `bottomDockOpen`, plus sizes; persisted under
-`llama-studio.layout.v2`. Pixel bounds enforced by the panel host (R12.7).
+`zoc-studio.layout.v2`. Pixel bounds enforced by the panel host (R12.7).
 
 ## Correctness Properties
 
@@ -751,5 +751,5 @@ amenable to PBT and are covered by example, snapshot, and smoke tests.
 
 ### Verification before completion
 
-Run `pnpm --filter @llama-studio/frontend test`, `typecheck`, and `lint` (the existing scripts) and
+Run `pnpm --filter @zoc-studio/frontend test`, `typecheck`, and `lint` (the existing scripts) and
 ensure the property suite passes at 100+ iterations before considering implementation tasks done.

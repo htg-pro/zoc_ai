@@ -143,7 +143,7 @@ Purpose: run each task without touching the main workspace.
 Execution must happen in:
 
 ```text
-.llama-studio-agent/tasks/{taskId}/workspace
+.zoc-studio-agent/tasks/{taskId}/workspace
 ```
 
 Task execution must:
@@ -172,9 +172,9 @@ Validation command discovery should prefer real project commands:
 Frontend:
 
 ```bash
-pnpm --filter @llama-studio/frontend typecheck
-pnpm --filter @llama-studio/frontend test
-pnpm --filter @llama-studio/frontend build
+pnpm --filter @zoc-studio/frontend typecheck
+pnpm --filter @zoc-studio/frontend test
+pnpm --filter @zoc-studio/frontend build
 ```
 
 Backend:
@@ -187,7 +187,7 @@ uv run ruff check services/agent/src services/agent/tests
 Shared types:
 
 ```bash
-pnpm --filter @llama-studio/shared-types build
+pnpm --filter @zoc-studio/shared-types build
 python packages/shared-types/scripts/generate_ts.py
 ```
 
@@ -345,8 +345,8 @@ Rules:
 
 Files likely affected:
 
-- `services/agent/src/llama_studio_agent/persistence/db.py`
-- `services/agent/src/llama_studio_agent/persistence/repository.py`
+- `services/agent/src/zoc_studio_agent/persistence/db.py`
+- `services/agent/src/zoc_studio_agent/persistence/repository.py`
 - `packages/shared-types/python/shared_schema/models.py`
 
 Implementation:
@@ -371,8 +371,8 @@ Done result:
 
 Files likely affected:
 
-- `services/agent/src/llama_studio_agent/agent/replit_workflow.py`
-- `services/agent/src/llama_studio_agent/v1/replit_workflow.py`
+- `services/agent/src/zoc_studio_agent/agent/replit_workflow.py`
+- `services/agent/src/zoc_studio_agent/v1/replit_workflow.py`
 
 Implementation:
 
@@ -395,7 +395,7 @@ Done result:
 
 Files likely affected:
 
-- `services/agent/src/llama_studio_agent/agent/replit_workflow.py`
+- `services/agent/src/zoc_studio_agent/agent/replit_workflow.py`
 
 Implementation:
 
@@ -462,8 +462,8 @@ Implementation:
 Validation:
 
 ```bash
-pnpm --filter @llama-studio/frontend typecheck
-pnpm --filter @llama-studio/frontend test -- src/__tests__/agent-client.test.ts src/__tests__/store.test.ts
+pnpm --filter @zoc-studio/frontend typecheck
+pnpm --filter @zoc-studio/frontend test -- src/__tests__/agent-client.test.ts src/__tests__/store.test.ts
 ```
 
 Done result:
@@ -545,8 +545,8 @@ Validation:
 
 ```bash
 python packages/shared-types/scripts/generate_ts.py
-pnpm --filter @llama-studio/shared-types build
-pnpm --filter @llama-studio/frontend typecheck
+pnpm --filter @zoc-studio/shared-types build
+pnpm --filter @zoc-studio/frontend typecheck
 ```
 
 ---
@@ -689,10 +689,10 @@ Run these before claiming project success:
 
 ```bash
 uv run pytest services/agent/tests
-pnpm --filter @llama-studio/frontend typecheck
-pnpm --filter @llama-studio/frontend test
-pnpm --filter @llama-studio/frontend build
-pnpm --filter @llama-studio/shared-types build
+pnpm --filter @zoc-studio/frontend typecheck
+pnpm --filter @zoc-studio/frontend test
+pnpm --filter @zoc-studio/frontend build
+pnpm --filter @zoc-studio/shared-types build
 cargo check --workspace
 ```
 
@@ -700,14 +700,14 @@ If lint is available and configured:
 
 ```bash
 uv run ruff check services/agent/src services/agent/tests
-ESLINT_USE_FLAT_CONFIG=false pnpm --filter @llama-studio/frontend lint
+ESLINT_USE_FLAT_CONFIG=false pnpm --filter @zoc-studio/frontend lint
 ```
 
 If packaging is required:
 
 ```bash
 bash scripts/make_zip.sh --allow-empty-installers
-python scripts/verify_zip.py llama-studio-v2.0.0.zip
+python scripts/verify_zip.py zoc-studio-v2.0.0.zip
 ```
 
 Verifier note:

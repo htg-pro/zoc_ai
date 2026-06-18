@@ -220,7 +220,7 @@ Must not own:
 
 Allowed dependencies:
 
-- `@llama-studio/shared-types`
+- `@zoc-studio/shared-types`
 - frontend-local modules under `apps/frontend/src/lib`
 - Tauri API wrappers through `tauri-bridge`
 - backend only through typed client/API contracts
@@ -874,9 +874,9 @@ Archivezip/
 Frontend:
 
 ```bash
-pnpm --filter @llama-studio/frontend typecheck
-pnpm --filter @llama-studio/frontend test
-pnpm --filter @llama-studio/frontend lint
+pnpm --filter @zoc-studio/frontend typecheck
+pnpm --filter @zoc-studio/frontend test
+pnpm --filter @zoc-studio/frontend lint
 ```
 
 Python agent:
@@ -896,7 +896,7 @@ Shared schema:
 
 ```bash
 pnpm schema:generate
-pnpm --filter @llama-studio/shared-types typecheck
+pnpm --filter @zoc-studio/shared-types typecheck
 ```
 
 Whole repo:

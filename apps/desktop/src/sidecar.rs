@@ -1,7 +1,7 @@
 //! Sidecar lifecycle: spawn the FastAPI agent, capture its loopback port via
-//! the `LLAMA_STUDIO_AGENT_PORT=<n>` stdout handshake, then keep it alive
+//! the `ZOC_STUDIO_AGENT_PORT=<n>` stdout handshake, then keep it alive
 //! with a health-poll loop and exponential-backoff restart. Sidecar stdout
-//! and stderr are tee'd to `~/.llama-studio/logs/agent.log` so the user can
+//! and stderr are tee'd to `~/.zoc-studio/logs/agent.log` so the user can
 //! inspect crashes without leaving the app.
 //!
 //! Lifecycle events are surfaced on the `agent://status` Tauri event so the
@@ -20,7 +20,7 @@ use tauri_plugin_shell::ShellExt;
 use tokio::sync::watch;
 use tokio::time::sleep;
 
-const READY_PREFIX: &str = "LLAMA_STUDIO_AGENT_PORT=";
+const READY_PREFIX: &str = "ZOC_STUDIO_AGENT_PORT=";
 const HEALTH_INTERVAL: Duration = Duration::from_secs(5);
 const HEALTH_TIMEOUT: Duration = Duration::from_secs(3);
 const MIN_BACKOFF: Duration = Duration::from_millis(500);
@@ -131,16 +131,16 @@ async fn spawn_once<R: Runtime>(
 ) -> Result<u16> {
     let shell = app.shell();
     let mut cmd = shell
-        .sidecar("llama-studio-agent")
+        .sidecar("zoc-studio-agent")
         .context("sidecar binary not configured")?;
     // Bundled hotpath sits next to the main executable (Tauri externalBin
     // layout). Pin the agent to that path so we never fall back to PATH or
     // a developer's repo target/ when running an installed build.
     if let Some(hp) = bundled_hotpath_path() {
-        cmd = cmd.env("LLAMA_STUDIO_HOTPATH_BIN", hp);
+        cmd = cmd.env("ZOC_STUDIO_HOTPATH_BIN", hp);
     }
     cmd = cmd.env(
-        "LLAMA_STUDIO_LLAMACPP_STATE_PATH",
+        "ZOC_STUDIO_LLAMACPP_STATE_PATH",
         runtime_state_path().to_string_lossy().to_string(),
     );
     let (mut rx, child) = cmd.spawn().context("failed to spawn agent sidecar")?;
@@ -215,7 +215,7 @@ async fn health_poll_until_dead(port: u16, shutdown: &mut watch::Receiver<bool>)
     }
 }
 
-/// Resolve the bundled `llama-studio-hotpath` binary that Tauri ships as an
+/// Resolve the bundled `zoc-studio-hotpath` binary that Tauri ships as an
 /// `externalBin` alongside the main executable. Returns `None` only if the
 /// platform-specific path can't be determined or the binary is missing —
 /// callers treat that as "fall back to env/PATH" (dev mode).
@@ -223,9 +223,9 @@ fn bundled_hotpath_path() -> Option<std::path::PathBuf> {
     let exe = std::env::current_exe().ok()?;
     let dir = exe.parent()?;
     let name = if cfg!(windows) {
-        "llama-studio-hotpath.exe"
+        "zoc-studio-hotpath.exe"
     } else {
-        "llama-studio-hotpath"
+        "zoc-studio-hotpath"
     };
     let candidate = dir.join(name);
     if candidate.exists() {
@@ -237,7 +237,7 @@ fn bundled_hotpath_path() -> Option<std::path::PathBuf> {
 
 fn log_file_path() -> std::path::PathBuf {
     let base = dirs::home_dir()
-        .map(|h| h.join(".llama-studio").join("logs"))
+        .map(|h| h.join(".zoc-studio").join("logs"))
         .unwrap_or_else(|| std::path::PathBuf::from("./logs"));
     let _ = std::fs::create_dir_all(&base);
     base.join("agent.log")
@@ -245,7 +245,7 @@ fn log_file_path() -> std::path::PathBuf {
 
 fn runtime_state_path() -> std::path::PathBuf {
     let base = dirs::home_dir()
-        .map(|h| h.join(".llama-studio"))
+        .map(|h| h.join(".zoc-studio"))
         .unwrap_or_else(|| std::path::PathBuf::from("."));
     let _ = std::fs::create_dir_all(&base);
     base.join("llamacpp-runtime.json")

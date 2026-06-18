@@ -183,12 +183,12 @@ Languages are fixed by the existing monorepo: **TypeScript** for the frontend
 
 - [x] 11. Mint and stamp `run_id` on the backend
   - [x] 11.1 Mint a `run_id` for every run and return it from `POST /agent/run`
-    - In `services/agent/src/llama_studio_agent/v1/agent_run.py`, compute `run_id = (payload.run_id or uuid4().hex)` for **all** runs (not just isolated/review runs) and include `"run_id": run_id` in the JSON response.
+    - In `services/agent/src/zoc_studio_agent/v1/agent_run.py`, compute `run_id = (payload.run_id or uuid4().hex)` for **all** runs (not just isolated/review runs) and include `"run_id": run_id` in the JSON response.
     - Thread `run_id` into the run context so every event published for this run can carry it.
     - _Requirements: 1.2, 1.7_
 
   - [x] 11.2 Stamp `run_id` on every emitted event via the event bus
-    - In `services/agent/src/llama_studio_agent/events/bus.py`, ensure events published for a run carry the owning `run_id` (use the new `AgentEventBase.run_id` field); keep `next_seq(session_id)` as the sole monotonic seq source, orthogonal to `run_id`.
+    - In `services/agent/src/zoc_studio_agent/events/bus.py`, ensure events published for a run carry the owning `run_id` (use the new `AgentEventBase.run_id` field); keep `next_seq(session_id)` as the sole monotonic seq source, orthogonal to `run_id`.
     - Ensure the SSE `/events` handler in `agent_run.py` serializes `run_id` in the `data:` payload (it already dumps the full model — verify no field is stripped).
     - _Requirements: 1.2, 1.7_
 
@@ -198,7 +198,7 @@ Languages are fixed by the existing monorepo: **TypeScript** for the frontend
 
 - [x] 12. Enforce and test the session-scoped recall contract (`agent/recall.py`)
   - [x] 12.1 Document and assert the recall scoping/exclusion/ordering contract
-    - In `services/agent/src/llama_studio_agent/agent/recall.py`, confirm `MessageVectorStore.query` filters strictly by `session_id`, applies `exclude_message_ids`, returns at most `top_k` hits sorted by descending score, and returns `[]` when `top_k <= 0`.
+    - In `services/agent/src/zoc_studio_agent/agent/recall.py`, confirm `MessageVectorStore.query` filters strictly by `session_id`, applies `exclude_message_ids`, returns at most `top_k` hits sorted by descending score, and returns `[]` when `top_k <= 0`.
     - Confirm `RecallService.recall` returns `[]` for empty/whitespace queries and drops hits below `cfg.min_score` (default 0.15); add docstring notes pinning these guarantees. Make only the minimal code changes needed if any guarantee is not already met.
     - _Requirements: 4.1, 4.2, 4.3, 4.4, 4.5_
 

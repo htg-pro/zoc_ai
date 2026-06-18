@@ -7,7 +7,7 @@
  * deterministic function of its inputs — no I/O, no clock, no globals — so it
  * can be exercised directly with generated session lists and triggers.
  */
-import type { Session } from "@llama-studio/shared-types";
+import type { Session } from "@zoc-studio/shared-types";
 
 /** The lifecycle event that drives session connection. */
 export type LifecycleTrigger = "app-open" | "new-chat" | "select" | "delete-active";

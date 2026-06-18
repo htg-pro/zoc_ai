@@ -1,4 +1,4 @@
-import type { Message } from "@llama-studio/shared-types";
+import type { Message } from "@zoc-studio/shared-types";
 import { Bot, User, Wrench, Settings as Cog } from "lucide-react";
 import { cn } from "@/lib/utils";
 

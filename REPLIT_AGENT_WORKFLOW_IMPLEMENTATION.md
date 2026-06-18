@@ -7,7 +7,7 @@ This patch adds a Replit Agent-style Plan → Task Board → Isolated Workspace 
 - Added shared schema models for `ReplitPlan`, `ReplitTask`, `ReplitTaskLog`, `ReplitCheckpoint`, plan/task request models, task statuses and priorities.
 - Added SQLite tables for Replit-style plans, tasks, task logs and checkpoints.
 - Added repository CRUD helpers for plans, tasks, logs and checkpoints.
-- Added `llama_studio_agent.agent.replit_workflow.ReplitWorkflowService`.
+- Added `zoc_studio_agent.agent.replit_workflow.ReplitWorkflowService`.
 - Added `/v1/sessions/{session_id}/replit/*` APIs:
   - `POST /plans`
   - `GET /plans`
@@ -36,9 +36,9 @@ This patch adds a Replit Agent-style Plan → Task Board → Isolated Workspace 
 ## Safety behavior
 
 - Plan creation does not modify project files.
-- Task execution works in `.llama-studio-agent/tasks/{taskId}/workspace`.
+- Task execution works in `.zoc-studio-agent/tasks/{taskId}/workspace`.
 - Main project files are not changed until the user clicks Apply.
-- Applying a task creates a checkpoint under `.llama-studio-agent/checkpoints/{checkpointId}`.
+- Applying a task creates a checkpoint under `.zoc-studio-agent/checkpoints/{checkpointId}`.
 - Dismiss leaves the main workspace unchanged.
 - Rollback restores checkpointed files.
 

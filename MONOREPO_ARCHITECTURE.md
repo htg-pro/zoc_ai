@@ -2,7 +2,7 @@
 
 Snapshot date: 2026-06-16
 
-This document maps the current Zoc AI / llama-studio monorepo so future agents
+This document maps the current Zoc AI / zoc-studio monorepo so future agents
 can understand the structure before changing code. It is based on the current
 filesystem, root manifests, package manifests, and source folder layout.
 
@@ -63,7 +63,7 @@ Archivezip/
     - 1.html
     - 2.html
     - 3.html
-    - llama-studio-redesign.canvas
+    - zoc-studio-redesign.canvas
 - .pre-commit-config.yaml
 - .prettierignore
 - .prettierrc.json
@@ -88,8 +88,8 @@ Archivezip/
     - Cargo.toml
     - README.md
     - binaries/
-      - llama-studio-agent-x86_64-unknown-linux-gnu
-      - llama-studio-hotpath-x86_64-unknown-linux-gnu
+      - zoc-studio-agent-x86_64-unknown-linux-gnu
+      - zoc-studio-hotpath-x86_64-unknown-linux-gnu
     - build.rs
     - capabilities/
       - default.json
@@ -413,7 +413,7 @@ Archivezip/
   - Screenshot_20260529_103759_1780032386029.png
   - Screenshot_20260529_103837_1780032386029.png
   - generated_images/
-    - llama_studio_icon_source.png
+    - zoc_studio_icon_source.png
   - screenshots/
     - lmstudio_ai.png
 - crates/
@@ -487,7 +487,7 @@ Archivezip/
 - pnpm-workspace.yaml
 - pyproject.toml
 - python/
-  - llama_studio_neural/
+  - zoc_studio_neural/
   - tests/
 - replit.nix
 - scripts/
@@ -505,7 +505,7 @@ Archivezip/
     - README.md
     - pyproject.toml
     - src/
-      - llama_studio_agent/
+      - zoc_studio_agent/
         - __init__.py
         - agent/
           - __init__.py
@@ -675,7 +675,7 @@ Archivezip/
 Root JavaScript workspace:
 
 - `package.json`
-  - Product name/version: `llama-studio` `2.0.0`.
+  - Product name/version: `zoc-studio` `2.0.0`.
   - Main commands:
     - `pnpm dev`
     - `pnpm dev:frontend`
@@ -693,7 +693,7 @@ Root JavaScript workspace:
 Root Python workspace:
 
 - `pyproject.toml`
-  - Project: `llama-studio-workspace`
+  - Project: `zoc-studio-workspace`
   - Python: `>=3.11`
   - uv members:
     - `services/agent`
@@ -874,15 +874,15 @@ Important package files:
 
 - `services/agent/pyproject.toml`
   - Python package, dependencies, script entry point, test config.
-- `services/agent/src/llama_studio_agent/app.py`
+- `services/agent/src/zoc_studio_agent/app.py`
   - FastAPI app factory, lifecycle repair, router registration.
-- `services/agent/src/llama_studio_agent/state.py`
+- `services/agent/src/zoc_studio_agent/state.py`
   - App state construction.
-- `services/agent/src/llama_studio_agent/config.py`
+- `services/agent/src/zoc_studio_agent/config.py`
   - Settings.
-- `services/agent/src/llama_studio_agent/deps.py`
+- `services/agent/src/zoc_studio_agent/deps.py`
   - FastAPI dependency helpers.
-- `services/agent/src/llama_studio_agent/scripts/launch.py`
+- `services/agent/src/zoc_studio_agent/scripts/launch.py`
   - Sidecar CLI entry point.
 
 Main agent folders:
@@ -1150,8 +1150,8 @@ Agent request flow:
 Composer or command
   -> apps/frontend/src/lib/store.ts
   -> apps/frontend/src/lib/agent-client.ts
-  -> services/agent/src/llama_studio_agent/v1/*
-  -> services/agent/src/llama_studio_agent/agent/orchestrator.py
+  -> services/agent/src/zoc_studio_agent/v1/*
+  -> services/agent/src/zoc_studio_agent/agent/orchestrator.py
   -> tools/providers/persistence/events
   -> streamed events back to AgentTimeline and store
 ```
@@ -1185,9 +1185,9 @@ Frontend:
 - `apps/frontend/src/__tests__`
 - `apps/frontend/src/lib/__tests__`
 - Command:
-  - `pnpm --filter @llama-studio/frontend test`
-  - `pnpm --filter @llama-studio/frontend typecheck`
-  - `pnpm --filter @llama-studio/frontend lint`
+  - `pnpm --filter @zoc-studio/frontend test`
+  - `pnpm --filter @zoc-studio/frontend typecheck`
+  - `pnpm --filter @zoc-studio/frontend lint`
 
 Python agent:
 
@@ -1230,12 +1230,12 @@ When adding frontend behavior:
 - Put reusable state or business logic in `apps/frontend/src/lib`.
 - Put visible feature UI in `apps/frontend/src/features/<feature>`.
 - Put shell/chrome layout changes in `apps/frontend/src/components/layout`.
-- Use shared types from `@llama-studio/shared-types` for API/event contracts.
+- Use shared types from `@zoc-studio/shared-types` for API/event contracts.
 - Add tests under `src/__tests__` or `src/lib/__tests__`.
 
 When adding backend behavior:
 
-- Put API route changes under `services/agent/src/llama_studio_agent/v1`.
+- Put API route changes under `services/agent/src/zoc_studio_agent/v1`.
 - Put orchestration logic under `agent`.
 - Put model/provider integration under `providers`.
 - Put filesystem/shell/search capabilities under `tools`.

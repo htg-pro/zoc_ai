@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import type { PermissionScope, ToolCall, ToolCallStatus } from "@llama-studio/shared-types";
+import type { PermissionScope, ToolCall, ToolCallStatus } from "@zoc-studio/shared-types";
 import { Check, ChevronDown, Loader2, RotateCw, ShieldCheck, Square, Wrench, XCircle } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";

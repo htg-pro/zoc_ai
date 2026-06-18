@@ -9,7 +9,7 @@
  * while it was waiting for the user's approval decision.
  *
  * Mirror of `ORPHANED_APPROVAL_MESSAGE` in
- * `services/agent/src/llama_studio_agent/reconcile.py`. Used by the UI to
+ * `services/agent/src/zoc_studio_agent/reconcile.py`. Used by the UI to
  * detect a restart-cancelled approval and offer a one-click retry.
  */
 export const ORPHANED_APPROVAL_MESSAGE =

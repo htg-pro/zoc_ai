@@ -5,7 +5,7 @@
  * generated session lists independently of the DOM. Recency grouping is
  * computed against an injected `now` (ms epoch) so it is deterministic.
  */
-import type { Session } from "@llama-studio/shared-types";
+import type { Session } from "@zoc-studio/shared-types";
 
 export type SessionFilter = "all" | "active" | "pinned" | "archived";
 export type SortOption = "recent" | "oldest" | "title" | "model";

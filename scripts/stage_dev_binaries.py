@@ -9,8 +9,8 @@
 
 This script provisions both required binaries for the host triple:
 
-* ``llama-studio-hotpath`` — built from the ``hotpath`` crate via cargo.
-* ``llama-studio-agent``   — bundled from the FastAPI sidecar via PyInstaller
+* ``zoc-studio-hotpath`` — built from the ``hotpath`` crate via cargo.
+* ``zoc-studio-agent``   — bundled from the FastAPI sidecar via PyInstaller
   (delegated to ``bundle_sidecar.py``).
 
 It is **freshness-aware**: a staged binary is rebuilt whenever its source tree
@@ -34,7 +34,7 @@ from bundle_sidecar import _detect_triple  # reuse triple detection
 
 ROOT = Path(__file__).resolve().parent.parent
 BIN_OUT = ROOT / "apps" / "desktop" / "binaries"
-HOTPATH_CRATE = "llama-studio-hotpath"
+HOTPATH_CRATE = "zoc-studio-hotpath"
 HOTPATH_SRC = ROOT / "crates" / "hotpath"
 AGENT_SRC = ROOT / "services" / "agent" / "src"
 SHARED_SRC = ROOT / "packages" / "shared-types" / "python"
@@ -106,7 +106,7 @@ def _stage_hotpath(triple: str) -> int:
 
 def _stage_agent(triple: str) -> int:
     suffix = _exe_suffix()
-    target = BIN_OUT / f"llama-studio-agent-{triple}{suffix}"
+    target = BIN_OUT / f"zoc-studio-agent-{triple}{suffix}"
     if not _is_stale(target, AGENT_SRC, SHARED_SRC):
         print(f"==> agent sidecar up to date: {target.relative_to(ROOT)}")
         return 0

@@ -33,20 +33,20 @@ python3 scripts/stamp_version.py
 # 1. Frontend.
 echo "==> Building frontend"
 pnpm install --frozen-lockfile || pnpm install
-pnpm --filter @llama-studio/frontend build
+pnpm --filter @zoc-studio/frontend build
 
 # 2. Rust hot-path crate -> bundled into Tauri as a second externalBin.
 echo "==> Building hotpath crate (release)"
-cargo build --release -p llama-studio-hotpath
+cargo build --release -p zoc-studio-hotpath
 
 echo "==> Staging hotpath binary for Tauri externalBin"
-TRIPLE="${LLAMA_STUDIO_TARGET_TRIPLE:-$(rustc -vV | awk '/^host:/ {print $2}')}"
+TRIPLE="${ZOC_STUDIO_TARGET_TRIPLE:-$(rustc -vV | awk '/^host:/ {print $2}')}"
 HP_SUFFIX=""
 case "$(uname -s)" in
   MINGW*|MSYS*|CYGWIN*) HP_SUFFIX=".exe" ;;
 esac
-HP_SRC="target/release/llama-studio-hotpath${HP_SUFFIX}"
-HP_DST="apps/desktop/binaries/llama-studio-hotpath-${TRIPLE}${HP_SUFFIX}"
+HP_SRC="target/release/zoc-studio-hotpath${HP_SUFFIX}"
+HP_DST="apps/desktop/binaries/zoc-studio-hotpath-${TRIPLE}${HP_SUFFIX}"
 if [ ! -f "$HP_SRC" ]; then
   echo "!! Expected hotpath binary at $HP_SRC but it is missing." >&2
   exit 1
@@ -74,11 +74,11 @@ fi
 # installers is a bug, not a soft warning.
 echo "==> Building Tauri bundles"
 if ! (command -v cargo-tauri >/dev/null 2>&1 \
-      || pnpm --filter @llama-studio/desktop exec tauri --version >/dev/null 2>&1); then
+      || pnpm --filter @zoc-studio/desktop exec tauri --version >/dev/null 2>&1); then
   cat >&2 <<EOF
 !! Tauri CLI is not available in this environment.
 !! A full release REQUIRES the Tauri CLI and a supported build host.
-!! Install with: pnpm --filter @llama-studio/desktop add -D @tauri-apps/cli
+!! Install with: pnpm --filter @zoc-studio/desktop add -D @tauri-apps/cli
 !! Or rerun with: bash scripts/release.sh --source-only
 EOF
   exit 1
@@ -86,7 +86,7 @@ fi
 # We just built the frontend, hotpath, and sidecar above, so tell Tauri's
 # beforeBuildCommand (scripts/prepare_tauri_build.sh) to skip — otherwise it
 # would redo the slow sidecar bundle a second time.
-LLAMA_STUDIO_SKIP_PREPARE=1 pnpm --filter @llama-studio/desktop build
+ZOC_STUDIO_SKIP_PREPARE=1 pnpm --filter @zoc-studio/desktop build
 
 # 5. Collect artifacts into dist/.
 echo "==> Preparing dist/installers/"
@@ -109,39 +109,39 @@ if [ -d target/release/bundle ]; then
   done < <(find target/release/bundle -type d -name '*.app' -prune -print0)
 fi
 # hotpath CLI binary
-if [ -f target/release/llama-studio-hotpath ]; then
-  cp target/release/llama-studio-hotpath dist/ || true
-elif [ -f target/release/llama-studio-hotpath.exe ]; then
-  cp target/release/llama-studio-hotpath.exe dist/ || true
+if [ -f target/release/zoc-studio-hotpath ]; then
+  cp target/release/zoc-studio-hotpath dist/ || true
+elif [ -f target/release/zoc-studio-hotpath.exe ]; then
+  cp target/release/zoc-studio-hotpath.exe dist/ || true
 fi
 
 # 5b. Linux: build a portable .tar.gz from the release binaries. Tauri v2 has
 # no built-in tar.gz target, so we pack the desktop binary + hotpath + the
 # bundled sidecar runtime into a single archive that runs without a package
 # manager.
-if [ "$(uname -s)" = "Linux" ] && [ -f target/release/llama-studio ]; then
-  TARBALL="dist/installers/llama-studio-${VERSION}-linux-x86_64.tar.gz"
+if [ "$(uname -s)" = "Linux" ] && [ -f target/release/zoc-studio ]; then
+  TARBALL="dist/installers/zoc-studio-${VERSION}-linux-x86_64.tar.gz"
   STAGE="$(mktemp -d)"
-  PKG_DIR="${STAGE}/llama-studio-${VERSION}"
+  PKG_DIR="${STAGE}/zoc-studio-${VERSION}"
   mkdir -p "${PKG_DIR}/bin"
-  cp -a target/release/llama-studio "${PKG_DIR}/bin/"
-  if [ -f target/release/llama-studio-hotpath ]; then
-    cp -a target/release/llama-studio-hotpath "${PKG_DIR}/bin/"
+  cp -a target/release/zoc-studio "${PKG_DIR}/bin/"
+  if [ -f target/release/zoc-studio-hotpath ]; then
+    cp -a target/release/zoc-studio-hotpath "${PKG_DIR}/bin/"
   fi
   SIDECAR_SRC=""
-  if [ -f target/release/llama-studio-agent${HP_SUFFIX} ]; then
-    SIDECAR_SRC="target/release/llama-studio-agent${HP_SUFFIX}"
-  elif [ -f "apps/desktop/binaries/llama-studio-agent-${TRIPLE}${HP_SUFFIX}" ]; then
-    SIDECAR_SRC="apps/desktop/binaries/llama-studio-agent-${TRIPLE}${HP_SUFFIX}"
+  if [ -f target/release/zoc-studio-agent${HP_SUFFIX} ]; then
+    SIDECAR_SRC="target/release/zoc-studio-agent${HP_SUFFIX}"
+  elif [ -f "apps/desktop/binaries/zoc-studio-agent-${TRIPLE}${HP_SUFFIX}" ]; then
+    SIDECAR_SRC="apps/desktop/binaries/zoc-studio-agent-${TRIPLE}${HP_SUFFIX}"
   fi
   if [ -z "$SIDECAR_SRC" ]; then
-    echo "!! Expected sidecar binary at target/release/llama-studio-agent${HP_SUFFIX} or apps/desktop/binaries/llama-studio-agent-${TRIPLE}${HP_SUFFIX}." >&2
+    echo "!! Expected sidecar binary at target/release/zoc-studio-agent${HP_SUFFIX} or apps/desktop/binaries/zoc-studio-agent-${TRIPLE}${HP_SUFFIX}." >&2
     exit 1
   fi
-  cp -a "$SIDECAR_SRC" "${PKG_DIR}/bin/llama-studio-agent${HP_SUFFIX}"
-  chmod +x "${PKG_DIR}/bin/llama-studio" \
-    "${PKG_DIR}/bin/llama-studio-agent${HP_SUFFIX}" \
-    "${PKG_DIR}/bin/llama-studio-hotpath${HP_SUFFIX}" 2>/dev/null || true
+  cp -a "$SIDECAR_SRC" "${PKG_DIR}/bin/zoc-studio-agent${HP_SUFFIX}"
+  chmod +x "${PKG_DIR}/bin/zoc-studio" \
+    "${PKG_DIR}/bin/zoc-studio-agent${HP_SUFFIX}" \
+    "${PKG_DIR}/bin/zoc-studio-hotpath${HP_SUFFIX}" 2>/dev/null || true
   # Keep the PyInstaller sidecar payload directory for diagnostics and for
   # parity with the Tauri externalBin staging layout.
   if [ -d apps/desktop/binaries ]; then
@@ -151,7 +151,7 @@ if [ "$(uname -s)" = "Linux" ] && [ -f target/release/llama-studio ]; then
   for doc in README.md VERSION LICENSE CHANGELOG.md; do
     [ -f "$doc" ] && cp -a "$doc" "${PKG_DIR}/" || true
   done
-  tar -C "${STAGE}" -czf "${TARBALL}" "llama-studio-${VERSION}"
+  tar -C "${STAGE}" -czf "${TARBALL}" "zoc-studio-${VERSION}"
   rm -rf "${STAGE}"
   echo "==> Linux .tar.gz: ${TARBALL}"
 fi

@@ -7,12 +7,12 @@
 
 use anyhow::Result;
 use clap::{Parser, Subcommand};
-use llama_studio_hotpath::{chunker, fs_watch, indexer, patch, pty, search, VERSION};
+use zoc_studio_hotpath::{chunker, fs_watch, indexer, patch, pty, search, VERSION};
 use serde::Serialize;
 use std::time::Duration;
 
 #[derive(Parser, Debug)]
-#[command(name = "llama-studio-hotpath", version = VERSION)]
+#[command(name = "zoc-studio-hotpath", version = VERSION)]
 struct Cli {
     #[command(subcommand)]
     cmd: Cmd,

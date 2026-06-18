@@ -2,7 +2,7 @@
 // Unit tests for `select` and `delete-active` fallbacks in resolveSessionIntent.
 // Validates: Requirements 2.3, 2.4, 2.5
 import { describe, expect, it } from "vitest";
-import type { Session } from "@llama-studio/shared-types";
+import type { Session } from "@zoc-studio/shared-types";
 import { resolveSessionIntent } from "../session-lifecycle";
 
 /** Build a minimal, well-formed Session with the given id. */

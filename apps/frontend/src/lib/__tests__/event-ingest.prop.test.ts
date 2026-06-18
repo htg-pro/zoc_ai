@@ -8,7 +8,7 @@
 // Feature: studio-ui-redesign, Property 30: A stopped run applies no further events
 import { describe, expect, it } from "vitest";
 import fc from "fast-check";
-import type { AgentEvent } from "@llama-studio/shared-types";
+import type { AgentEvent } from "@zoc-studio/shared-types";
 import {
   type TimelineEntry,
   applyPlanStep,
@@ -20,12 +20,24 @@ import {
   toolCallStatusLabel,
   upsertById,
 } from "../event-ingest";
-import { advance, initialCursor } from "../seq-cursor";
 import {
   arbAgentEvent,
   arbPlanUniqueIds,
   arbPlanStepStatus,
 } from "../../__tests__/arbitraries";
+
+// Minimal local seq-cursor model. The former `lib/seq-cursor.ts` helper was
+// removed with the legacy agent transport (zoc-agent-ecosystem-merge task 9.2);
+// this test only needs its tiny pure shape to model the ingest cursor.
+interface SeqCursor {
+  highestSeq: number;
+  activeRunId: string | null;
+}
+const initialCursor = (): SeqCursor => ({ highestSeq: 0, activeRunId: null });
+const advance = (cursor: SeqCursor, seq: number): SeqCursor => ({
+  ...cursor,
+  highestSeq: Math.max(cursor.highestSeq, seq),
+});
 
 const isSortedBySeq = (entries: TimelineEntry[]): boolean =>
   entries.every((e, i) => i === 0 || entries[i - 1].seq <= e.seq);

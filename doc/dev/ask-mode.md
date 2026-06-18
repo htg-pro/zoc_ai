@@ -21,7 +21,7 @@ a "Workspace analysis", "Plan", and "Respond to greeting" to-do.
 
 ## Backend
 
-`services/agent/src/llama_studio_agent/agent/orchestrator.py`
+`services/agent/src/zoc_studio_agent/agent/orchestrator.py`
 - `OrchestratorConfig` gained `enable_todos: bool = True` and
   `presentation_mode: str = "agent"`.
 - The virtual `todo_write` tool schema is only exposed when `enable_todos`.
@@ -31,7 +31,7 @@ a "Workspace analysis", "Plan", and "Respond to greeting" to-do.
 - `ASK_SYSTEM_PROMPT` is a read-only prompt: answer directly, no plan, no
   to-do, never claim files changed, suggest Agent mode for edits.
 
-`services/agent/src/llama_studio_agent/v1/agent_run.py`
+`services/agent/src/zoc_studio_agent/v1/agent_run.py`
 - Computes `is_ask = payload.mode == "ask"` and builds the run config with
   `skip_planner=is_ask`, `enable_todos=not is_ask`, `allowed_tools=ASK_MODE_TOOLS`
   when Ask, and swaps in `ASK_SYSTEM_PROMPT`.

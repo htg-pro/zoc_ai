@@ -6,7 +6,7 @@ The Chat Memory & Session System makes agent runs, the user messages that
 trigger them, and the events they emit correctly associated, and makes session
 connection deterministic. These requirements are derived from the approved
 design document and are grounded in four user-observed symptoms in Zoc AI
-("Llama Studio"):
+("Zoc Studio"):
 
 1. After typing a new message ("hi"), the agent answered a previously typed
    message ("hello") because a fresh run re-applied a prior run's events.

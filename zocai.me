@@ -86,7 +86,7 @@ Agent mode should feel like a workflow monitor.
                                                         v
 +--------------------------------------------------------------------------+
 |                         FASTAPI AGENT SIDECAR                             |
-|             services/agent/src/llama_studio_agent                         |
+|             services/agent/src/zoc_studio_agent                         |
 |                                                                          |
 |  v1/agent_run.py -> agent/orchestrator.py -> tools/providers/events       |
 +-------------------------------------------------------|------------------+
@@ -403,7 +403,7 @@ Owned by:
 ```text
 apps/frontend/src/lib/store.ts
 apps/frontend/src/features/agent/AgentTimeline.tsx
-services/agent/src/llama_studio_agent/agent/orchestrator.py
+services/agent/src/zoc_studio_agent/agent/orchestrator.py
 ```
 
 Created from events:
@@ -428,8 +428,8 @@ Ask mode:
 Owned by:
 
 ```text
-services/agent/src/llama_studio_agent/agent/planner.py
-services/agent/src/llama_studio_agent/agent/orchestrator.py
+services/agent/src/zoc_studio_agent/agent/planner.py
+services/agent/src/zoc_studio_agent/agent/orchestrator.py
 apps/frontend/src/lib/store.ts
 apps/frontend/src/features/agent/AgentTimeline.tsx
 ```
@@ -456,7 +456,7 @@ Ask mode:
 Owned by:
 
 ```text
-services/agent/src/llama_studio_agent/agent/orchestrator.py
+services/agent/src/zoc_studio_agent/agent/orchestrator.py
 apps/frontend/src/lib/store.ts
 apps/frontend/src/features/agent/AgentTimeline.tsx
 ```
@@ -484,8 +484,8 @@ Ask mode:
 Owned by:
 
 ```text
-services/agent/src/llama_studio_agent/tools/*
-services/agent/src/llama_studio_agent/agent/orchestrator.py
+services/agent/src/zoc_studio_agent/tools/*
+services/agent/src/zoc_studio_agent/agent/orchestrator.py
 apps/frontend/src/lib/store.ts
 apps/frontend/src/features/agent/AgentTimeline.tsx
 ```
@@ -529,8 +529,8 @@ Meaning:
 Owned by:
 
 ```text
-services/agent/src/llama_studio_agent/agent/workspace_diff.py
-services/agent/src/llama_studio_agent/v1/agent_run.py
+services/agent/src/zoc_studio_agent/agent/workspace_diff.py
+services/agent/src/zoc_studio_agent/v1/agent_run.py
 apps/frontend/src/features/agent/DiffCard.tsx
 apps/frontend/src/features/diff/DiffReviewView.tsx
 ```
@@ -676,7 +676,7 @@ Own:
 ### Backend route files
 
 ```text
-services/agent/src/llama_studio_agent/v1/agent_run.py
+services/agent/src/zoc_studio_agent/v1/agent_run.py
 ```
 
 Owns:
@@ -690,9 +690,9 @@ Owns:
 - final diff/apply/restore/discard run endpoints
 
 ```text
-services/agent/src/llama_studio_agent/v1/messages.py
-services/agent/src/llama_studio_agent/v1/sessions.py
-services/agent/src/llama_studio_agent/v1/tools.py
+services/agent/src/zoc_studio_agent/v1/messages.py
+services/agent/src/zoc_studio_agent/v1/sessions.py
+services/agent/src/zoc_studio_agent/v1/tools.py
 ```
 
 Own:
@@ -704,7 +704,7 @@ Own:
 ### Backend orchestration files
 
 ```text
-services/agent/src/llama_studio_agent/agent/orchestrator.py
+services/agent/src/zoc_studio_agent/agent/orchestrator.py
 ```
 
 Owns:
@@ -721,12 +721,12 @@ Owns:
 - final run result
 
 ```text
-services/agent/src/llama_studio_agent/agent/planner.py
-services/agent/src/llama_studio_agent/agent/memory.py
-services/agent/src/llama_studio_agent/agent/recall.py
-services/agent/src/llama_studio_agent/agent/workspace_diff.py
-services/agent/src/llama_studio_agent/agent/validation.py
-services/agent/src/llama_studio_agent/agent/checkpoints.py
+services/agent/src/zoc_studio_agent/agent/planner.py
+services/agent/src/zoc_studio_agent/agent/memory.py
+services/agent/src/zoc_studio_agent/agent/recall.py
+services/agent/src/zoc_studio_agent/agent/workspace_diff.py
+services/agent/src/zoc_studio_agent/agent/validation.py
+services/agent/src/zoc_studio_agent/agent/checkpoints.py
 ```
 
 Own:
@@ -741,7 +741,7 @@ Own:
 ### Backend tool files
 
 ```text
-services/agent/src/llama_studio_agent/tools/workspace.py
+services/agent/src/zoc_studio_agent/tools/workspace.py
 ```
 
 Owns:
@@ -752,7 +752,7 @@ Owns:
 - git status/diff helper tools
 
 ```text
-services/agent/src/llama_studio_agent/tools/filesystem.py
+services/agent/src/zoc_studio_agent/tools/filesystem.py
 ```
 
 Owns:
@@ -762,12 +762,12 @@ Owns:
 - file mutation permission behavior
 
 ```text
-services/agent/src/llama_studio_agent/tools/search.py
-services/agent/src/llama_studio_agent/tools/ast.py
-services/agent/src/llama_studio_agent/tools/index.py
-services/agent/src/llama_studio_agent/tools/shell.py
-services/agent/src/llama_studio_agent/tools/registry.py
-services/agent/src/llama_studio_agent/tools/sandbox.py
+services/agent/src/zoc_studio_agent/tools/search.py
+services/agent/src/zoc_studio_agent/tools/ast.py
+services/agent/src/zoc_studio_agent/tools/index.py
+services/agent/src/zoc_studio_agent/tools/shell.py
+services/agent/src/zoc_studio_agent/tools/registry.py
+services/agent/src/zoc_studio_agent/tools/sandbox.py
 ```
 
 Own:

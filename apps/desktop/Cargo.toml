@@ -1,18 +1,18 @@
 [package]
-name = "llama-studio-desktop"
+name = "zoc-studio-desktop"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 description = "Tauri v2 shell for Zoc AI."
-default-run = "llama-studio"
+default-run = "zoc-studio"
 
 [lib]
-name = "llama_studio_desktop"
+name = "zoc_studio_desktop"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
 [[bin]]
-name = "llama-studio"
+name = "zoc-studio"
 path = "src/main.rs"
 
 [build-dependencies]
@@ -40,4 +40,4 @@ notify-debouncer-mini = "0.4"
 dirs = "5"
 chrono = { version = "0.4", default-features = false, features = ["clock"] }
 similar = "2"
-llama-studio-hotpath = { path = "../../crates/hotpath" }
+zoc-studio-hotpath = { path = "../../crates/hotpath" }

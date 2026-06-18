@@ -5,7 +5,7 @@ import { cn } from "@/lib/utils";
 import { formatElapsed } from "@/lib/format-elapsed";
 import { controlAvailability } from "@/lib/run-machine";
 import { AgentMenu } from "./AgentMenu";
-import { AgentTimeline } from "./AgentTimeline";
+import AgentRunFeed from "./AgentRunFeed";
 import { Composer } from "./Composer";
 import { ContextBar } from "./ContextBar";
 import { ContextLimitDialog } from "./ContextLimitDialog";
@@ -149,7 +149,7 @@ export function AgentPanel() {
       </div>
       <div className="row-start-3 min-h-0 min-w-0 overflow-hidden">
         <AgentPanelBoundary>
-          <AgentTimeline />
+          <AgentRunFeed />
         </AgentPanelBoundary>
       </div>
       <div className="row-start-4">

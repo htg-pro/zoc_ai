@@ -4,7 +4,7 @@ import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
-import type { PermissionGrant, PermissionScope } from "@llama-studio/shared-types";
+import type { PermissionGrant, PermissionScope } from "@zoc-studio/shared-types";
 import { useApp } from "@/lib/store";
 
 const SCOPES: { scope: PermissionScope; label: string; desc: string; defaultGranted: boolean }[] = [

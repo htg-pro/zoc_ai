@@ -7,7 +7,7 @@
  * string-manipulation core lives here so it's testable in isolation.
  */
 import { createTwoFilesPatch } from "diff";
-import type { DiffPatch } from "@llama-studio/shared-types";
+import type { DiffPatch } from "@zoc-studio/shared-types";
 
 /** Replace the half-open [start, end) range of `full` with `replacement`. */
 export function spliceText(

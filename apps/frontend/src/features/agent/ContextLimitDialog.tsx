@@ -1,6 +1,6 @@
 import { AlertTriangle, Scissors, ArrowRightLeft, X } from "lucide-react";
 import { useState } from "react";
-import type { ContextStatus } from "@llama-studio/shared-types";
+import type { ContextStatus } from "@zoc-studio/shared-types";
 import {
   Dialog,
   DialogContent,
