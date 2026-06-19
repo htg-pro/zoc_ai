@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import argparse
 import contextlib
+import importlib.util
 import os
 import platform
 import shutil
@@ -96,6 +97,14 @@ def main() -> int:
             file=sys.stderr,
         )
         return 1
+    if importlib.util.find_spec("httpx") is None:
+        print(
+            "!! httpx is not installed. It is a Gateway runtime dependency; "
+            "bundle with `uv run --package zocai-gateway --with pyinstaller "
+            "python3 scripts/bundle_sidecar.py` or install gateway dependencies.",
+            file=sys.stderr,
+        )
+        return 1
 
     cmd = [
         sys.executable,
@@ -123,6 +132,8 @@ def main() -> int:
         "zocai_evolution",
         "--collect-submodules",
         "shared_schema",
+        "--collect-submodules",
+        "httpx",
         "--hidden-import",
         "uvicorn.logging",
         "--hidden-import",

@@ -34,13 +34,10 @@
  * See design.md "New: run-feed body `AgentRunFeed.tsx` and `rows.tsx`".
  */
 import { useEffect, useRef, useState } from "react";
-import type { AgentEvents } from "@zoc-studio/shared-types";
 
 import useAgentStream from "./useAgentStream";
-import type { UseAgentStreamOptions } from "./useAgentStream";
+import type { AgentEvent, UseAgentStreamOptions } from "./useAgentStream";
 import { ROW_COMPONENTS, isRecognizedEvent } from "./rows";
-
-type AgentEvent = AgentEvents.AgentEvent;
 
 /** The render budget for a single row (Rebuild-R7.2). */
 export const RENDER_BUDGET_MS = 100;

@@ -241,6 +241,7 @@ function SessionRow({
               )}
             />
             <span
+              data-testid="session-row-title"
               className={cn(
                 "truncate text-[12.5px] font-medium",
                 isActive ? "text-foreground" : "text-foreground/85",
@@ -266,6 +267,7 @@ function SessionRow({
           <>
             <button
               type="button"
+              data-testid="session-rename-save"
               className="flex h-5 w-5 items-center justify-center rounded text-muted-foreground/60 hover:bg-accent hover:text-success"
               onClick={(e) => {
                 e.stopPropagation();
@@ -293,6 +295,7 @@ function SessionRow({
         ) : (
           <button
             type="button"
+            data-testid="session-rename-button"
             className="flex h-5 w-5 items-center justify-center rounded text-muted-foreground/60 hover:bg-accent hover:text-foreground"
             onClick={(e) => {
               e.stopPropagation();

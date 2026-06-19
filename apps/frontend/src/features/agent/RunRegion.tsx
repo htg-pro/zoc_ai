@@ -19,6 +19,7 @@
  */
 import { useEffect, useRef } from "react";
 import { MessageSquare } from "lucide-react";
+import type { Message } from "@zoc-studio/shared-types";
 
 import { useApp } from "@/lib/store";
 import { EmptyState } from "./EmptyState";
@@ -27,12 +28,22 @@ import { ToolCallCard } from "./ToolCallCard";
 import { DiffCard } from "./DiffCard";
 import useAgentStream from "./useAgentStream";
 import { ROW_COMPONENTS, isRecognizedEvent } from "./rows";
+import type { AgentEvent, TokenEvent, StreamErrorEvent } from "./useAgentStream";
+
+function isTokenEvent(event: AgentEvent): event is TokenEvent {
+  return event.type === "token";
+}
+
+function isStreamErrorEvent(event: AgentEvent): event is StreamErrorEvent {
+  return event.type === "error";
+}
 
 export function RunRegion(): JSX.Element {
   const chat = useApp((s) => s.chat);
   const agentMode = useApp((s) => s.agentMode);
   const runId = useApp((s) => s.runId);
-  const { events } = useAgentStream({ runId });
+  const finishGatewayRun = useApp((s) => s.finishGatewayRun);
+  const { events } = useAgentStream({ runId, enabled: !!runId });
 
   const scrollRef = useRef<HTMLDivElement>(null);
 
@@ -41,6 +52,19 @@ export function RunRegion(): JSX.Element {
     const el = scrollRef.current;
     if (el) el.scrollTop = el.scrollHeight;
   }, [chat, events]);
+
+  useEffect(() => {
+    if (!runId) return;
+    const terminal = events.find(
+      (event) =>
+        (event.type === "done" && event.runId === runId) ||
+        (isTokenEvent(event) && event.runId === runId && event.done === true) ||
+        (isStreamErrorEvent(event) && event.runId === runId),
+    );
+    if (terminal) {
+      finishGatewayRun(runId);
+    }
+  }, [events, finishGatewayRun, runId]);
 
   const empty = chat.length === 0 && events.length === 0;
   if (empty) {
@@ -64,6 +88,24 @@ export function RunRegion(): JSX.Element {
     );
   }
 
+  const streamedAskText = events
+    .filter(
+      (event): event is TokenEvent =>
+        isTokenEvent(event) && event.runId === runId && !!event.text,
+    )
+    .map((event) => event.text)
+    .join("");
+  const streamedAskMessage: Message | null = streamedAskText
+    ? {
+        id: `ask-stream-${runId}`,
+        role: "assistant",
+        content: streamedAskText,
+        created_at:
+          events.find((event) => isTokenEvent(event) && event.runId === runId)?.ts ??
+          new Date().toISOString(),
+      }
+    : null;
+
   return (
     <div
       ref={scrollRef}
@@ -86,7 +128,25 @@ export function RunRegion(): JSX.Element {
         return null;
       })}
 
+      {streamedAskMessage ? (
+        <MessageItem key={streamedAskMessage.id} message={streamedAskMessage} />
+      ) : null}
+
       {events.map((event) => {
+        if (isTokenEvent(event)) {
+          return null;
+        }
+        if (isStreamErrorEvent(event)) {
+          return (
+            <div
+              key={`err-${event.seq}`}
+              className="feed-item rounded-md border border-[var(--zoc-error)]/40 bg-[var(--zoc-error)]/10 px-2.5 py-1.5 text-[13px] leading-snug text-[var(--zoc-error)]"
+              data-event-type="error"
+            >
+              {event.message}
+            </div>
+          );
+        }
         // Unrecognized event types are discarded without altering the feed (R3.5).
         if (!isRecognizedEvent(event)) {
           return null;

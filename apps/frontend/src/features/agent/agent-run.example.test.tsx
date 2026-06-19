@@ -242,7 +242,15 @@ describe("submit targets the Gateway, not a legacy transport (R2.1, R6.5)", () =
     >;
     vi.spyOn(agentClient, "getAgentClient").mockResolvedValue(fakeLegacy);
 
-    useApp.setState({ liveMode: true, agentMode: "agent", messageQueue: [] });
+    useApp.setState({
+      liveMode: true,
+      agentMode: "agent",
+      messageQueue: [],
+      selectedModel: { provider: "llamacpp", model: "" },
+      llamaCppStatus: null,
+      workspaceRoot: null,
+      activeSessionId: "",
+    });
 
     await useApp.getState().sendUserMessage("investigate the failing test");
 
@@ -251,6 +259,11 @@ describe("submit targets the Gateway, not a legacy transport (R2.1, R6.5)", () =
     expect(postAgentRun).toHaveBeenCalledWith({
       input: "investigate the failing test",
       mode: "agent",
+      model: null,
+      provider: "llamacpp",
+      apiKey: null,
+      baseUrl: null,
+      workspaceRoot: null,
     });
     // The Gateway-issued runId is recorded on the store.
     expect(useApp.getState().runId).toBe("run-xyz");
@@ -275,13 +288,26 @@ describe("submit targets the Gateway, not a legacy transport (R2.1, R6.5)", () =
       memoryStats,
     } as unknown as Awaited<ReturnType<typeof agentClient.getAgentClient>>);
 
-    useApp.setState({ liveMode: true, agentMode: "ask", messageQueue: [] });
+    useApp.setState({
+      liveMode: true,
+      agentMode: "ask",
+      messageQueue: [],
+      selectedModel: { provider: "llamacpp", model: "" },
+      llamaCppStatus: null,
+      workspaceRoot: null,
+      activeSessionId: "",
+    });
 
     await useApp.getState().sendUserMessage("what does this function do?");
 
     expect(postAgentRun).toHaveBeenCalledWith({
       input: "what does this function do?",
       mode: "ask",
+      model: null,
+      provider: "llamacpp",
+      apiKey: null,
+      baseUrl: null,
+      workspaceRoot: null,
     });
 
     vi.restoreAllMocks();

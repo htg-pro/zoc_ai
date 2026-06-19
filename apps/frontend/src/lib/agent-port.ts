@@ -28,25 +28,27 @@ export async function waitForHealth(port: number): Promise<void> {
   throw new Error(`Agent sidecar port ${port} did not pass /health: ${lastError ?? "timed out"}`);
 }
 
-async function waitForDesktopAgentPort(): Promise<number> {
+async function waitForDesktopAgentPort(initialStatus: Awaited<ReturnType<typeof agentStatus>> = null): Promise<number> {
   const deadline = Date.now() + PORT_WAIT_MS;
   let lastError: string | null = null;
+  let status = initialStatus;
 
   while (Date.now() < deadline) {
-    const status = await agentStatus();
-    if (typeof status?.port === "number" && status.port > 0) {
+    status ??= await agentStatus();
+    if (status?.last_error) lastError = status.last_error;
+    if (status?.running && typeof status.port === "number" && status.port > 0) {
       await waitForHealth(status.port);
       return status.port;
     }
-    if (status?.last_error) lastError = status.last_error;
 
-    const port = await agentPort();
+    const port = status === null ? await agentPort() : null;
     if (typeof port === "number" && port > 0) {
       await waitForHealth(port);
       return port;
     }
 
     await delay(PORT_POLL_MS);
+    status = null;
   }
 
   throw new Error(
@@ -57,12 +59,19 @@ async function waitForDesktopAgentPort(): Promise<number> {
 }
 
 export async function resolveAgentPort(): Promise<number> {
+  if (isTauri()) {
+    const status = await agentStatus();
+    if (status?.running && typeof status.port === "number" && status.port > 0) {
+      await waitForHealth(status.port);
+      return status.port;
+    }
+    return waitForDesktopAgentPort(status);
+  }
+
   const port = await agentPort();
   if (typeof port === "number" && port > 0) {
-    if (isTauri()) await waitForHealth(port);
     return port;
   }
-  if (isTauri()) return waitForDesktopAgentPort();
   const env = (import.meta as { env?: Record<string, string | undefined> }).env;
   const fallback = env?.VITE_AGENT_PORT;
   return fallback ? Number.parseInt(fallback, 10) : DEFAULT_DEV_PORT;

@@ -12,10 +12,11 @@ behavioral change (R10.2/R10.3):
    authentication credential (R12.2).
 3. Bind the configured loopback-or-other interface, letting the OS assign a
    free port when ``port == 0``.
-4. Print ``ZOC_STUDIO_AGENT_PORT=<port>`` to stdout and flush, so the supervisor
-   can capture the actual listening port (R10.3). The supervisor then polls the
-   Gateway's existing ``/health`` endpoint, which is preserved by using
-   :func:`~zocai_gateway.app.create_app` unchanged.
+4. Start uvicorn on the pre-bound socket, then print
+   ``ZOC_STUDIO_AGENT_PORT=<port>`` to stdout and flush once the server reports
+   startup complete. The supervisor captures that actual listening port (R10.3)
+   and polls the Gateway's existing ``/health`` endpoint, which is preserved by
+   using :func:`~zocai_gateway.app.create_app` unchanged.
 5. Hand the *already-bound* socket to uvicorn so the port we announced is the
    exact port the server listens on — there is no bind-twice race window.
 
@@ -28,6 +29,7 @@ carry the workspace root, so it is resolved here.
 
 from __future__ import annotations
 
+import asyncio
 import os
 import socket
 import sys
@@ -36,7 +38,6 @@ from pathlib import Path
 
 import uvicorn
 
-from zocai_gateway.app import create_app
 from zocai_gateway.settings import GatewaySettings
 
 __all__ = [
@@ -114,17 +115,33 @@ def main() -> int:
     sock = bind_loopback_or_configured(settings)  # OS-assigned port if 0
     port = int(sock.getsockname()[1])
 
-    # Announce the *actual* listening port to the parent (Tauri) process before
-    # serving, so the supervisor's handshake + /health poll loop work unchanged
-    # (R10.3). Flush because stdout is block-buffered when piped.
-    print(f"{READY_PREFIX}{port}", flush=True)
+    return asyncio.run(_serve(settings, workspace_root, sock, port))
+
+
+async def _serve(
+    settings: GatewaySettings,
+    workspace_root: Path | None,
+    sock: socket.socket,
+    port: int,
+) -> int:
+    from zocai_gateway.app import create_app
 
     app = create_app(settings=settings, workspace_root=workspace_root)
     config = uvicorn.Config(app, host=settings.host, port=port, log_level="info")
     server = uvicorn.Server(config)
-    # Hand uvicorn the already-bound socket so it listens on exactly the port we
-    # announced (no second bind, no race).
-    server.run(sockets=[sock])
+    serve_task = asyncio.create_task(server.serve(sockets=[sock]))
+
+    # Announce readiness only after uvicorn has completed startup and begun
+    # serving the socket. This keeps the Tauri supervisor from publishing a
+    # loopback port that still fails `/health`.
+    while not server.started:
+        if serve_task.done():
+            await serve_task
+            return 1
+        await asyncio.sleep(0.025)
+
+    print(f"{READY_PREFIX}{port}", flush=True)
+    await serve_task
     return 0
 
 

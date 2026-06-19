@@ -3,10 +3,9 @@
  *
  * Replaces the static MOCK_PROVIDERS list with an editable catalogue that
  * covers OpenAI, Google AI Studio (Gemini), Groq, xAI, Anthropic, plus any
- * number of user-added custom providers. Every provider here is reached
+ * number of user-added custom providers. Most providers here are reached
  * through an OpenAI-compatible `/chat/completions` endpoint (Google, Groq
- * and xAI all ship one), so the backend can route them all through the
- * existing OpenAIProvider given a base URL + key.
+ * and xAI all ship one); Anthropic is routed through its native Messages API.
  *
  * - Provider config (base URL, model list, custom providers) is persisted in
  *   localStorage so it survives reloads in the browser preview.

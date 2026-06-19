@@ -1,7 +1,7 @@
 import asyncio
-import re
 from playwright import async_api
 from playwright.async_api import expect
+
 
 async def run_test():
     pw = None
@@ -9,71 +9,49 @@ async def run_test():
     context = None
 
     try:
-        # Start a Playwright session in asynchronous mode
         pw = await async_api.async_playwright().start()
-
-        # Launch a Chromium browser in headless mode with custom arguments
         browser = await pw.chromium.launch(
             headless=True,
             args=[
                 "--window-size=1280,720",
                 "--disable-dev-shm-usage",
                 "--ipc=host",
-                "--single-process"
+                "--single-process",
             ],
         )
-
-        # Create a new browser context (like an incognito window)
         context = await browser.new_context()
-        # Wider default timeout to match the agent's DOM-stability budget;
-        # auto-waiting Playwright APIs (expect, locator.wait_for) inherit this.
         context.set_default_timeout(15000)
-
-        # Open a new page in the browser context
         page = await context.new_page()
 
-        # Interact with the page elements to simulate user flow
-        # -> navigate
         await page.goto("http://localhost:1420")
         try:
             await page.wait_for_load_state("domcontentloaded", timeout=5000)
         except Exception:
             pass
-        
-        # -> Open the 'Sessions' panel by clicking the 'Sessions' button in the left activity bar so existing sessions become visible.
-        # Sessions button
-        elem = page.get_by_role('button', name='Sessions', exact=True)
-        await elem.click(timeout=10000)
-        
-        # -> Click the 'groq smoke' session in the Sessions list to load its conversation context into the Agent/chat panel.
-        # groq smoke — 2:49 PM button
-        elem = page.get_by_role('button', name='groq smoke — 2:49 PM', exact=True)
-        await elem.click(timeout=10000)
-        
-        # -> Click the 'groq smoke' session in the Sessions list again to ensure it is selected and trigger loading of its conversation into the Agent chat panel, then observe the Agent area for session messages.
-        # groq smoke — 2:49 PM button
-        elem = page.get_by_role('button', name='groq smoke — 2:49 PM', exact=True)
-        await elem.click(timeout=10000)
-        
-        # -> Click the 'groq smoke' session in the left Sessions list to force loading its conversation, wait for the UI to update, then search the page for session-specific conversation text to verify the Agent chat area updated.
-        # groq smoke — 2:49 PM button
-        elem = page.get_by_role('button', name='groq smoke — 2:49 PM', exact=True)
-        await elem.click(timeout=10000)
-        
-        # -> click
-        # groq smoke — 2:49 PM button
-        elem = page.get_by_role('button', name='groq smoke — 2:49 PM', exact=True)
-        await elem.click(timeout=10000)
-        
-        # -> Click the 'groq smoke' session in the Sessions list to force loading its conversation into the Agent chat panel, wait for the UI to update, and then verify whether session messages appear in the Agent chat.
-        # groq smoke — 2:49 PM button
-        elem = page.get_by_role('button', name='groq smoke — 2:49 PM', exact=True)
-        await elem.click(timeout=10000)
-        
-        # --> Assertions to verify final state
-        # Assert: Verify the conversation updates to the selected session
-        assert False, "Expected: Verify the conversation updates to the selected session (could not be verified on the page)"
-        await asyncio.sleep(5)
+
+        await page.get_by_role("button", name="Sessions", exact=True).click(timeout=10000)
+
+        first = page.get_by_test_id("session-row").filter(has_text="Add settings screen").nth(0)
+        second = page.get_by_test_id("session-row").filter(has_text="Refactor agent loop").nth(0)
+
+        await expect(first).to_be_visible(timeout=15000)
+        await expect(second).to_be_visible(timeout=15000)
+
+        await first.get_by_role("button").nth(0).click(timeout=10000)
+        region = page.get_by_test_id("agent-run-region")
+        first_prompt = "Add a settings screen with provider configuration and API key management."
+        await expect(region).to_contain_text(first_prompt, timeout=15000)
+
+        await second.get_by_role("button").nth(0).click(timeout=10000)
+        await expect(page.get_by_text(first_prompt, exact=True)).not_to_be_visible(timeout=15000)
+        await expect(page.get_by_text("Start a task", exact=True)).to_be_visible(timeout=15000)
+
+        await first.get_by_role("button").nth(0).click(timeout=10000)
+        await expect(page.get_by_test_id("agent-run-region")).to_contain_text(
+            first_prompt,
+            timeout=15000,
+        )
+        await asyncio.sleep(1)
 
     finally:
         if context:
@@ -83,5 +61,5 @@ async def run_test():
         if pw:
             await pw.stop()
 
+
 asyncio.run(run_test())
-    

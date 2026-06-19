@@ -27,7 +27,7 @@ from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
 
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict, Field
 
 from zocai_gateway.context.rag_matcher import NullRagMatcher, RagFragment, RagMatcher
 from zocai_gateway.context.steering_compiler import (
@@ -73,12 +73,26 @@ class Mode(str, Enum):
 class AgentRunRequest(BaseModel):
     """An incoming agent run request.
 
-    Only the fields the Mode_Router needs are modeled here; the SSE/run
-    endpoints (task 7.1) may extend this contract. ``mode`` drives routing.
+    ``prompt`` and ``mode`` drive routing. The optional model/provider fields
+    carry the frontend's selected local/cloud model into the Gateway runtime;
+    routing ignores them, but the injected brain can use them to call the
+    chosen model without inventing a second transport shape.
     """
+
+    model_config = ConfigDict(populate_by_name=True, extra="ignore")
 
     prompt: str
     mode: Mode
+    model: str | None = None
+    provider: str | None = None
+    api_key: str | None = Field(default=None, alias="apiKey")
+    base_url: str | None = Field(default=None, alias="baseUrl")
+    workspace_root: str | None = Field(default=None, alias="workspaceRoot")
+    temperature: float | None = None
+    top_p: float | None = Field(default=None, alias="topP")
+    top_k: int | None = Field(default=None, alias="topK")
+    repeat_penalty: float | None = Field(default=None, alias="repeatPenalty")
+    max_tokens: int | None = Field(default=None, alias="maxTokens")
 
 
 # ── Ask-path execution (R2.3–R2.6) ──────────────────────────────────────────

@@ -26,6 +26,10 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
+import queue
+import signal
+import subprocess
 import threading
 import uuid
 from collections.abc import AsyncIterator, Mapping
@@ -35,11 +39,18 @@ from pathlib import Path
 from typing import Literal
 
 from fastapi import Depends, FastAPI, HTTPException, Query, status
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, ConfigDict, Field
 from sse_starlette.sse import EventSourceResponse
 
 from shared_schema.agent_events import AgentEvent, DoneEvent
-from shared_schema.models import CreateSessionRequest, Session, UpdateSessionRequest
+from shared_schema.models import (
+    CreateSessionRequest,
+    Session,
+    TerminalSession,
+    TerminalSessionStatus,
+    UpdateSessionRequest,
+)
 
 from zocai_evolution import EvolutionEngine
 
@@ -116,6 +127,31 @@ class DecisionAck(BaseModel):
     accepted: bool = True
 
 
+class SpawnTerminalRequest(BaseModel):
+    """Request body for creating a sidecar-backed terminal."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    cmd: str
+    args: list[str] = Field(default_factory=list)
+    cwd: str | None = None
+    cols: int = Field(default=120, ge=1, le=500)
+    rows: int = Field(default=32, ge=1, le=200)
+
+
+class TerminalInputRequest(BaseModel):
+    """Bytes typed by the user into a terminal."""
+
+    data: str
+
+
+class TerminalResizeRequest(BaseModel):
+    """Terminal viewport size from xterm.js."""
+
+    cols: int = Field(default=120, ge=1, le=500)
+    rows: int = Field(default=32, ge=1, le=200)
+
+
 class _Run:
     """In-memory state for a single registered run.
 
@@ -136,6 +172,7 @@ class _Run:
         "_loop",
         "_lock",
         "_closed",
+        "_seq",
     )
 
     def __init__(
@@ -152,6 +189,7 @@ class _Run:
             self._loop = None
         self._lock = threading.Lock()
         self._closed = False
+        self._seq = 0
 
     def _enqueue(self, event: Mapping[str, object]) -> None:
         """FIFO sink for the run's emit gate (R6.5).
@@ -176,16 +214,30 @@ class _Run:
         with self._lock:
             if self._closed:
                 return
-        self._put({"type": "token", "text": chunk})
+            seq = self._seq
+            self._seq += 1
+        self._put(
+            {
+                "type": "token",
+                "seq": seq,
+                "runId": self.run_id,
+                "ts": datetime.now(timezone.utc).isoformat(),
+                "text": chunk,
+                "done": False,
+            }
+        )
 
     def enqueue_error(self, message: str) -> None:
         """Enqueue a best-effort SSE error frame for infrastructure failures."""
         with self._lock:
             if self._closed:
                 return
+            seq = self._seq
+            self._seq += 1
         self._put(
             {
                 "type": "error",
+                "seq": seq,
                 "runId": self.run_id,
                 "ts": datetime.now(timezone.utc).isoformat(),
                 "message": message,
@@ -227,6 +279,22 @@ class _Run:
             if self._closed:
                 return
             self._closed = True
+            if self.path.mode is Mode.ASK:
+                seq = self._seq
+                self._seq += 1
+            else:
+                seq = None
+        if seq is not None:
+            self._put(
+                {
+                    "type": "token",
+                    "seq": seq,
+                    "runId": self.run_id,
+                    "ts": datetime.now(timezone.utc).isoformat(),
+                    "text": "",
+                    "done": True,
+                }
+            )
         self._put(None)
 
     def _put(self, item: dict[str, object] | None) -> None:
@@ -318,6 +386,191 @@ class SessionRegistry:
         return self._sessions.pop(session_id, None) is not None
 
 
+class TerminalProcess:
+    """A sidecar-owned terminal process with an SSE output queue."""
+
+    def __init__(self, req: SpawnTerminalRequest) -> None:
+        cmd = req.cmd.strip()
+        if not cmd:
+            raise ValueError("terminal command is empty")
+        self.session = TerminalSession(cmd=cmd, args=req.args, cwd=req.cwd)
+        self._events: queue.Queue[dict[str, object] | None] = queue.Queue()
+        self._lock = threading.Lock()
+        self._fd: int | None = None
+        self._pid: int | None = None
+        self._proc: subprocess.Popen[bytes] | None = None
+        self._closed = False
+        self._spawn(req)
+
+    def write(self, data: str) -> None:
+        raw = data.encode(errors="replace")
+        with self._lock:
+            if self._closed:
+                return
+            fd = self._fd
+            proc = self._proc
+        if fd is not None:
+            try:
+                os.write(fd, raw)
+            except OSError:
+                self._finish(None)
+            return
+        if proc is not None and proc.stdin is not None:
+            try:
+                proc.stdin.write(raw)
+                proc.stdin.flush()
+            except OSError:
+                self._finish(proc.poll())
+
+    def resize(self, cols: int, rows: int) -> None:
+        fd = self._fd
+        if fd is None or os.name != "posix":
+            return
+        try:
+            import fcntl
+            import struct
+            import termios
+
+            size = struct.pack("HHHH", rows, cols, 0, 0)
+            fcntl.ioctl(fd, termios.TIOCSWINSZ, size)
+        except OSError:
+            return
+
+    def stop(self) -> TerminalSession:
+        with self._lock:
+            pid = self._pid
+            proc = self._proc
+        if pid is not None:
+            try:
+                os.kill(pid, signal.SIGTERM)
+            except OSError:
+                pass
+        if proc is not None and proc.poll() is None:
+            proc.terminate()
+        return self.session
+
+    async def events(self) -> AsyncIterator[dict[str, str]]:
+        while True:
+            item = await asyncio.to_thread(self._events.get)
+            if item is None:
+                break
+            yield {
+                "event": str(item.get("type", "message")),
+                "data": json.dumps(item),
+            }
+
+    def _spawn(self, req: SpawnTerminalRequest) -> None:
+        if os.name == "posix":
+            self._spawn_pty(req)
+        else:
+            self._spawn_subprocess(req)
+
+    def _spawn_pty(self, req: SpawnTerminalRequest) -> None:
+        import pty
+
+        pid, fd = pty.fork()
+        if pid == 0:  # child
+            if req.cwd:
+                os.chdir(req.cwd)
+            argv = [req.cmd, *req.args]
+            os.execvpe(req.cmd, argv, os.environ.copy())
+        self._pid = pid
+        self._fd = fd
+        self.resize(req.cols, req.rows)
+        threading.Thread(target=self._read_pty, daemon=True).start()
+
+    def _spawn_subprocess(self, req: SpawnTerminalRequest) -> None:
+        self._proc = subprocess.Popen(
+            [req.cmd, *req.args],
+            cwd=req.cwd or None,
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            bufsize=0,
+        )
+        threading.Thread(target=self._read_subprocess, daemon=True).start()
+
+    def _read_pty(self) -> None:
+        assert self._fd is not None
+        exit_code: int | None = None
+        try:
+            while True:
+                try:
+                    chunk = os.read(self._fd, 4096)
+                except OSError:
+                    break
+                if not chunk:
+                    break
+                self._events.put(
+                    {"type": "data", "chunk": chunk.decode(errors="replace")}
+                )
+        finally:
+            pid = self._pid
+            if pid is not None:
+                try:
+                    _pid, status_code = os.waitpid(pid, 0)
+                    if os.WIFEXITED(status_code):
+                        exit_code = os.WEXITSTATUS(status_code)
+                    elif os.WIFSIGNALED(status_code):
+                        exit_code = 128 + os.WTERMSIG(status_code)
+                except ChildProcessError:
+                    exit_code = None
+            self._finish(exit_code)
+
+    def _read_subprocess(self) -> None:
+        proc = self._proc
+        if proc is None or proc.stdout is None:
+            self._finish(None)
+            return
+        try:
+            while True:
+                chunk = proc.stdout.read(4096)
+                if not chunk:
+                    break
+                self._events.put(
+                    {"type": "data", "chunk": chunk.decode(errors="replace")}
+                )
+        finally:
+            self._finish(proc.wait())
+
+    def _finish(self, exit_code: int | None) -> None:
+        with self._lock:
+            if self._closed:
+                return
+            self._closed = True
+            if self._fd is not None:
+                try:
+                    os.close(self._fd)
+                except OSError:
+                    pass
+        self.session = self.session.model_copy(
+            update={
+                "status": TerminalSessionStatus.exited,
+                "exit_code": exit_code,
+            }
+        )
+        self._events.put({"type": "exit", "code": exit_code})
+        self._events.put(None)
+
+
+class TerminalRegistry:
+    """Tracks sidecar terminal processes by session id."""
+
+    def __init__(self) -> None:
+        self._terminals: dict[str, TerminalProcess] = {}
+
+    def create(self, req: SpawnTerminalRequest) -> TerminalProcess:
+        terminal = TerminalProcess(req)
+        self._terminals[str(terminal.session.id)] = terminal
+        return terminal
+
+    def get(self, terminal_id: str) -> TerminalProcess | None:
+        return self._terminals.get(terminal_id)
+
+    def remove(self, terminal_id: str) -> None:
+        self._terminals.pop(terminal_id, None)
+
+
 async def _event_stream(
     run: _Run | None,
     *,
@@ -350,7 +603,9 @@ async def _event_stream(
                     "data": json.dumps(
                         {
                             "type": "error",
+                            "seq": -1,
                             "runId": run.run_id,
+                            "ts": datetime.now(timezone.utc).isoformat(),
                             "message": message,
                         }
                     ),
@@ -452,11 +707,23 @@ def create_app(
         description="Streaming gateway sidecar for the Zoc AI Ecosystem (Layer 2).",
         lifespan=lifespan,
     )
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origin_regex=(
+            r"^(https?://(localhost|127\.0\.0\.1)(:\d+)?"
+            r"|tauri://localhost|https?://tauri\.localhost)$"
+        ),
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
 
     registry = RunRegistry(diary=diary)
     sessions = SessionRegistry()
+    terminals = TerminalRegistry()
     app.state.run_registry = registry
     app.state.session_registry = sessions
+    app.state.terminal_registry = terminals
     app.state.mode_router = router
     setattr(app.state, STATE_SETTINGS_KEY, resolved_settings)
     app.state.diary = diary
@@ -536,6 +803,93 @@ def create_app(
             )
 
     @app.post(
+        "/v1/terminal",
+        response_model=TerminalSession,
+        status_code=status.HTTP_201_CREATED,
+        dependencies=[Depends(require_admission)],
+    )
+    async def spawn_terminal(req: SpawnTerminalRequest) -> TerminalSession:
+        """Spawn a sidecar-owned terminal process for the bottom dock."""
+        try:
+            terminal = terminals.create(req)
+        except Exception as exc:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"failed to spawn terminal: {exc}",
+            ) from exc
+        return terminal.session
+
+    @app.post(
+        "/v1/terminal/{terminal_id}/input",
+        status_code=status.HTTP_204_NO_CONTENT,
+        dependencies=[Depends(require_admission)],
+    )
+    async def terminal_input(
+        terminal_id: str,
+        req: TerminalInputRequest,
+    ) -> None:
+        terminal = terminals.get(terminal_id)
+        if terminal is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"unknown terminal: {terminal_id}",
+            )
+        terminal.write(req.data)
+
+    @app.post(
+        "/v1/terminal/{terminal_id}/resize",
+        status_code=status.HTTP_204_NO_CONTENT,
+        dependencies=[Depends(require_admission)],
+    )
+    async def terminal_resize(
+        terminal_id: str,
+        req: TerminalResizeRequest,
+    ) -> None:
+        terminal = terminals.get(terminal_id)
+        if terminal is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"unknown terminal: {terminal_id}",
+            )
+        terminal.resize(req.cols, req.rows)
+
+    @app.post(
+        "/v1/terminal/{terminal_id}/stop",
+        response_model=TerminalSession,
+        dependencies=[Depends(require_admission)],
+    )
+    async def stop_terminal(terminal_id: str) -> TerminalSession:
+        terminal = terminals.get(terminal_id)
+        if terminal is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"unknown terminal: {terminal_id}",
+            )
+        return terminal.stop()
+
+    @app.get(
+        "/v1/terminal/{terminal_id}/stream",
+        dependencies=[Depends(require_admission)],
+    )
+    async def terminal_stream(terminal_id: str) -> EventSourceResponse:
+        terminal = terminals.get(terminal_id)
+        if terminal is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"unknown terminal: {terminal_id}",
+            )
+
+        async def stream() -> AsyncIterator[dict[str, str]]:
+            try:
+                async for item in terminal.events():
+                    yield item
+            finally:
+                if terminal.session.status is TerminalSessionStatus.exited:
+                    terminals.remove(terminal_id)
+
+        return EventSourceResponse(stream())
+
+    @app.post(
         "/v1/agent/run",
         response_model=RunAccepted,
         response_model_by_alias=True,
@@ -552,6 +906,7 @@ def create_app(
         """
         path = router.route(req)
         run = registry.create(path)
+        run_workspace_root = req.workspace_root or run_root
         if drive:
             async def drive_run() -> None:
                 try:
@@ -563,7 +918,7 @@ def create_app(
                             gate=run.emit_gate,
                             text_sink=run.enqueue_text,
                             close=run.close,
-                            workspace_root=run_root,
+                            workspace_root=run_workspace_root,
                             state_store=state_store,
                             evolution=engine,
                             diary_sink=diary_sink,

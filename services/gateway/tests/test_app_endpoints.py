@@ -34,6 +34,19 @@ def test_health_still_ok(client: TestClient) -> None:
     assert resp.json() == {"status": "ok"}
 
 
+def test_loopback_cors_preflight_is_allowed(client: TestClient) -> None:
+    resp = client.options(
+        "/v1/agent/run",
+        headers={
+            "Origin": "http://127.0.0.1:1420",
+            "Access-Control-Request-Method": "POST",
+            "Access-Control-Request-Headers": "content-type",
+        },
+    )
+    assert resp.status_code == 200
+    assert resp.headers["access-control-allow-origin"] == "http://127.0.0.1:1420"
+
+
 def test_agent_run_ask_mode_returns_run_id(client: TestClient) -> None:
     resp = client.post("/v1/agent/run", json={"prompt": "explain", "mode": "ask"})
     assert resp.status_code == 200
@@ -42,6 +55,24 @@ def test_agent_run_ask_mode_returns_run_id(client: TestClient) -> None:
     assert body["accepted"] is True
     assert isinstance(body["runId"], str)
     assert body["runId"]
+
+
+def test_agent_run_accepts_model_provider_payload() -> None:
+    client = TestClient(create_app(drive=False))
+    resp = client.post(
+        "/v1/agent/run",
+        json={
+            "prompt": "explain",
+            "mode": "ask",
+            "provider": "anthropic",
+            "model": "claude-3-5-sonnet-latest",
+            "api_key": "test-key",
+            "base_url": "https://api.anthropic.com/v1",
+            "workspace_root": "/tmp/workspace",
+        },
+    )
+    assert resp.status_code == 200
+    assert resp.json()["mode"] == "ask"
 
 
 def test_agent_run_agent_mode_returns_run_id(client: TestClient) -> None:
@@ -102,6 +133,20 @@ def test_events_endpoint_is_event_stream(client: TestClient) -> None:
         # Minimal generator (no run): a single ping frame then close.
         body = "".join(resp.iter_text())
     assert "event: ping" in body
+
+
+def test_terminal_spawn_and_stream(client: TestClient) -> None:
+    resp = client.post(
+        "/v1/terminal",
+        json={"cmd": "/bin/sh", "args": ["-lc", "printf hi"]},
+    )
+    assert resp.status_code == 201
+    terminal_id = resp.json()["id"]
+    with client.stream("GET", f"/v1/terminal/{terminal_id}/stream") as stream:
+        assert stream.status_code == 200
+        body = "".join(stream.iter_text())
+    assert "hi" in body
+    assert '"type": "exit"' in body
 
 
 def test_run_has_emit_gate_feeding_its_queue() -> None:

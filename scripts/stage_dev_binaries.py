@@ -24,6 +24,7 @@ exit instead of a cryptic Tauri error.
 from __future__ import annotations
 
 import contextlib
+import importlib.util
 import platform
 import shutil
 import subprocess
@@ -112,7 +113,32 @@ def _stage_agent(triple: str) -> int:
         return 0
 
     print("==> Bundling agent sidecar (source changed or missing)")
-    return subprocess.call([sys.executable, str(ROOT / "scripts" / "bundle_sidecar.py")])
+    script = str(ROOT / "scripts" / "bundle_sidecar.py")
+    uv = shutil.which("uv")
+    if uv is not None:
+        return subprocess.call(
+            [
+                uv,
+                "run",
+                "--package",
+                "zocai-gateway",
+                "--with",
+                "pyinstaller",
+                "python3",
+                script,
+            ],
+            cwd=str(ROOT),
+        )
+    if importlib.util.find_spec("PyInstaller") is not None:
+        if importlib.util.find_spec("httpx") is None:
+            print(
+                "!! httpx is not installed in this Python environment. Install uv "
+                "or install gateway runtime dependencies before bundling the sidecar.",
+                file=sys.stderr,
+            )
+            return 1
+        return subprocess.call([sys.executable, script])
+    return subprocess.call([sys.executable, script])
 
 
 def main() -> int:

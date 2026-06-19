@@ -117,6 +117,8 @@ import {
   DEFAULT_TOP_K,
   DEFAULT_REPEAT_PENALTY,
   DEFAULT_MAX_TOKENS,
+  DEFAULT_HOST,
+  DEFAULT_PORT,
   loadLocalModels,
 } from "./local-models";
 import { track } from "./telemetry";
@@ -573,6 +575,8 @@ export interface AppState {
   clearQueue: () => void;
   /** Cancel the current run and send `content` immediately ("stop and send"). */
   stopAndSend: (content: string) => void;
+  /** Mark the canonical Gateway run complete and release the next queued send. */
+  finishGatewayRun: (runId?: string | null) => void;
   setSelectedModel: (m: { provider: string; model: string }) => void;
   /** Set the agent autonomy level (R9.4, R9.7). */
   setAutonomy: (level: AutonomyLevel) => void;
@@ -2322,7 +2326,24 @@ export const useApp = create<AppState>((set, get) => ({
     // `postAgentRun` resolves when the run is *accepted*; the run's lifecycle
     // (and completion) is observed on the SSE feed by `useAgentStream`.
     try {
-      const { runId } = await postAgentRun(request);
+      const modelContext = await resolveRunModelContext(get());
+      const { runId } = await postAgentRun({
+        ...request,
+        model: modelContext.model,
+        provider: modelContext.provider,
+        apiKey: modelContext.apiKey,
+        baseUrl: modelContext.baseUrl,
+        workspaceRoot: modelContext.workspaceRoot,
+        ...(modelContext.temperature !== undefined
+          ? { temperature: modelContext.temperature }
+          : {}),
+        ...(modelContext.topP !== undefined ? { topP: modelContext.topP } : {}),
+        ...(modelContext.topK !== undefined ? { topK: modelContext.topK } : {}),
+        ...(modelContext.repeatPenalty !== undefined
+          ? { repeatPenalty: modelContext.repeatPenalty }
+          : {}),
+        ...(modelContext.maxTokens !== undefined ? { maxTokens: modelContext.maxTokens } : {}),
+      });
       set({ runId });
     } catch (err) {
       appendErrorChat(set, "sendUserMessage", err);
@@ -2904,6 +2925,24 @@ export const useApp = create<AppState>((set, get) => ({
     // Cancel the in-flight run (clears the queue) then send immediately.
     get().cancelStream();
     if (text) void get().sendUserMessage(text);
+  },
+
+  finishGatewayRun: (finishedRunId) => {
+    const current = get().runId;
+    if (finishedRunId && current && finishedRunId !== current) {
+      return;
+    }
+    const [next, ...rest] = get().messageQueue;
+    set({
+      streaming: false,
+      isRunning: false,
+      runId: null,
+      agentPaused: false,
+      messageQueue: rest,
+    });
+    if (next) {
+      void get().sendUserMessage(next.content);
+    }
   },
 
   setAutonomy: (level) => set({ autonomy: level }),
@@ -3943,6 +3982,16 @@ interface ProviderCreds {
   baseUrl: string | null;
 }
 
+interface RunModelContext extends ProviderCreds {
+  model: string | null;
+  workspaceRoot: string | null;
+  temperature?: number;
+  topP?: number;
+  topK?: number;
+  repeatPenalty?: number;
+  maxTokens?: number;
+}
+
 /**
  * Resolve the bring-your-own cloud creds for the currently selected model.
  * Local (llamacpp) and mock providers need none; cloud providers supply their
@@ -3958,6 +4007,44 @@ async function resolveProviderCreds(state: AppState): Promise<ProviderCreds> {
   if (!cfg) return { provider: providerId, apiKey: null, baseUrl: null };
   const apiKey = await secureStore.get(`provider.${providerId}.api_key`);
   return { provider: providerId, apiKey: apiKey?.trim() || null, baseUrl: cfg.baseUrl };
+}
+
+async function resolveRunModelContext(state: AppState): Promise<RunModelContext> {
+  const creds = await resolveProviderCreds(state);
+  const model = state.selectedModel.model?.trim() || null;
+  let baseUrl = creds.baseUrl;
+  const sampling: Pick<
+    RunModelContext,
+    "temperature" | "topP" | "topK" | "repeatPenalty" | "maxTokens"
+  > = {};
+
+  if (creds.provider === "llamacpp") {
+    baseUrl = state.llamaCppStatus?.base_url ?? null;
+    if (model) {
+      const local = loadLocalModels().find((lm) => lm.id === model);
+      if (local) {
+        sampling.temperature = local.temperature ?? DEFAULT_TEMPERATURE;
+        sampling.topP = local.top_p ?? DEFAULT_TOP_P;
+        sampling.topK = local.top_k ?? DEFAULT_TOP_K;
+        sampling.repeatPenalty = local.repeat_penalty ?? DEFAULT_REPEAT_PENALTY;
+        sampling.maxTokens = local.max_tokens ?? DEFAULT_MAX_TOKENS;
+        if (!baseUrl) {
+          const host = local.host || DEFAULT_HOST;
+          const port = local.port || DEFAULT_PORT;
+          baseUrl = `http://${host}:${port}`;
+        }
+      }
+    }
+  }
+
+  return {
+    provider: creds.provider,
+    apiKey: creds.apiKey,
+    baseUrl,
+    model,
+    workspaceRoot: activeWorkspaceRoot(state),
+    ...sampling,
+  };
 }
 
 function parseSlash(

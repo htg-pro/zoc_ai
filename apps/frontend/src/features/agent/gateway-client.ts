@@ -33,6 +33,16 @@ export type AgentMode = "ask" | "agent";
 export interface AgentRunRequest {
   input: string;
   mode: AgentMode;
+  model?: string | null;
+  provider?: string | null;
+  apiKey?: string | null;
+  baseUrl?: string | null;
+  workspaceRoot?: string | null;
+  temperature?: number | null;
+  topP?: number | null;
+  topK?: number | null;
+  repeatPenalty?: number | null;
+  maxTokens?: number | null;
 }
 
 /** Verdicts the ApprovalRow can post for a pending decision. */
@@ -109,6 +119,16 @@ export async function postAgentRun(req: AgentRunRequest): Promise<AgentRunHandle
   const accepted = await postJson<{ runId?: string; run_id?: string }>("/v1/agent/run", {
     prompt: req.input,
     mode: req.mode,
+    model: req.model ?? null,
+    provider: req.provider ?? null,
+    api_key: req.apiKey ?? null,
+    base_url: req.baseUrl ?? null,
+    workspace_root: req.workspaceRoot ?? null,
+    temperature: req.temperature ?? null,
+    top_p: req.topP ?? null,
+    top_k: req.topK ?? null,
+    repeat_penalty: req.repeatPenalty ?? null,
+    max_tokens: req.maxTokens ?? null,
   });
   const runId = accepted.runId ?? accepted.run_id;
   if (!runId) {

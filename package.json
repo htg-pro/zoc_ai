@@ -4,7 +4,7 @@
   "private": true,
   "description": "Zoc AI \u2014 Zencoder/Codex-style local agentic coding desktop app.",
   "scripts": {
-    "dev": "pnpm --filter @zoc-studio/desktop dev",
+    "dev": "python3 scripts/stage_dev_binaries.py && pnpm --filter @zoc-studio/desktop dev",
     "dev:frontend": "pnpm --filter @zoc-studio/frontend dev",
     "dev:agent": "uv run --package zocai-gateway python -m zocai_gateway.scripts.launch",
     "build": "pnpm -r build",

@@ -40,7 +40,24 @@ import type { AgentEvents } from "@zoc-studio/shared-types";
 import { resolveAgentPort } from "@/lib/agent-port";
 
 /** The flat row-based Event_Contract union (R6.2 single source of truth). */
-export type AgentEvent = AgentEvents.AgentEvent;
+export interface TokenEvent {
+  type: "token";
+  seq: number;
+  runId: string;
+  ts: string;
+  text: string;
+  done?: boolean;
+}
+
+export interface StreamErrorEvent {
+  type: "error";
+  seq: number;
+  runId?: string;
+  ts?: string;
+  message: string;
+}
+
+export type AgentEvent = AgentEvents.AgentEvent | TokenEvent | StreamErrorEvent;
 
 /** Gateway telemetry channel — the single ordered SSE stream (design.md). */
 export const AGENT_EVENTS_ENDPOINT = "/v1/agent/events";
@@ -98,6 +115,8 @@ export interface UseAgentStreamOptions {
   reconnectDelayMs?: number;
   /** Active Gateway run id to subscribe to. Omitted/null opens the ping stream. */
   runId?: string | null;
+  /** Whether the hook should open a stream. Defaults to true for feed tests. */
+  enabled?: boolean;
 }
 
 export interface UseAgentStreamResult {
@@ -115,7 +134,7 @@ export interface UseAgentStreamResult {
  * previously rendered rows are never mutated or replaced (R3.4). Otherwise the
  * event is placed so the array stays in ascending `seq` order.
  */
-export function mergeEventBySeq(events: AgentEvent[], incoming: AgentEvent): AgentEvent[] {
+export function mergeEventBySeq<T extends { seq: number }>(events: T[], incoming: T): T[] {
   let insertAt = events.length;
   for (let i = 0; i < events.length; i++) {
     if (events[i].seq === incoming.seq) {
@@ -133,7 +152,7 @@ export function mergeEventBySeq(events: AgentEvent[], incoming: AgentEvent): Age
 }
 
 /** Folds a batch of events into the feed, preserving seq order and dedup. */
-export function mergeEvents(events: AgentEvent[], incoming: readonly AgentEvent[]): AgentEvent[] {
+export function mergeEvents<T extends { seq: number }>(events: T[], incoming: readonly T[]): T[] {
   let next = events;
   for (const ev of incoming) {
     next = mergeEventBySeq(next, ev);
@@ -199,7 +218,8 @@ export function useAgentStream(options: UseAgentStreamOptions = {}): UseAgentStr
     recoverFromDiary = defaultRecoverFromDiary,
     resolveBaseUrl = defaultResolveBaseUrl,
     reconnectDelayMs = DEFAULT_RECONNECT_DELAY_MS,
-    runId = null,
+  runId = null,
+  enabled = true,
   } = options;
 
   const [events, setEvents] = useState<AgentEvent[]>([]);
@@ -214,6 +234,7 @@ export function useAgentStream(options: UseAgentStreamOptions = {}): UseAgentStr
     resolveBaseUrl,
     reconnectDelayMs,
     runId,
+    enabled,
   });
   optionRefs.current = {
     eventsUrl,
@@ -223,9 +244,16 @@ export function useAgentStream(options: UseAgentStreamOptions = {}): UseAgentStr
     resolveBaseUrl,
     reconnectDelayMs,
     runId,
+    enabled,
   };
 
   useEffect(() => {
+    if (!enabled) {
+      setEvents([]);
+      setStatus("closed");
+      return;
+    }
+
     let cancelled = false;
     let stream: AgentEventStream | null = null;
     let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
@@ -332,7 +360,7 @@ export function useAgentStream(options: UseAgentStreamOptions = {}): UseAgentStr
       }
       setStatus("closed");
     };
-  }, [runId]);
+  }, [runId, enabled]);
 
   return { events, status };
 }

@@ -94,6 +94,11 @@ from zocai_gateway.mode_router import (
 )
 from zocai_gateway.model_allocator import Allocation, AllocationAborted, ModelAllocator
 from zocai_gateway.model_interface import Cloud, Edge, LocalSLM, ModelInterface, ModelTier
+from zocai_gateway.model_runtime import (
+    ModelRuntimeError,
+    generate_text,
+    generate_text_stream,
+)
 from zocai_gateway.orchestrator import Orchestrator
 from zocai_gateway.remediation import RemediationLoop
 from zocai_gateway.stages import Stage
@@ -210,7 +215,7 @@ class DefaultAgentBrain:
     Selects a low-complexity (Local SLM) tier, plans no edits — so PLAN_EDITS
     skips straight to RUN_CHECKS (R3.8) — reports a passing check so the FSM
     advances to SUMMARY then DONE, never proposes a remediation, and echoes the
-    prompt back as the Ask answer.
+    prompt back as the Ask answer when no runtime model is configured.
     """
 
     def allocation_signals(self, request: AgentRunRequest) -> AllocationSignals:
@@ -231,6 +236,22 @@ class DefaultAgentBrain:
 
     def ask_response(self, prompt: str, context: AskContext) -> str:
         return prompt
+
+
+def _ask_system_prompt(context: AskContext) -> str:
+    parts = [
+        "You are Zoc Ask, a read-only coding assistant. Answer clearly and do "
+        "not claim to edit, run commands, or modify files.",
+    ]
+    steering = context.steering.text.strip()
+    if steering:
+        parts.append(f"Project steering:\n{steering}")
+    if context.rag_fragments:
+        fragments = []
+        for fragment in context.rag_fragments[:8]:
+            fragments.append(f"{fragment.path}:\n{fragment.content}")
+        parts.append("Relevant code context:\n\n" + "\n\n".join(fragments))
+    return "\n\n".join(parts)
 
 
 @dataclass(frozen=True, slots=True)
@@ -293,6 +314,7 @@ class RunPipeline:
         self.workspace_root = Path(workspace_root)
         self._close = close
         self._text_sink = text_sink
+        self._ask_streamed = False
 
         self.brain: AgentBrain = brain if brain is not None else DefaultAgentBrain()
         self.allocator = allocator if allocator is not None else ModelAllocator()
@@ -363,7 +385,7 @@ class RunPipeline:
         """
         result = path.execute(
             self.request,
-            generate=self.brain.ask_response,
+            generate=self._ask_response,
             workspace_root=self.workspace_root,
             rag_matcher=self.rag_matcher,
         )
@@ -375,7 +397,8 @@ class RunPipeline:
             text = result.message
         else:  # pragma: no cover - exhaustive over AskResult
             text = ""
-        self._channel.emit_text(text)
+        if not self._ask_streamed:
+            self._channel.emit_text(text)
         self._close()
         return RunResult(
             mode=Mode.ASK,
@@ -384,6 +407,39 @@ class RunPipeline:
             stages=(),
             ask_text=text,
         )
+
+    def _ask_response(self, prompt: str, context: AskContext) -> str:
+        try:
+            configured = generate_text_stream(
+                self.request,
+                system_prompt=_ask_system_prompt(context),
+                timeout=60.0,
+                on_token=self._emit_ask_token,
+            )
+        except ModelRuntimeError as exc:
+            message = f"Model request failed: {exc}"
+            if self._ask_streamed:
+                self._channel.emit_text(f"\n\n{message}")
+            return message
+        if configured:
+            return configured
+        try:
+            configured = generate_text(
+                self.request,
+                system_prompt=_ask_system_prompt(context),
+                timeout=60.0,
+            )
+        except ModelRuntimeError as exc:
+            return f"Model request failed: {exc}"
+        if configured:
+            return configured
+        return self.brain.ask_response(prompt, context)
+
+    def _emit_ask_token(self, chunk: str) -> None:
+        if not chunk:
+            return
+        self._ask_streamed = True
+        self._channel.emit_text(chunk)
 
     # -- Context Bus --------------------------------------------------------
 
