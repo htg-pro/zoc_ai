@@ -41,8 +41,10 @@ function isStreamErrorEvent(event: AgentEvent): event is StreamErrorEvent {
 export function RunRegion(): JSX.Element {
   const chat = useApp((s) => s.chat);
   const agentMode = useApp((s) => s.agentMode);
+  const activeRunMode = useApp((s) => s.activeRunMode);
   const runId = useApp((s) => s.runId);
   const finishGatewayRun = useApp((s) => s.finishGatewayRun);
+  const commitAskStreamMessage = useApp((s) => s.commitAskStreamMessage);
   const { events } = useAgentStream({ runId, enabled: !!runId });
 
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -62,13 +64,22 @@ export function RunRegion(): JSX.Element {
         (isStreamErrorEvent(event) && event.runId === runId),
     );
     if (terminal) {
+      const effectiveMode = activeRunMode ?? agentMode;
+      if (effectiveMode === "ask") {
+        const askTokens = events.filter(
+          (event): event is TokenEvent =>
+            isTokenEvent(event) && event.runId === runId && !!event.text,
+        );
+        const askText = askTokens.map((event) => event.text).join("");
+        commitAskStreamMessage(runId, askText, askTokens[0]?.ts);
+      }
       finishGatewayRun(runId);
     }
-  }, [events, finishGatewayRun, runId]);
+  }, [activeRunMode, agentMode, commitAskStreamMessage, events, finishGatewayRun, runId]);
 
   const empty = chat.length === 0 && events.length === 0;
   if (empty) {
-    const isAsk = agentMode === "ask";
+    const isAsk = (activeRunMode ?? agentMode) === "ask";
     return (
       <div className="h-full min-h-0 overflow-y-auto">
         <EmptyState

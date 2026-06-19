@@ -27,22 +27,19 @@ vi.mock("@/lib/store", () => ({ useApp: vi.fn() }));
 
 // --- Deterministic lucide-react icon stubs ---------------------------------
 vi.mock("lucide-react", () => {
-  const handler: ProxyHandler<Record<string, unknown>> = {
-    get: (_target, name) => {
-      // Only resolve real (string) icon names. Returning a value for `then`
-      // or other special keys would make the mocked module look like a
-      // thenable and deadlock the async ESM import.
-      if (typeof name !== "string" || name === "then" || name === "__esModule") {
-        return undefined;
-      }
-      const Icon = (props: { className?: string }) => (
-        <span data-icon={String(name)} className={props.className} />
-      );
-      Icon.displayName = String(name);
-      return Icon;
-    },
+  const makeIcon = (name: string) => {
+    const Icon = (props: { className?: string }) => (
+      <span data-icon={name} className={props.className} />
+    );
+    Icon.displayName = name;
+    return Icon;
   };
-  return new Proxy({}, handler);
+  return {
+    Paperclip: makeIcon("Paperclip"),
+    Send: makeIcon("Send"),
+    ShieldCheck: makeIcon("ShieldCheck"),
+    Square: makeIcon("Square"),
+  };
 });
 
 // --- Mock the Composer's auxiliary children so only the chrome is tested ----

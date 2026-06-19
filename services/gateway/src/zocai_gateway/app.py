@@ -338,6 +338,10 @@ class RunRegistry:
         """Forget a run after its SSE stream has closed."""
         self._runs.pop(run_id, None)
 
+    def count(self) -> int:
+        """Number of currently registered runs."""
+        return len(self._runs)
+
 
 class SessionRegistry:
     """Small in-memory session store for the editor-support session API."""
@@ -740,6 +744,16 @@ def create_app(
     async def health() -> dict[str, str]:
         return {"status": "ok"}
 
+    @app.get("/v1/agent/runtime", dependencies=[Depends(require_admission)])
+    async def agent_runtime() -> dict[str, object]:
+        """Small diagnostics snapshot for the desktop UI and smoke tests."""
+        return {
+            "status": "ok",
+            "active_runs": registry.count(),
+            "workspace_root": run_root,
+            "diary_enabled": diary_path is not None,
+        }
+
     @app.get(
         "/v1/sessions",
         response_model=list[Session],
@@ -907,6 +921,14 @@ def create_app(
         path = router.route(req)
         run = registry.create(path)
         run_workspace_root = req.workspace_root or run_root
+        logger.info(
+            "agent run accepted run_id=%s mode=%s provider=%s model=%s base_url=%s",
+            run.run_id,
+            req.mode,
+            req.provider,
+            req.model,
+            req.base_url,
+        )
         if drive:
             async def drive_run() -> None:
                 try:

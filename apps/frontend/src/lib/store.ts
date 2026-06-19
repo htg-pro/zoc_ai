@@ -341,6 +341,9 @@ export interface AppState {
   /** Conversation mode (redesign): "ask" = read-only Q&A, "agent" = full
    *  autonomy with file edits. Replaces the old Plan/Build text toggle. */
   agentMode: AgentMode;
+  /** Effective mode for the currently active Gateway run. It can differ from
+   *  the toggle when a plain chat prompt is auto-routed from Agent to Ask. */
+  activeRunMode: AgentMode | null;
   /**
    * Latest snapshot from the llama-server supervisor (Rust). `null` means we
    * haven't subscribed yet (browser preview, or before `initLlamaCppStatus`
@@ -577,6 +580,8 @@ export interface AppState {
   stopAndSend: (content: string) => void;
   /** Mark the canonical Gateway run complete and release the next queued send. */
   finishGatewayRun: (runId?: string | null) => void;
+  /** Persist the completed Ask stream before the transient SSE buffer is cleared. */
+  commitAskStreamMessage: (runId: string, content: string, createdAt?: string) => void;
   setSelectedModel: (m: { provider: string; model: string }) => void;
   /** Set the agent autonomy level (R9.4, R9.7). */
   setAutonomy: (level: AutonomyLevel) => void;
@@ -1117,6 +1122,7 @@ export const useApp = create<AppState>((set, get) => ({
   selectedModel: { provider: "llamacpp", model: "" },
   autonomy: "High",
   agentMode: "agent",
+  activeRunMode: null,
   agentPaused: false,
   messageQueue: [],
   llamaCppStatus: null,
@@ -2297,6 +2303,7 @@ export const useApp = create<AppState>((set, get) => ({
       streaming: true,
       isRunning: true,
       runId: null,
+      activeRunMode: request.mode,
       boundMessageId: userMsg.id,
     }));
     await track("session.message_sent", { id: sessionId });
@@ -2316,6 +2323,7 @@ export const useApp = create<AppState>((set, get) => ({
           streaming: false,
           isRunning: false,
           runId: null,
+          activeRunMode: null,
         }));
       }, 400);
       return;
@@ -2326,6 +2334,7 @@ export const useApp = create<AppState>((set, get) => ({
     // `postAgentRun` resolves when the run is *accepted*; the run's lifecycle
     // (and completion) is observed on the SSE feed by `useAgentStream`.
     try {
+      await ensureSelectedModelReady(get(), set);
       const modelContext = await resolveRunModelContext(get());
       const { runId } = await postAgentRun({
         ...request,
@@ -2347,7 +2356,7 @@ export const useApp = create<AppState>((set, get) => ({
       set({ runId });
     } catch (err) {
       appendErrorChat(set, "sendUserMessage", err);
-      set({ streaming: false, isRunning: false, runId: null });
+      set({ streaming: false, isRunning: false, runId: null, activeRunMode: null });
       // The submit failed and no run is active — release the next queued
       // message (if any) so the queue does not stall.
       const [next, ...rest] = get().messageQueue;
@@ -2878,7 +2887,14 @@ export const useApp = create<AppState>((set, get) => ({
   cancelStream: () => {
     currentAbort?.abort();
     currentAbort = null;
-    set({ streaming: false, isRunning: false, runId: null, agentPaused: false, messageQueue: [] });
+    set({
+      streaming: false,
+      isRunning: false,
+      runId: null,
+      activeRunMode: null,
+      agentPaused: false,
+      messageQueue: [],
+    });
   },
 
   pauseAgent: () => {
@@ -2937,12 +2953,34 @@ export const useApp = create<AppState>((set, get) => ({
       streaming: false,
       isRunning: false,
       runId: null,
+      activeRunMode: null,
       agentPaused: false,
       messageQueue: rest,
     });
     if (next) {
       void get().sendUserMessage(next.content);
     }
+  },
+
+  commitAskStreamMessage: (runId, content, createdAt) => {
+    const trimmed = content.trim();
+    if (!trimmed) return;
+    const id = `ask-final-${runId}`;
+    const message: Message = {
+      id,
+      role: "assistant",
+      content,
+      created_at: createdAt ?? new Date().toISOString(),
+    };
+    set((s) => {
+      if (s.chat.some((entry) => entry.id === id)) {
+        return {};
+      }
+      return {
+        chat: [...s.chat, { kind: "message", id, message }],
+        agentItems: upsertWorkflowMessage(s.agentItems, message),
+      };
+    });
   },
 
   setAutonomy: (level) => set({ autonomy: level }),
@@ -3992,6 +4030,102 @@ interface RunModelContext extends ProviderCreds {
   maxTokens?: number;
 }
 
+async function ensureSelectedModelReady(
+  state: AppState,
+  set: SetState,
+): Promise<LlamaCppStatus | null> {
+  const provider = state.selectedModel.provider;
+  const model = state.selectedModel.model?.trim() || null;
+  if (provider !== "llamacpp") {
+    return null;
+  }
+  if (!model) {
+    throw new Error("Select a local .gguf model before sending a llama.cpp run.");
+  }
+  const local = loadLocalModels().find((lm) => lm.id === model);
+  if (!local) {
+    throw new Error("The selected local .gguf model is no longer registered.");
+  }
+  const current = state.llamaCppStatus;
+  if (current?.running && current.loaded_model_id === local.id && current.base_url) {
+    return current;
+  }
+
+  const ngl = local.n_gpu_layers ?? DEFAULT_N_GPU_LAYERS;
+  set((s) => ({
+    llamaCppStatus: {
+      running: false,
+      host: s.llamaCppStatus?.host ?? local.host ?? null,
+      port: s.llamaCppStatus?.port ?? local.port ?? null,
+      base_url: s.llamaCppStatus?.base_url ?? null,
+      loaded_model_id: null,
+      loaded_model_path: null,
+      n_gpu_layers: ngl,
+      n_ctx: local.n_ctx ?? null,
+      n_threads: local.n_threads ?? null,
+      n_batch: local.n_batch ?? null,
+      temperature: local.temperature ?? DEFAULT_TEMPERATURE,
+      top_p: local.top_p ?? DEFAULT_TOP_P,
+      top_k: local.top_k ?? DEFAULT_TOP_K,
+      repeat_penalty: local.repeat_penalty ?? DEFAULT_REPEAT_PENALTY,
+      max_tokens: local.max_tokens ?? DEFAULT_MAX_TOKENS,
+      flash_attn: local.flash_attn ?? null,
+      last_error: null,
+    },
+  }));
+
+  let loaded: LlamaCppStatus;
+  try {
+    loaded = await llamacppLoad(
+      local.id,
+      local.path,
+      ngl,
+      local.n_ctx,
+      local.n_threads,
+      local.n_batch,
+      local.flash_attn,
+      local.temperature,
+      local.top_p,
+      local.top_k,
+      local.repeat_penalty,
+      local.max_tokens,
+      local.host,
+      local.port,
+    );
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    set((s) => ({
+      llamaCppStatus: {
+        running: false,
+        host: s.llamaCppStatus?.host ?? local.host ?? null,
+        port: s.llamaCppStatus?.port ?? local.port ?? null,
+        base_url: null,
+        loaded_model_id: null,
+        loaded_model_path: null,
+        n_gpu_layers: null,
+        n_ctx: null,
+        n_threads: null,
+        n_batch: null,
+        temperature: null,
+        top_p: null,
+        top_k: null,
+        repeat_penalty: null,
+        max_tokens: null,
+        flash_attn: null,
+        last_error: message,
+      },
+    }));
+    throw err;
+  }
+  set({ llamaCppStatus: loaded });
+  if (!loaded.running || !loaded.base_url) {
+    throw new Error(
+      loaded.last_error || "llama-server did not become ready for the selected model.",
+    );
+  }
+  return loaded;
+}
+
 /**
  * Resolve the bring-your-own cloud creds for the currently selected model.
  * Local (llamacpp) and mock providers need none; cloud providers supply their
@@ -4034,6 +4168,23 @@ async function resolveRunModelContext(state: AppState): Promise<RunModelContext>
           baseUrl = `http://${host}:${port}`;
         }
       }
+    }
+    if (!model) {
+      throw new Error("Select a local .gguf model before sending a llama.cpp run.");
+    }
+    if (!baseUrl) {
+      throw new Error("llama-server is not ready for the selected local model.");
+    }
+  } else if (creds.provider && creds.provider !== "mock") {
+    const cfg = getProvider(creds.provider);
+    if (!model) {
+      throw new Error(`Select a model for ${cfg?.name ?? creds.provider}.`);
+    }
+    if (!baseUrl) {
+      throw new Error(`Provider ${cfg?.name ?? creds.provider} is missing a base URL.`);
+    }
+    if (cfg?.requiresKey && !creds.apiKey) {
+      throw new Error(`Add an API key for ${cfg.name} in Settings before sending.`);
     }
   }
 

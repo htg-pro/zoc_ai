@@ -26,22 +26,19 @@ vi.mock("@/lib/store", () => ({ useApp: vi.fn() }));
 
 // --- Deterministic lucide-react icon stubs (any icon -> labelled span) ------
 vi.mock("lucide-react", () => {
-  const handler: ProxyHandler<Record<string, unknown>> = {
-    get: (_target, name) => {
-      // Only resolve real (string) icon names. Returning a value for `then`
-      // or other special keys would make the mocked module look like a
-      // thenable and deadlock the async ESM import.
-      if (typeof name !== "string" || name === "then" || name === "__esModule") {
-        return undefined;
-      }
-      const Icon = (props: { className?: string }) => (
-        <span data-icon={String(name)} className={props.className} />
-      );
-      Icon.displayName = String(name);
-      return Icon;
-    },
+  const icon = (name: string) => {
+    const Icon = (props: { className?: string }) => (
+      <span data-icon={name} className={props.className} />
+    );
+    Icon.displayName = name;
+    return Icon;
   };
-  return new Proxy({}, handler);
+  return {
+    Zap: icon("Zap"),
+    Pause: icon("Pause"),
+    Play: icon("Play"),
+    Square: icon("Square"),
+  };
 });
 
 // --- Mock sibling/body components so only the chrome is under test ----------
@@ -84,6 +81,7 @@ function baseState(overrides: Partial<AppState> = {}): AppState {
     contextStatus: null,
     streaming: false,
     agentMode: "agent",
+    activeRunMode: null,
     reviewRunning: false,
     testGenRunning: false,
     testRunRunning: false,
@@ -231,6 +229,20 @@ describe("AgentPanel preservation — active-execution control bar (running)", (
     const { getByText, container } = render(<AgentPanel />);
     expect(getByText("Building…")).toBeInTheDocument();
     expect(container.querySelector(".animate-pulse-dot")).toBeInTheDocument();
+  });
+
+  it("shows Ask wording while an auto-routed Ask run is active", () => {
+    applyState(
+      baseState({
+        streaming: true,
+        agentPaused: false,
+        agentMode: "agent",
+        activeRunMode: "ask",
+      }),
+    );
+    const { getByText, getAllByText } = render(<AgentPanel />);
+    expect(getByText("Ask")).toBeInTheDocument();
+    expect(getAllByText("Answering…").length).toBeGreaterThan(0);
   });
 
   it("renders the resume control when the run is paused", () => {

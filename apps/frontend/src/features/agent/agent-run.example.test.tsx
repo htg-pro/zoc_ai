@@ -50,16 +50,37 @@ const TS = "2024-01-01T00:00:00.000Z";
 /** A minimal, drivable SSE stream double satisfying {@link AgentEventStream}. */
 interface FakeStream extends AgentEventStream {
   close: ReturnType<typeof vi.fn>;
+  listeners: Map<string, Array<(ev: unknown) => void>>;
 }
 
 function makeFakeStream(): FakeStream {
-  return { onopen: null, onmessage: null, onerror: null, close: vi.fn() };
+  const listeners = new Map<string, Array<(ev: unknown) => void>>();
+  return {
+    onopen: null,
+    onmessage: null,
+    onerror: null,
+    listeners,
+    addEventListener: vi.fn((type: string, listener: (ev: unknown) => void) => {
+      listeners.set(type, [...(listeners.get(type) ?? []), listener]);
+    }),
+    removeEventListener: vi.fn(),
+    close: vi.fn(),
+  };
 }
 
 /** Push a frame through the stream's `onmessage`, wrapped in `act`. */
 async function emit(stream: FakeStream, event: unknown): Promise<void> {
   await act(async () => {
     stream.onmessage?.({ data: JSON.stringify(event) });
+  });
+}
+
+/** Push a frame through a named browser EventSource listener. */
+async function emitNamed(stream: FakeStream, type: string, event: unknown): Promise<void> {
+  await act(async () => {
+    for (const listener of stream.listeners.get(type) ?? []) {
+      listener({ data: JSON.stringify(event) });
+    }
   });
 }
 
@@ -99,6 +120,40 @@ describe("AgentRunFeed mount/subscribe (R3.1)", () => {
 });
 
 describe("done completion keeps the stream monitoring (R3.6)", () => {
+  it("renders Gateway named SSE events delivered with addEventListener", async () => {
+    const streams: FakeStream[] = [];
+    const createStream = vi.fn((_url: string) => {
+      const next = makeFakeStream();
+      streams.push(next);
+      return next;
+    });
+
+    const { container } = render(
+      <AgentRunFeed
+        streamOptions={{
+          createStream,
+          resolveBaseUrl: async () => "",
+          recoverFromDiary: async () => [],
+        }}
+      />,
+    );
+
+    await waitFor(() => expect(streams).toHaveLength(1));
+    const stream = streams[0];
+    expect(stream.addEventListener).toHaveBeenCalledWith("done", expect.any(Function));
+
+    const doneEvent: AgentEvents.DoneEvent = {
+      type: "done",
+      seq: 9,
+      runId: "run-named",
+      ts: TS,
+      ok: true,
+    };
+    await emitNamed(stream, "done", doneEvent);
+
+    expect(container.querySelector('[data-event-type="done"]')).not.toBeNull();
+  });
+
   it("renders the done row yet still appends a later event without resubscribing", async () => {
     const streams: FakeStream[] = [];
     const createStream = vi.fn((_url: string) => {
@@ -246,7 +301,7 @@ describe("submit targets the Gateway, not a legacy transport (R2.1, R6.5)", () =
       liveMode: true,
       agentMode: "agent",
       messageQueue: [],
-      selectedModel: { provider: "llamacpp", model: "" },
+      selectedModel: { provider: "mock", model: "mock-model" },
       llamaCppStatus: null,
       workspaceRoot: null,
       activeSessionId: "",
@@ -259,8 +314,8 @@ describe("submit targets the Gateway, not a legacy transport (R2.1, R6.5)", () =
     expect(postAgentRun).toHaveBeenCalledWith({
       input: "investigate the failing test",
       mode: "agent",
-      model: null,
-      provider: "llamacpp",
+      model: "mock-model",
+      provider: "mock",
       apiKey: null,
       baseUrl: null,
       workspaceRoot: null,
@@ -292,7 +347,7 @@ describe("submit targets the Gateway, not a legacy transport (R2.1, R6.5)", () =
       liveMode: true,
       agentMode: "ask",
       messageQueue: [],
-      selectedModel: { provider: "llamacpp", model: "" },
+      selectedModel: { provider: "mock", model: "mock-model" },
       llamaCppStatus: null,
       workspaceRoot: null,
       activeSessionId: "",
@@ -303,12 +358,59 @@ describe("submit targets the Gateway, not a legacy transport (R2.1, R6.5)", () =
     expect(postAgentRun).toHaveBeenCalledWith({
       input: "what does this function do?",
       mode: "ask",
-      model: null,
-      provider: "llamacpp",
+      model: "mock-model",
+      provider: "mock",
       apiKey: null,
       baseUrl: null,
       workspaceRoot: null,
     });
+
+    vi.restoreAllMocks();
+  });
+
+  it("blocks llama.cpp sends before the Gateway when no local .gguf model is selected", async () => {
+    vi.mocked(postAgentRun).mockResolvedValue({ runId: "should-not-start" });
+    const memoryStats = vi.fn().mockResolvedValue({
+      context_window: 8192,
+      tokens_used: 0,
+      messages: 0,
+      summaries: 0,
+      facts: 0,
+    });
+    vi.spyOn(agentClient, "getAgentClient").mockResolvedValue({
+      memoryStats,
+    } as unknown as Awaited<ReturnType<typeof agentClient.getAgentClient>>);
+
+    useApp.setState({
+      liveMode: true,
+      agentMode: "ask",
+      activeRunMode: null,
+      messageQueue: [],
+      selectedModel: { provider: "llamacpp", model: "" },
+      llamaCppStatus: null,
+      workspaceRoot: null,
+      activeSessionId: "",
+      chat: [],
+      agentItems: [],
+      streaming: false,
+      isRunning: false,
+      runId: null,
+    });
+
+    await useApp.getState().sendUserMessage("hi");
+
+    expect(postAgentRun).not.toHaveBeenCalled();
+    expect(useApp.getState().streaming).toBe(false);
+    expect(useApp.getState().isRunning).toBe(false);
+    expect(useApp.getState().runId).toBeNull();
+    expect(useApp.getState().activeRunMode).toBeNull();
+    expect(
+      useApp
+        .getState()
+        .chat.some((entry) =>
+          entry.message?.content.includes("Select a local .gguf model"),
+        ),
+    ).toBe(true);
 
     vi.restoreAllMocks();
   });

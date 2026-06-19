@@ -18,20 +18,59 @@ from zocai_gateway.hardware_probe import HardwareProfile
 from zocai_gateway.hot_swap import HotSwapOutcomeKind
 from zocai_gateway.memory.matrix import MemoryMatrix
 from zocai_gateway.memory.state_wrapper import StateWrapperStore
-from zocai_gateway.mode_router import AgentRunRequest
+from zocai_gateway.mode_router import AgentRunRequest, Mode
+from zocai_gateway.model_allocator import Allocation
 from zocai_gateway.model_interface import ModelTier
 from zocai_gateway.run_pipeline import (
     AllocationSignals,
     DefaultAgentBrain,
+    RunContext,
     RunPipeline,
+    RuntimeAgentBrain,
 )
 from zocai_gateway.stages import Stage
+from zocai_gateway.context.steering_compiler import SteeringPayload
+from zocai_gateway.context.token_gate import TokenGateResult
 
 
 def _gate() -> tuple[list[dict[str, object]], EmitGate]:
     events: list[dict[str, object]] = []
     gate = EmitGate(sink=lambda e: events.append(dict(e)))
     return events, gate
+
+
+def test_runtime_agent_brain_parses_model_json(monkeypatch) -> None:
+    def fake_generate_text(*_args: object, **_kwargs: object) -> str:
+        return (
+            '{"reasoning":"create greeting","changes":['
+            '{"path":"src/hello.txt","content":"hello\\n","diff":"create file"}'
+            "]}"
+        )
+
+    monkeypatch.setattr("zocai_gateway.run_pipeline.generate_text", fake_generate_text)
+    context = RunContext(
+        allocation=Allocation(ModelTier.LOCAL_SLM, 4000),
+        fragments=(),
+        steering=SteeringPayload(),
+        token_gate=TokenGateResult(fragments=(), dropped=(), token_count=0, window=4000),
+        mcp_tools=(),
+    )
+
+    plan = RuntimeAgentBrain().edit_plan(
+        AgentRunRequest(
+            prompt="create a greeting file",
+            mode=Mode.AGENT,
+            provider="mock",
+            model="mock-model",
+            base_url="http://model.test",
+        ),
+        context,
+    )
+
+    assert plan.reasoning == "create greeting"
+    assert plan.changes == (
+        PlannedChange(path="src/hello.txt", content="hello\n", diff="create file"),
+    )
 
 
 def test_agent_run_drives_to_done_with_intent_first(tmp_path: Path) -> None:

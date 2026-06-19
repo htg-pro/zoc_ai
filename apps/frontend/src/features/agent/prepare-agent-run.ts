@@ -31,6 +31,34 @@ import type { AgentMode, AgentRunRequest } from "./gateway-client";
 
 export type { AgentMode, AgentRunRequest } from "./gateway-client";
 
+const EDIT_INTENT_RE =
+  /\b(add|apply|build|change|create|debug|delete|edit|fix|generate|implement|install|modify|move|patch|refactor|remove|rename|repair|replace|resolve|run|scaffold|test|update|write)\b/i;
+
+const QUESTION_OR_CHAT_RE =
+  /^(hi|hello|hey|yo|thanks|thank you|what\b|why\b|how\b|where\b|when\b|who\b|which\b|can you explain\b|could you explain\b|explain\b|summari[sz]e\b|tell me\b)/i;
+
+/**
+ * Agent mode is for mutating/build tasks. Plain greetings and read-only code
+ * questions should still produce a chat answer, even if the toggle was left on
+ * Agent from the previous task.
+ */
+export function routeModeForPrompt(input: string, mode: AgentMode): AgentMode {
+  if (mode !== "agent") {
+    return mode;
+  }
+  const text = input.trim();
+  if (!text) {
+    return mode;
+  }
+  if (EDIT_INTENT_RE.test(text)) {
+    return "agent";
+  }
+  if (QUESTION_OR_CHAT_RE.test(text) || text.endsWith("?")) {
+    return "ask";
+  }
+  return mode;
+}
+
 /**
  * Decide whether the given Composer input should start a run.
  *
@@ -47,5 +75,6 @@ export function prepareAgentRun(input: string, mode: AgentMode): AgentRunRequest
     return null;
   }
   // Exactly one request, carrying the trimmed input and the selected mode.
-  return { input: input.trim(), mode };
+  const trimmed = input.trim();
+  return { input: trimmed, mode: routeModeForPrompt(trimmed, mode) };
 }

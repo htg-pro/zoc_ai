@@ -2,14 +2,14 @@
 //
 // For any input string and any toggle in {ask, agent}, `prepareAgentRun(input, mode)`
 // returns null when the trimmed input is empty / whitespace-only (no run request is
-// produced), and otherwise returns exactly one run request carrying the trimmed input
-// and a `mode` equal to the toggle.
+// produced), and otherwise returns exactly one run request carrying the trimmed input.
+// Ask mode stays ask; Agent mode may auto-route plain chat/questions to ask.
 //
 // Validates: Requirements 4.1, 4.2, 4.5
 import { describe, expect, it } from "vitest";
 import fc from "fast-check";
 
-import { prepareAgentRun, type AgentMode } from "./prepare-agent-run";
+import { prepareAgentRun, routeModeForPrompt, type AgentMode } from "./prepare-agent-run";
 
 /** The two toggle values the Ask/Agent pill can select. */
 const arbMode: fc.Arbitrary<AgentMode> = fc.constantFrom("ask", "agent");
@@ -54,9 +54,9 @@ describe("Property 4: Composer rejects empty input and otherwise sends the selec
         }
 
         // Non-empty trimmed input → exactly one run request carrying the
-        // trimmed input and a mode equal to the selected toggle (R4.1, R4.2).
+        // trimmed input and the pure routing decision (R4.1, R4.2).
         expect(result).not.toBeNull();
-        expect(result).toEqual({ input: trimmed, mode });
+        expect(result).toEqual({ input: trimmed, mode: routeModeForPrompt(trimmed, mode) });
       }),
       { numRuns: 200 },
     );
@@ -69,5 +69,21 @@ describe("Property 4: Composer rejects empty input and otherwise sends the selec
       }),
       { numRuns: 200 },
     );
+  });
+
+  it("auto-routes plain Agent-mode chat to Ask but keeps edit/build tasks in Agent", () => {
+    expect(prepareAgentRun("hi", "agent")).toEqual({ input: "hi", mode: "ask" });
+    expect(prepareAgentRun("what does this file do?", "agent")).toEqual({
+      input: "what does this file do?",
+      mode: "ask",
+    });
+    expect(prepareAgentRun("fix the failing test", "agent")).toEqual({
+      input: "fix the failing test",
+      mode: "agent",
+    });
+    expect(prepareAgentRun("implement the login screen", "agent")).toEqual({
+      input: "implement the login screen",
+      mode: "agent",
+    });
   });
 });

@@ -84,6 +84,8 @@ export interface AgentEventStream {
   onopen: ((ev: unknown) => void) | null;
   onmessage: ((ev: { data: string }) => void) | null;
   onerror: ((ev: unknown) => void) | null;
+  addEventListener?: (type: string, listener: (ev: unknown) => void) => void;
+  removeEventListener?: (type: string, listener: (ev: unknown) => void) => void;
   close(): void;
 }
 
@@ -125,6 +127,50 @@ export interface UseAgentStreamResult {
   /** Current subscription lifecycle state. */
   status: StreamStatus;
 }
+
+/**
+ * The Gateway emits typed SSE frames (`event: done`, `event: thinking`, ...).
+ * Browser `EventSource.onmessage` only receives unnamed `message` frames, so
+ * the live client must subscribe to every named event the contract can produce.
+ */
+export const GATEWAY_SSE_EVENT_TYPES = [
+  "token",
+  "intent",
+  "thinking",
+  "read-files",
+  "edit-file",
+  "command",
+  "summary",
+  "approval",
+  "done",
+  "error",
+  "agent.started",
+  "agent.context.loading",
+  "agent.context.ready",
+  "agent.completed",
+  "agent.error",
+  "checkpoint.created",
+  "diff",
+  "diff.ready",
+  "log",
+  "message",
+  "message.delta",
+  "plan",
+  "plan.created",
+  "plan_step",
+  "run.started",
+  "run.context_ready",
+  "run.awaiting_review",
+  "run.applied",
+  "run.discarded",
+  "run.error",
+  "test.started",
+  "test.completed",
+  "todo_update",
+  "tool_call",
+  "tool.started",
+  "tool.completed",
+] as const;
 
 /**
  * Inserts `incoming` into a seq-ordered, append-only feed.
@@ -218,8 +264,8 @@ export function useAgentStream(options: UseAgentStreamOptions = {}): UseAgentStr
     recoverFromDiary = defaultRecoverFromDiary,
     resolveBaseUrl = defaultResolveBaseUrl,
     reconnectDelayMs = DEFAULT_RECONNECT_DELAY_MS,
-  runId = null,
-  enabled = true,
+    runId = null,
+    enabled = true,
   } = options;
 
   const [events, setEvents] = useState<AgentEvent[]>([]);
@@ -279,18 +325,32 @@ export function useAgentStream(options: UseAgentStreamOptions = {}): UseAgentStr
       } = optionRefs.current;
       const next = open(`${baseUrl}${withRunId(path, activeRunId)}`);
       stream = next;
+      const appendEventData = (ev: unknown): boolean => {
+        const data = (ev as { data?: unknown }).data;
+        if (typeof data !== "string") {
+          return false;
+        }
+        if (!cancelled) {
+          appendFrame(data);
+        }
+        return true;
+      };
       next.onopen = () => {
         if (!cancelled) {
           setStatus("open");
         }
       };
-      next.onmessage = (ev) => {
-        if (!cancelled) {
-          appendFrame(ev.data);
-        }
-      };
-      next.onerror = () => {
+      next.onmessage = appendEventData;
+      for (const eventType of GATEWAY_SSE_EVENT_TYPES) {
+        next.addEventListener?.(eventType, appendEventData);
+      }
+      next.onerror = (ev) => {
         if (cancelled) {
+          return;
+        }
+        // A Gateway `event: error` frame is a valid telemetry payload and must
+        // not be mistaken for a transport failure.
+        if (appendEventData(ev)) {
           return;
         }
         // Tear down the dropped stream and schedule a reconnect that first

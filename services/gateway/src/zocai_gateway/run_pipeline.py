@@ -33,6 +33,7 @@ a default agent run walks INTAKE→…→DONE cleanly.
 
 from __future__ import annotations
 
+import json
 import itertools
 import logging
 from collections.abc import Callable, Mapping
@@ -71,7 +72,7 @@ from zocai_gateway.context.steering_compiler import (
     compile_steering,
 )
 from zocai_gateway.context.token_gate import TokenGateResult, fit_fragments
-from zocai_gateway.edits import EditCoordinator, EditPlan
+from zocai_gateway.edits import EditCoordinator, EditPlan, PlannedChange
 from zocai_gateway.emit_gate import EmitGate
 from zocai_gateway.fsm import FSM
 from zocai_gateway.hardware_probe import HardwareProfile
@@ -111,6 +112,7 @@ __all__ = [
     "RunContext",
     "RunPipeline",
     "RunResult",
+    "RuntimeAgentBrain",
     "TextSink",
     "default_model_loader",
     "default_workspace_rag_matcher",
@@ -238,6 +240,29 @@ class DefaultAgentBrain:
         return prompt
 
 
+class RuntimeAgentBrain(DefaultAgentBrain):
+    """Model-backed Agent brain used by the desktop runtime.
+
+    The planner asks the selected provider for a JSON edit plan. It is
+    deliberately conservative: malformed JSON or incomplete change objects do
+    not produce file writes, but the model's text is still surfaced as the
+    PLAN_EDITS reasoning event so the run completes visibly.
+    """
+
+    def edit_plan(self, request: AgentRunRequest, context: RunContext) -> EditPlan:
+        try:
+            text = generate_text(
+                request,
+                system_prompt=_agent_system_prompt(context),
+                timeout=120.0,
+            )
+        except ModelRuntimeError as exc:
+            raise RuntimeError(f"model planner failed: {exc}") from exc
+        if not text:
+            return super().edit_plan(request, context)
+        return _edit_plan_from_model_text(text)
+
+
 def _ask_system_prompt(context: AskContext) -> str:
     parts = [
         "You are Zoc Ask, a read-only coding assistant. Answer clearly and do "
@@ -252,6 +277,65 @@ def _ask_system_prompt(context: AskContext) -> str:
             fragments.append(f"{fragment.path}:\n{fragment.content}")
         parts.append("Relevant code context:\n\n" + "\n\n".join(fragments))
     return "\n\n".join(parts)
+
+
+def _agent_system_prompt(context: RunContext) -> str:
+    parts = [
+        "You are Zoc Agent, a coding agent planner. Return only JSON with this "
+        'shape: {"reasoning":"short explanation","changes":[{"path":"relative/path","content":"full replacement file content","diff":"short summary"}]}.',
+        "Only include a change when you know the exact full replacement file "
+        "content. If the request is only chat or you are unsure, return an "
+        'empty changes array with useful reasoning.',
+    ]
+    steering = context.steering.text.strip()
+    if steering:
+        parts.append(f"Project steering:\n{steering}")
+    if context.fragments:
+        fragments = []
+        for fragment in context.fragments[:8]:
+            fragments.append(f"{fragment.path}:\n{fragment.content}")
+        parts.append("Relevant code context:\n\n" + "\n\n".join(fragments))
+    if context.mcp_tools:
+        parts.append("Available MCP tools: " + ", ".join(context.mcp_tools))
+    return "\n\n".join(parts)
+
+
+def _edit_plan_from_model_text(text: str) -> EditPlan:
+    raw = text.strip()
+    if raw.startswith("```"):
+        raw = raw.strip("`").strip()
+        if raw.lower().startswith("json"):
+            raw = raw[4:].strip()
+    try:
+        payload = json.loads(raw)
+    except json.JSONDecodeError:
+        return EditPlan(reasoning=text.strip(), changes=())
+    if not isinstance(payload, dict):
+        return EditPlan(reasoning=text.strip(), changes=())
+    reasoning = payload.get("reasoning")
+    if not isinstance(reasoning, str) or not reasoning.strip():
+        reasoning = text.strip()
+    changes_raw = payload.get("changes")
+    changes: list[PlannedChange] = []
+    if isinstance(changes_raw, list):
+        for item in changes_raw:
+            if not isinstance(item, dict):
+                continue
+            path = item.get("path")
+            content = item.get("content")
+            diff = item.get("diff", "")
+            if not isinstance(path, str) or not path.strip():
+                continue
+            if not isinstance(content, str):
+                continue
+            changes.append(
+                PlannedChange(
+                    path=path.strip().lstrip("/"),
+                    content=content,
+                    diff=diff if isinstance(diff, str) else "",
+                )
+            )
+    return EditPlan(reasoning=reasoning.strip(), changes=tuple(changes))
 
 
 @dataclass(frozen=True, slots=True)
@@ -316,7 +400,7 @@ class RunPipeline:
         self._text_sink = text_sink
         self._ask_streamed = False
 
-        self.brain: AgentBrain = brain if brain is not None else DefaultAgentBrain()
+        self.brain: AgentBrain = brain if brain is not None else RuntimeAgentBrain()
         self.allocator = allocator if allocator is not None else ModelAllocator()
         self.rag_matcher: RagMatcher = (
             rag_matcher if rag_matcher is not None else NullRagMatcher()

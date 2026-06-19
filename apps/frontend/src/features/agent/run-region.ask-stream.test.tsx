@@ -21,6 +21,7 @@ beforeEach(() => {
   useApp.setState({
     chat: [],
     agentMode: "ask",
+    activeRunMode: null,
     runId: null,
     streaming: false,
     isRunning: false,
@@ -60,5 +61,20 @@ describe("RunRegion Ask stream rendering", () => {
       expect(useApp.getState().isRunning).toBe(false);
       expect(useApp.getState().runId).toBeNull();
     });
+    await waitFor(() => {
+      expect(screen.getByText("OK.")).toBeInTheDocument();
+    });
+    const persisted = useApp
+      .getState()
+      .chat.filter((entry) => entry.id === "ask-final-run-ask");
+    expect(persisted).toHaveLength(1);
+    expect(persisted[0]?.message?.role).toBe("assistant");
+    expect(persisted[0]?.message?.content).toBe("OK.");
+
+    rerender(<RunRegion />);
+
+    expect(
+      useApp.getState().chat.filter((entry) => entry.id === "ask-final-run-ask"),
+    ).toHaveLength(1);
   });
 });

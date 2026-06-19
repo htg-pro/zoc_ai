@@ -15,6 +15,7 @@ export function AgentPanel() {
   const contextStatus = useApp((s) => s.contextStatus);
   const streaming = useApp((s) => s.streaming);
   const agentMode = useApp((s) => s.agentMode);
+  const activeRunMode = useApp((s) => s.activeRunMode);
   const reviewRunning = useApp((s) => s.reviewRunning);
   const testRunning = useApp((s) => s.testGenRunning || s.testRunRunning);
   const runActive = streaming || reviewRunning || testRunning;
@@ -46,7 +47,8 @@ export function AgentPanel() {
 
   const elapsedTime = formatElapsed(elapsedMs);
 
-  const isAsk = agentMode === "ask";
+  const displayMode = runActive ? activeRunMode ?? agentMode : agentMode;
+  const isAsk = displayMode === "ask";
   const headerWord = isAsk ? "Ask" : "Agent";
   const subtitle = isAsk
     ? runActive
