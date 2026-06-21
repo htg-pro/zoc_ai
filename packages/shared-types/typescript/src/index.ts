@@ -266,6 +266,33 @@ export interface MessageEvent extends AgentEventBase {
   message: Message;
 }
 
+export interface ModelBenchmarkHistory {
+  modelId: string;
+  runs: ModelBenchmarkRun[];
+}
+
+export interface ModelBenchmarkPromptResult {
+  promptId: string;
+  label: string;
+  timeToFirstTokenMs: number;
+  tokensPerSecond: number;
+  qualityScore: number;
+  outputTokens: number;
+  error?: string | null;
+}
+
+export interface ModelBenchmarkRun {
+  id: string;
+  modelId: string;
+  modelName: string;
+  createdAt: string;
+  durationSeconds: number;
+  averageTimeToFirstTokenMs: number;
+  averageTokensPerSecond: number;
+  averageQualityScore: number;
+  prompts: ModelBenchmarkPromptResult[];
+}
+
 export interface ModelCapability {
   context_window: number;
   supports_tools: boolean;
@@ -372,6 +399,12 @@ export interface RunLifecycleEvent extends AgentEventBase {
   message?: string | null;
   detail?: string | null;
   changed_files?: number | null;
+}
+
+export interface RunModelBenchmarkRequest {
+  modelId: string;
+  modelName: string;
+  baseUrl: string;
 }
 
 export interface RunSlashCommandRequest {

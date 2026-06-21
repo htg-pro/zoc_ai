@@ -1,5 +1,6 @@
 import { create } from "zustand";
 import type {
+  AgentEvents,
   AgentEvent,
   CodeReviewReport,
   CheckpointInfo,
@@ -79,6 +80,7 @@ import { parseLaunchJson, type LaunchConfig } from "./launch-configs";
 import {
   gitBranches,
   gitCheckout,
+  gitCheckpointCommit,
   gitCommit,
   gitCreateBranch,
   gitDiff,
@@ -102,12 +104,14 @@ import {
 import {
   applyPatch as tauriApplyPatch,
   desktopConfigGet,
+  fsListDir,
   fsReadText,
   isTauri,
   llamacppLoad,
   llamacppStatus,
   onLlamaCppStatus,
   setWorkspaceRoot as tauriSetWorkspaceRoot,
+  type FileNode,
   type LlamaCppStatus,
 } from "./tauri-bridge";
 import {
@@ -129,13 +133,23 @@ import { decideIngest } from "./event-ingest";
 // helper (prepare-agent-run). The Composer submit path posts runs to the
 // Gateway through these and lets `useAgentStream` drive the feed — no legacy
 // run/event transport is touched (task 4.1; R2.1, R4.x, R6.5).
-import { postAgentRun } from "@/features/agent/gateway-client";
+import { postAgentRun, type ContextFileRef } from "@/features/agent/gateway-client";
 import { prepareAgentRun } from "@/features/agent/prepare-agent-run";
 import { resolveSessionIntent } from "./session-lifecycle";
 import { effectiveSettings, setSetting } from "./settings";
 import { checkAction } from "./trust";
 
 export type AgentMode = "ask" | "agent";
+
+type AttachmentKind = "file" | "selection" | "folder" | "symbol";
+
+export interface ComposerAttachment {
+  id: string;
+  label: string;
+  kind: AttachmentKind;
+  path?: string;
+  token?: string;
+}
 
 /** A user message held in the run queue (develop.md Phase 11). Multiple
  *  messages can be queued, reordered, and removed while a run is in flight. */
@@ -331,6 +345,8 @@ export interface AppState {
    *  echoed) `runId` the run is bound to. Drives cross-run event discarding
    *  via `decideIngest` (R1.2, R1.3). */
   runId: string | null;
+  /** Latest telemetry snapshot for the active Gateway run. */
+  runBudget: AgentEvents.BudgetEvent | null;
   /** The user `Message.id` the active run answers, recorded when the run is
    *  bound in `sendUserMessage` (R1.1). `null` when no run is bound. */
   boundMessageId: string | null;
@@ -352,7 +368,7 @@ export interface AppState {
    * next load attempt.
    */
   llamaCppStatus: LlamaCppStatus | null;
-  attachments: { id: string; label: string; kind: "file" | "selection" | "folder" | "symbol" }[];
+  attachments: ComposerAttachment[];
   pendingPatches: DiffPatch[];
   /** Id of the current isolated agent run awaiting review (review-before-apply
    *  model), captured from `checkpoint.created` / `run.awaiting_review` SSE
@@ -468,6 +484,10 @@ export interface AppState {
   pushChanges: () => Promise<void>;
   loadGitLog: (limit?: number) => Promise<GitCommit[]>;
   gitFileDiff: (path: string, staged: boolean) => Promise<string>;
+  /** Git checkpoint commit hash captured before each write-capable agent run. */
+  agentRunCheckpoints: Record<string, string>;
+  /** Restore the git checkpoint commit for a completed agent run. */
+  restoreAgentRunCheckpoint: (runId: string) => Promise<boolean>;
   /** Diagnostics keyed by source ("typescript" | "eslint" | "ruff" | "cargo" | …). */
   diagnostics: Record<string, Diagnostic[]>;
   setDiagnostics: (source: string, items: Diagnostic[]) => void;
@@ -580,6 +600,8 @@ export interface AppState {
   stopAndSend: (content: string) => void;
   /** Mark the canonical Gateway run complete and release the next queued send. */
   finishGatewayRun: (runId?: string | null) => void;
+  /** Accept a budget frame only when it belongs to the currently bound run. */
+  updateRunBudget: (budget: AgentEvents.BudgetEvent) => void;
   /** Persist the completed Ask stream before the transient SSE buffer is cleared. */
   commitAskStreamMessage: (runId: string, content: string, createdAt?: string) => void;
   setSelectedModel: (m: { provider: string; model: string }) => void;
@@ -589,7 +611,7 @@ export interface AppState {
   setAgentMode: (mode: AgentMode) => void;
   /** Wire up the llama-server status subscription. Called once at app start. */
   initLlamaCppStatus: () => Promise<void>;
-  addAttachment: (a: { label: string; kind: "file" | "selection" | "folder" | "symbol" }) => void;
+  addAttachment: (a: Omit<ComposerAttachment, "id">) => void;
   /** Search workspace files/folders/symbols for the `@` context picker.
    *  Falls back to filtering open files when the sidecar is unavailable. */
   searchContextCandidates: (query: string) => Promise<ContextCandidate[]>;
@@ -1081,6 +1103,21 @@ function isDuplicateUserMessage(prev: Message, next: Message, deltaMs: number): 
 
 let currentAbort: AbortController | null = null;
 
+function createClientRunId(): string {
+  const random =
+    globalThis.crypto?.randomUUID?.() ??
+    `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
+  const safe = random.replace(/[^A-Za-z0-9_.:-]/g, "");
+  return `run-${safe}`.slice(0, 80);
+}
+
+async function createAgentRunCheckpoint(runId: string): Promise<string> {
+  if (!isTauri()) {
+    throw new Error("Checkpoint commits require the desktop app.");
+  }
+  return gitCheckpointCommit(`zoc: checkpoint before run ${runId}`);
+}
+
 export const useApp = create<AppState>((set, get) => ({
   activity: "files",
   mainView: "editor",
@@ -1118,6 +1155,7 @@ export const useApp = create<AppState>((set, get) => ({
   streaming: false,
   isRunning: false,
   runId: null,
+  runBudget: null,
   boundMessageId: null,
   selectedModel: { provider: "llamacpp", model: "" },
   autonomy: "High",
@@ -1130,6 +1168,7 @@ export const useApp = create<AppState>((set, get) => ({
   pendingPatches: [],
   reviewRunId: null,
   restorableRunId: null,
+  agentRunCheckpoints: {},
   checkpoints: [],
   inlineEdit: { ...INLINE_EDIT_CLOSED },
   reviewValidation: null,
@@ -1682,6 +1721,32 @@ export const useApp = create<AppState>((set, get) => ({
       return await gitDiff(path, staged);
     } catch {
       return "";
+    }
+  },
+  restoreAgentRunCheckpoint: async (runId) => {
+    const checkpoint = get().agentRunCheckpoints[runId];
+    if (!checkpoint) {
+      toast.error("No checkpoint commit for this run");
+      return false;
+    }
+    if (!isTauri()) {
+      toast.message("Restore checkpoint requires the desktop app");
+      return false;
+    }
+    const ok = window.confirm(
+      `Restore checkpoint ${checkpoint.slice(0, 8)} for run ${runId}? This checks out that commit.`,
+    );
+    if (!ok) return false;
+    try {
+      await gitCheckout(checkpoint);
+      set((s) => ({ fsRefreshNonce: s.fsRefreshNonce + 1 }));
+      await get().refreshGit();
+      await track("agent.run.restored", { runId, checkpoint });
+      toast.success("Checkpoint restored", { description: checkpoint.slice(0, 8) });
+      return true;
+    } catch (err) {
+      toast.error("Couldn't restore checkpoint", { description: (err as Error).message });
+      return false;
     }
   },
 
@@ -2247,7 +2312,11 @@ export const useApp = create<AppState>((set, get) => ({
   sendUserMessage: async (content) => {
     if (!content.trim()) return;
     const sessionId = get().activeSessionId;
-    const outgoing = expandFileMentions(content, get());
+    const state = get();
+    const contextFiles = collectMentionContextFiles(content, state);
+    const outgoing = content.trim().startsWith("/")
+      ? expandFileMentions(content, state)
+      : content;
     // Ask mode is pure read-only Q&A. Explicit slash commands are honored
     // below; everything else is submitted to the Gateway as a run.
 
@@ -2303,6 +2372,7 @@ export const useApp = create<AppState>((set, get) => ({
       streaming: true,
       isRunning: true,
       runId: null,
+      runBudget: null,
       activeRunMode: request.mode,
       boundMessageId: userMsg.id,
     }));
@@ -2323,6 +2393,7 @@ export const useApp = create<AppState>((set, get) => ({
           streaming: false,
           isRunning: false,
           runId: null,
+          runBudget: null,
           activeRunMode: null,
         }));
       }, 400);
@@ -2336,13 +2407,20 @@ export const useApp = create<AppState>((set, get) => ({
     try {
       await ensureSelectedModelReady(get(), set);
       const modelContext = await resolveRunModelContext(get());
+      const checkpointRunId = request.mode === "agent" ? createClientRunId() : null;
+      const checkpointHash = checkpointRunId
+        ? await createAgentRunCheckpoint(checkpointRunId)
+        : null;
       const { runId } = await postAgentRun({
         ...request,
+        ...(checkpointRunId ? { runId: checkpointRunId } : {}),
+        ...(contextFiles.length > 0 ? { contextFiles } : {}),
         model: modelContext.model,
         provider: modelContext.provider,
         apiKey: modelContext.apiKey,
         baseUrl: modelContext.baseUrl,
         workspaceRoot: modelContext.workspaceRoot,
+        reviewChanges: request.mode === "agent",
         ...(modelContext.temperature !== undefined
           ? { temperature: modelContext.temperature }
           : {}),
@@ -2353,10 +2431,22 @@ export const useApp = create<AppState>((set, get) => ({
           : {}),
         ...(modelContext.maxTokens !== undefined ? { maxTokens: modelContext.maxTokens } : {}),
       });
-      set({ runId });
+      set((s) => ({
+        runId,
+        agentRunCheckpoints: checkpointHash
+          ? { ...s.agentRunCheckpoints, [runId]: checkpointHash }
+          : s.agentRunCheckpoints,
+      }));
+      if (checkpointHash) void get().refreshGit();
     } catch (err) {
       appendErrorChat(set, "sendUserMessage", err);
-      set({ streaming: false, isRunning: false, runId: null, activeRunMode: null });
+      set({
+        streaming: false,
+        isRunning: false,
+        runId: null,
+        runBudget: null,
+        activeRunMode: null,
+      });
       // The submit failed and no run is active — release the next queued
       // message (if any) so the queue does not stall.
       const [next, ...rest] = get().messageQueue;
@@ -2891,6 +2981,7 @@ export const useApp = create<AppState>((set, get) => ({
       streaming: false,
       isRunning: false,
       runId: null,
+      runBudget: null,
       activeRunMode: null,
       agentPaused: false,
       messageQueue: [],
@@ -2953,6 +3044,7 @@ export const useApp = create<AppState>((set, get) => ({
       streaming: false,
       isRunning: false,
       runId: null,
+      runBudget: null,
       activeRunMode: null,
       agentPaused: false,
       messageQueue: rest,
@@ -2960,6 +3052,12 @@ export const useApp = create<AppState>((set, get) => ({
     if (next) {
       void get().sendUserMessage(next.content);
     }
+  },
+
+  updateRunBudget: (budget) => {
+    const activeRunId = get().runId;
+    if (!activeRunId || budget.runId !== activeRunId) return;
+    set({ runBudget: budget });
   },
 
   commitAskStreamMessage: (runId, content, createdAt) => {
@@ -3076,7 +3174,8 @@ export const useApp = create<AppState>((set, get) => ({
     await onLlamaCppStatus((ev) => set({ llamaCppStatus: ev }));
   },
   addAttachment: (a) =>
-    set((s) => ({ attachments: [...s.attachments, { id: `att-${Date.now()}`, ...a }] })),  removeAttachment: (id) =>
+    set((s) => ({ attachments: [...s.attachments, { id: `att-${Date.now()}`, ...a }] })),
+  removeAttachment: (id) =>
     set((s) => ({ attachments: s.attachments.filter((a) => a.id !== id) })),
   searchContextCandidates: async (query) => {
     const openFileFallback = (): ContextCandidate[] => {
@@ -3086,11 +3185,14 @@ export const useApp = create<AppState>((set, get) => ({
         .slice(0, 25)
         .map((f) => ({ kind: "file" as const, label: f.name, path: f.path, detail: f.path, line: null }));
     };
+    const workspaceMatches = await searchWorkspaceFileTree(query, get());
+    if (workspaceMatches.length > 0) return workspaceMatches;
     if (!get().liveMode || !get().activeSessionId) return openFileFallback();
     try {
       const client = await getAgentClient();
       const out = await client.searchContext(get().activeSessionId, query, 25);
-      return out.length > 0 ? out : openFileFallback();
+      const files = out.filter((item) => item.kind === "file").slice(0, 25);
+      return files.length > 0 ? files : openFileFallback();
     } catch {
       return openFileFallback();
     }
@@ -3975,6 +4077,106 @@ function activeWorkspaceRoot(state: AppState): string | null {
     state.sessions.find((s) => s.id === state.activeSessionId)?.workspace_root ??
     null
   );
+}
+
+const CONTEXT_RESULT_LIMIT = 25;
+const CONTEXT_TREE_DEPTH = 8;
+const CONTEXT_IGNORED_DIRS = new Set([
+  ".git",
+  ".hg",
+  ".svn",
+  "node_modules",
+  "target",
+  "dist",
+  "build",
+  ".next",
+  ".turbo",
+  ".cache",
+  "__pycache__",
+  ".pytest_cache",
+  ".venv",
+  "venv",
+]);
+
+function normalizeMentionToken(token: string | undefined): string | null {
+  const cleaned = (token ?? "").trim().replace(/^@+/, "");
+  return cleaned.length > 0 && !/\s/.test(cleaned) ? cleaned : null;
+}
+
+function contentHasMentionToken(content: string, token: string): boolean {
+  return new RegExp(`(^|\\s)@${escapeRegex(token)}(?=$|\\s)`).test(content);
+}
+
+function escapeRegex(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function relativeDetail(root: string | null, path: string): string {
+  if (!root) return path;
+  const normalizedRoot = root.endsWith("/") || root.endsWith("\\") ? root : `${root}/`;
+  return path.startsWith(normalizedRoot) ? path.slice(normalizedRoot.length) : path;
+}
+
+function collectFileNodes(
+  nodes: FileNode[],
+  query: string,
+  root: string | null,
+  limit = CONTEXT_RESULT_LIMIT,
+): ContextCandidate[] {
+  const q = query.trim().toLowerCase();
+  const out: ContextCandidate[] = [];
+  const seen = new Set<string>();
+  const walk = (items: FileNode[]) => {
+    for (const node of items) {
+      if (out.length >= limit) return;
+      if (node.kind === "dir") {
+        if (!CONTEXT_IGNORED_DIRS.has(node.name)) walk(node.children ?? []);
+        continue;
+      }
+      const detail = relativeDetail(root, node.path);
+      const haystack = `${node.name}\n${detail}\n${node.path}`.toLowerCase();
+      if (q && !haystack.includes(q)) continue;
+      if (seen.has(node.path)) continue;
+      seen.add(node.path);
+      out.push({
+        kind: "file",
+        label: node.name || basename(node.path),
+        path: node.path,
+        detail,
+        line: null,
+      });
+    }
+  };
+  walk(nodes);
+  return out;
+}
+
+async function searchWorkspaceFileTree(
+  query: string,
+  state: AppState,
+): Promise<ContextCandidate[]> {
+  const root = activeWorkspaceRoot(state);
+  if (!root || !isTauri()) return [];
+  try {
+    return collectFileNodes(await fsListDir(root, CONTEXT_TREE_DEPTH), query, root);
+  } catch {
+    return [];
+  }
+}
+
+function collectMentionContextFiles(content: string, state: AppState): ContextFileRef[] {
+  const refs = new Map<string, string>();
+  for (const attachment of state.attachments) {
+    if (attachment.kind !== "file") continue;
+    const path = attachment.path ?? attachment.label;
+    const token = normalizeMentionToken(attachment.token ?? basename(path));
+    if (!token || !contentHasMentionToken(content, token)) continue;
+    refs.set(token, path);
+  }
+  if (state.activeFile && contentHasMentionToken(content, "file")) {
+    refs.set("file", state.activeFile);
+  }
+  return Array.from(refs, ([token, path]) => ({ token, path }));
 }
 
 /**

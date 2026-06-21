@@ -4,9 +4,9 @@
  * Feature: zoc-agent-ecosystem-merge, Property 2: Each event type maps to
  * exactly one row component
  *
- * For any of the eight Event_Contract types:
+ * For any of the Agent trace Event_Contract types:
  *   (a) `ROW_COMPONENTS` selects exactly one distinct component for that type,
- *   (b) the registry is total over `EventType` with exactly eight entries, and
+ *   (b) the registry is total over `EventType`, and
  *   (c) rendering a recognized event uses the component mapped to its
  *       event-type discriminator.
  *
@@ -28,15 +28,18 @@ afterEach(() => {
   cleanup();
 });
 
-/** The eight Event_Contract discriminators, declared independently of the
+/** The Agent trace Event_Contract discriminators, declared independently of the
  *  registry so the test pins the expected domain rather than reading it back
  *  from the implementation under test. */
 const EVENT_TYPES: AgentEvents.EventType[] = [
   "intent",
   "thinking",
+  "plan",
+  "plan-update",
   "read-files",
   "edit-file",
   "command",
+  "review",
   "summary",
   "approval",
   "done",
@@ -76,7 +79,37 @@ function arbEventOfType(type: AgentEvents.EventType): fc.Arbitrary<AgentEvents.A
     case "thinking":
       return fc
         .tuple(baseArb, fc.record({ text: fc.string({ maxLength: 80 }) }))
-        .map(([b, r]): AgentEvents.AgentEvent => ({ ...b, type, text: r.text, collapsible: true }));
+        .map(([b, r]): AgentEvents.AgentEvent => ({
+          ...b,
+          type,
+          text: r.text,
+          collapsible: true,
+          truncated: false,
+        }));
+    case "plan":
+      return fc
+        .tuple(
+          baseArb,
+          fc.array(
+            fc.record({
+              id: fc.string({ minLength: 1, maxLength: 16 }),
+              label: fc.string({ minLength: 1, maxLength: 60 }),
+              status: fc.constantFrom<AgentEvents.PlanItemStatus>("pending", "active", "done"),
+            }),
+            { minLength: 1, maxLength: 5 },
+          ),
+        )
+        .map(([b, items]): AgentEvents.AgentEvent => ({ ...b, type, items }));
+    case "plan-update":
+      return fc
+        .tuple(
+          baseArb,
+          fc.record({
+            id: fc.string({ minLength: 1, maxLength: 16 }),
+            status: fc.constantFrom<AgentEvents.PlanItemStatus>("pending", "active", "done"),
+          }),
+        )
+        .map(([b, r]): AgentEvents.AgentEvent => ({ ...b, type, ...r }));
     case "read-files":
       return fc
         .tuple(
@@ -96,7 +129,14 @@ function arbEventOfType(type: AgentEvents.EventType): fc.Arbitrary<AgentEvents.A
           baseArb,
           fc.record({ path: fc.string({ minLength: 1, maxLength: 40 }), diff: fc.string({ maxLength: 120 }) }),
         )
-        .map(([b, r]): AgentEvents.AgentEvent => ({ ...b, type, ...r }));
+        .map(([b, r]): AgentEvents.AgentEvent => ({
+          ...b,
+          type,
+          ...r,
+          adds: 0,
+          dels: 0,
+          status: "done",
+        }));
     case "command":
       return fc
         .tuple(
@@ -108,6 +148,33 @@ function arbEventOfType(type: AgentEvents.EventType): fc.Arbitrary<AgentEvents.A
           }),
         )
         .map(([b, r]): AgentEvents.AgentEvent => ({ ...b, type, ...r }));
+    case "review":
+      return fc
+        .tuple(
+          baseArb,
+          fc.array(
+            fc.record({
+              path: fc.string({ minLength: 1, maxLength: 40 }),
+              diff: fc.string({ maxLength: 120 }),
+              adds: fc.nat({ max: 50 }),
+              dels: fc.nat({ max: 50 }),
+              summary: fc.option(fc.string({ maxLength: 60 }), { nil: undefined }),
+            }),
+            { maxLength: 4 },
+          ),
+        )
+        .map(
+          ([b, files]): AgentEvents.AgentEvent => ({
+            ...b,
+            type,
+            files,
+            validation: {
+              typecheck: { status: "skipped" },
+              build: { status: "skipped" },
+              tests: { status: "skipped" },
+            },
+          }),
+        );
     case "summary":
       return fc
         .tuple(baseArb, fc.record({ text: fc.string({ maxLength: 120 }) }))
@@ -127,17 +194,17 @@ function arbEventOfType(type: AgentEvents.EventType): fc.Arbitrary<AgentEvents.A
 }
 
 describe("Feature: zoc-agent-ecosystem-merge, Property 2: Each event type maps to exactly one row component", () => {
-  it("registry is total over EventType with exactly eight distinct entries", () => {
-    // (b) totality + exactly eight entries: the registry's key set equals the
-    // eight Event_Contract discriminators, no more and no fewer.
+  it("registry is total over EventType with one distinct entry per discriminator", () => {
+    // (b) totality: the registry's key set equals the Event_Contract
+    // discriminators, no more and no fewer.
     const keys = Object.keys(ROW_COMPONENTS).sort();
     expect(keys).toEqual([...EVENT_TYPES].sort());
-    expect(keys).toHaveLength(8);
+    expect(keys).toHaveLength(EVENT_TYPES.length);
 
-    // (a) each type maps to a distinct component: the eight selected components
+    // (a) each type maps to a distinct component: the selected components
     // are pairwise distinct, so no two discriminators share a component.
     const components = EVENT_TYPES.map((t) => ROW_COMPONENTS[t]);
-    expect(new Set(components).size).toBe(8);
+    expect(new Set(components).size).toBe(EVENT_TYPES.length);
   });
 
   it("selects exactly one distinct component per type and renders the discriminator-tagged row", () => {
@@ -149,6 +216,9 @@ describe("Feature: zoc-agent-ecosystem-merge, Property 2: Each event type maps t
         ({ type, event }) => {
           // The dispatched event is recognized by the feed gate (R3.5 boundary).
           expect(isRecognizedEvent(event)).toBe(true);
+          if (!isRecognizedEvent(event)) {
+            throw new Error(`unrecognized generated row: ${event.type}`);
+          }
 
           // (a) ROW_COMPONENTS selects exactly one component for this type, and
           // that component is unique to it across the whole registry.

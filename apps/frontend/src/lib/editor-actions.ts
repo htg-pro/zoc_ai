@@ -10,6 +10,8 @@
 interface ActiveEditor {
   // Loosely typed — we only touch a tiny, stable slice of the Monaco API.
   getAction?: (id: string) => { run: () => void } | null;
+  getModel?: () => { getValueInRange?: (selection: unknown) => string } | null;
+  getSelection?: () => unknown | null;
   revealLineInCenter?: (line: number) => void;
   setPosition?: (pos: { lineNumber: number; column: number }) => void;
   focus?: () => void;
@@ -27,6 +29,15 @@ export function clearActiveEditor(editor: ActiveEditor): void {
 
 export function hasActiveEditor(): boolean {
   return active !== null;
+}
+
+/** Return the focused editor's non-empty selection for Composer commands. */
+export function getActiveSelection(): string | null {
+  const model = active?.getModel?.();
+  const selection = active?.getSelection?.();
+  if (!model?.getValueInRange || !selection) return null;
+  const text = model.getValueInRange(selection);
+  return text.trim() ? text : null;
 }
 
 /** Run a built-in Monaco editor action by id. Returns false when no editor is

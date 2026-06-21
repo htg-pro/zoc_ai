@@ -1,8 +1,14 @@
 uploads = []
-outputs = []
+generated = []
 
-[[generated]]
-id = "xa484RySAKwqtaY_4OR_P"
-uri = "file://attached_assets/generated_images/zoc_studio_icon_source.png"
-type = "image"
-title = "generated_image"
+[[outputs]]
+id = "dkxhkqaMkPiy4R_jw2aZ9"
+uri = "file://PROMPT.md"
+type = "text"
+title = "Zoc Studio — Full A-to-Z Development Prompt Guide"
+
+[[outputs]]
+id = "Ss8blukd_a_muxKqFb_3p"
+uri = "file://new_prompts.md"
+type = "text"
+title = "Zoc Studio — Advanced Development Prompt Bible (100% Real-World)"

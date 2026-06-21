@@ -83,9 +83,53 @@ def test_agent_run_agent_mode_returns_run_id(client: TestClient) -> None:
     assert body["runId"]
 
 
+def test_agent_run_uses_client_supplied_run_id(client: TestClient) -> None:
+    resp = client.post(
+        "/v1/agent/run",
+        json={"prompt": "build it", "mode": "agent", "runId": "run-client-1"},
+    )
+    assert resp.status_code == 200
+    assert resp.json()["runId"] == "run-client-1"
+
+
+def test_agent_run_rejects_duplicate_client_run_id(client: TestClient) -> None:
+    body = {"prompt": "build it", "mode": "agent", "runId": "run-client-dup"}
+    assert client.post("/v1/agent/run", json=body).status_code == 200
+    resp = client.post("/v1/agent/run", json=body)
+    assert resp.status_code == 409
+
+
 def test_agent_run_rejects_invalid_mode(client: TestClient) -> None:
     resp = client.post("/v1/agent/run", json={"prompt": "x", "mode": "bogus"})
     assert resp.status_code == 422
+
+
+def test_context_search_returns_workspace_files(tmp_path) -> None:
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "composer.tsx").write_text("export {}\n", encoding="utf-8")
+    (tmp_path / "node_modules").mkdir()
+    (tmp_path / "node_modules" / "composer.tsx").write_text("skip\n", encoding="utf-8")
+    client = TestClient(create_app(workspace_root=tmp_path))
+    session = client.post(
+        "/v1/sessions",
+        json={"title": "workspace", "workspace_root": str(tmp_path)},
+    ).json()
+
+    resp = client.get(
+        f"/v1/sessions/{session['id']}/context/search",
+        params={"q": "composer", "limit": 10},
+    )
+
+    assert resp.status_code == 200
+    assert resp.json() == [
+        {
+            "kind": "file",
+            "label": "composer.tsx",
+            "path": "src/composer.tsx",
+            "detail": "src/composer.tsx",
+            "line": None,
+        }
+    ]
 
 
 def test_decision_acknowledged_for_known_run(client: TestClient) -> None:

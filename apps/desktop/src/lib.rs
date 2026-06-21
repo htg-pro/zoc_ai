@@ -110,6 +110,7 @@ pub fn run() {
             git::git_unstage,
             git::git_discard,
             git::git_commit,
+            git::git_checkpoint_commit,
             git::git_branches,
             git::git_checkout,
             git::git_create_branch,

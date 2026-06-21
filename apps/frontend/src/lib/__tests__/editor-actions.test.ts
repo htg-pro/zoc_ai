@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   clearActiveEditor,
   formatDocument,
+  getActiveSelection,
   goToLine,
   goToSymbolInFile,
   hasActiveEditor,
@@ -12,8 +13,11 @@ import {
 
 function makeEditor() {
   const run = vi.fn();
+  const selection = { startLineNumber: 1, endLineNumber: 1 };
   return {
     getAction: vi.fn((id: string) => (id === "missing" ? null : { run })),
+    getModel: vi.fn(() => ({ getValueInRange: vi.fn(() => "selected code") })),
+    getSelection: vi.fn(() => selection),
     revealLineInCenter: vi.fn(),
     setPosition: vi.fn(),
     focus: vi.fn(),
@@ -38,6 +42,12 @@ describe("editor-actions", () => {
 
   it("runEditorAction returns false with no active editor", () => {
     expect(runEditorAction("editor.action.formatDocument")).toBe(false);
+  });
+
+  it("reads the focused editor selection", () => {
+    expect(getActiveSelection()).toBeNull();
+    setActiveEditor(makeEditor());
+    expect(getActiveSelection()).toBe("selected code");
   });
 
   it("runEditorAction runs the named action and returns true", () => {

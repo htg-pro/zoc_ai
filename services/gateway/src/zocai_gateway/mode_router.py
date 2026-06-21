@@ -46,6 +46,7 @@ from zocai_gateway.toolsets import (
 
 __all__ = [
     "Mode",
+    "ContextFileReference",
     "AgentRunRequest",
     "ExecutionPath",
     "AskPath",
@@ -70,6 +71,15 @@ class Mode(str, Enum):
     AGENT = "agent"
 
 
+class ContextFileReference(BaseModel):
+    """Exact file selected by the frontend for a visible `@filename` token."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    token: str
+    path: str
+
+
 class AgentRunRequest(BaseModel):
     """An incoming agent run request.
 
@@ -83,11 +93,23 @@ class AgentRunRequest(BaseModel):
 
     prompt: str
     mode: Mode
+    run_id: str | None = Field(
+        default=None,
+        alias="runId",
+        min_length=1,
+        max_length=80,
+        pattern=r"^[A-Za-z0-9_.:-]+$",
+    )
+    context_files: list[ContextFileReference] = Field(
+        default_factory=list,
+        alias="contextFiles",
+    )
     model: str | None = None
     provider: str | None = None
     api_key: str | None = Field(default=None, alias="apiKey")
     base_url: str | None = Field(default=None, alias="baseUrl")
     workspace_root: str | None = Field(default=None, alias="workspaceRoot")
+    review_changes: bool = Field(default=False, alias="reviewChanges")
     temperature: float | None = None
     top_p: float | None = Field(default=None, alias="topP")
     top_k: int | None = Field(default=None, alias="topK")

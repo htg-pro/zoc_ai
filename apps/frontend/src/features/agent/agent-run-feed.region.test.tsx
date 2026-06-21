@@ -51,6 +51,7 @@ const events: AgentEvents.AgentEvent[] = [
     ts: new Date(0).toISOString(),
     text: "considering the approach",
     collapsible: true,
+    truncated: false,
   },
   {
     type: "read-files",
@@ -66,6 +67,9 @@ const events: AgentEvents.AgentEvent[] = [
     ts: new Date(0).toISOString(),
     path: "src/app.ts",
     diff: "@@ -1 +1 @@\n-old\n+new",
+    adds: 1,
+    dels: 1,
+    status: "done",
   },
   {
     type: "command",

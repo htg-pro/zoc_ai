@@ -39,13 +39,27 @@ function arbEvent(seq: number, nonce: number): fc.Arbitrary<AgentEvent> {
       }),
     ),
     fc.record({ text: fc.string() }).map(
-      (r): AgentEvent => ({ ...base, type: "thinking", text: `${r.text}#${nonce}`, collapsible: true }),
+      (r): AgentEvent => ({
+        ...base,
+        type: "thinking",
+        text: `${r.text}#${nonce}`,
+        collapsible: true,
+        truncated: false,
+      }),
     ),
     fc.record({ path: fc.string() }).map(
       (r): AgentEvent => ({ ...base, type: "read-files", files: [{ path: `${r.path}#${nonce}` }] }),
     ),
     fc.record({ path: fc.string(), diff: fc.string() }).map(
-      (r): AgentEvent => ({ ...base, type: "edit-file", path: `${r.path}#${nonce}`, diff: r.diff }),
+      (r): AgentEvent => ({
+        ...base,
+        type: "edit-file",
+        path: `${r.path}#${nonce}`,
+        diff: r.diff,
+        adds: 0,
+        dels: 0,
+        status: "done",
+      }),
     ),
     fc.record({ command: fc.string() }).map(
       (r): AgentEvent => ({ ...base, type: "command", command: `${r.command}#${nonce}` }),

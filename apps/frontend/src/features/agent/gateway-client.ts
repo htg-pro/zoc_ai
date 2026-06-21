@@ -2,7 +2,8 @@
  * gateway-client.ts — the single agent transport for the preserved frontend.
  *
  * This module is the ONLY control-channel client the Agent_Panel uses to talk
- * to the ecosystem Gateway sidecar. It exposes exactly two control operations:
+ * to the ecosystem Gateway sidecar. It owns run decisions and model benchmark
+ * requests; telemetry remains on the single SSE transport.
  *
  *   - `postAgentRun({ input, mode })`  → `POST /v1/agent/run`  → `{ runId }`
  *   - `postAgentDecision({ runId, decision })` → `POST /v1/agent/decision`
@@ -22,6 +23,11 @@
  */
 
 import { resolveAgentPort } from "@/lib/agent-port";
+import type {
+  ModelBenchmarkHistory,
+  ModelBenchmarkRun,
+  RunModelBenchmarkRequest,
+} from "@zoc-studio/shared-types";
 
 /** The two execution modes the Composer's Ask/Agent toggle selects. */
 export type AgentMode = "ask" | "agent";
@@ -33,11 +39,14 @@ export type AgentMode = "ask" | "agent";
 export interface AgentRunRequest {
   input: string;
   mode: AgentMode;
+  runId?: string | null;
+  contextFiles?: ContextFileRef[];
   model?: string | null;
   provider?: string | null;
   apiKey?: string | null;
   baseUrl?: string | null;
   workspaceRoot?: string | null;
+  reviewChanges?: boolean;
   temperature?: number | null;
   topP?: number | null;
   topK?: number | null;
@@ -45,8 +54,13 @@ export interface AgentRunRequest {
   maxTokens?: number | null;
 }
 
-/** Verdicts the ApprovalRow can post for a pending decision. */
-export type AgentDecision = "approve" | "reject" | "continue" | "stop";
+export interface ContextFileRef {
+  token: string;
+  path: string;
+}
+
+/** Verdicts the panel can post for a pending decision. */
+export type AgentDecision = "approve" | "reject" | "continue" | "stop" | "apply" | "discard";
 
 /**
  * A decision for an in-flight run: approve/reject for approval gates,
@@ -55,6 +69,7 @@ export type AgentDecision = "approve" | "reject" | "continue" | "stop";
 export interface AgentDecisionRequest {
   runId: string;
   decision: AgentDecision;
+  acceptedPaths?: string[];
 }
 
 /** The accepted-run handle returned by `POST /v1/agent/run`. */
@@ -95,13 +110,31 @@ async function postJson<T>(path: string, body: unknown): Promise<T> {
   return (await res.json()) as T;
 }
 
+async function getJson<T>(path: string): Promise<T> {
+  const baseUrl = await resolveBaseUrl();
+  const res = await fetch(`${baseUrl}${path}`);
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
+    let detail = text;
+    try {
+      const parsed = JSON.parse(text) as { detail?: unknown };
+      if (typeof parsed.detail === "string") detail = parsed.detail;
+    } catch {
+      /* keep raw text */
+    }
+    throw new Error(detail || `GET ${path} -> http ${res.status}`);
+  }
+  return (await res.json()) as T;
+}
+
 /**
  * Derive the Gateway decision `kind` from the verdict: approval gates use
  * approve/reject, budget-continuation prompts use continue/stop. The same
  * ApprovalRow/`/decision` path carries both (R5.4), so the kind is inferred
  * from the chosen verdict rather than tracked separately.
  */
-function decisionKind(decision: AgentDecision): "approval" | "budget-continuation" {
+function decisionKind(decision: AgentDecision): "approval" | "budget-continuation" | "review" {
+  if (decision === "apply" || decision === "discard") return "review";
   return decision === "continue" || decision === "stop" ? "budget-continuation" : "approval";
 }
 
@@ -119,11 +152,14 @@ export async function postAgentRun(req: AgentRunRequest): Promise<AgentRunHandle
   const accepted = await postJson<{ runId?: string; run_id?: string }>("/v1/agent/run", {
     prompt: req.input,
     mode: req.mode,
+    runId: req.runId ?? null,
+    context_files: req.contextFiles ?? [],
     model: req.model ?? null,
     provider: req.provider ?? null,
     api_key: req.apiKey ?? null,
     base_url: req.baseUrl ?? null,
     workspace_root: req.workspaceRoot ?? null,
+    review_changes: req.reviewChanges ?? false,
     temperature: req.temperature ?? null,
     top_p: req.topP ?? null,
     top_k: req.topK ?? null,
@@ -147,5 +183,21 @@ export async function postAgentDecision(req: AgentDecisionRequest): Promise<void
     runId: req.runId,
     kind: decisionKind(req.decision),
     decision: req.decision,
+    acceptedPaths: req.acceptedPaths ?? [],
   });
+}
+
+/** Run the gateway-owned fixed suite against the active local model. */
+export async function postModelBenchmark(
+  req: RunModelBenchmarkRequest,
+): Promise<ModelBenchmarkRun> {
+  return postJson<ModelBenchmarkRun>("/v1/model-benchmarks", req);
+}
+
+/** Read newest-first history for one local model. */
+export async function getModelBenchmarkHistory(
+  modelId: string,
+): Promise<ModelBenchmarkHistory> {
+  const query = new URLSearchParams({ modelId });
+  return getJson<ModelBenchmarkHistory>(`/v1/model-benchmarks?${query.toString()}`);
 }

@@ -148,6 +148,43 @@ describe("app store", () => {
     expect(await useApp.getState().saveActiveFile()).toBe(false);
   });
 
+  it("searches the workspace file tree for @ mention candidates", async () => {
+    vi.spyOn(bridge, "isTauri").mockReturnValue(true);
+    vi.spyOn(bridge, "fsListDir").mockResolvedValue([
+      {
+        name: "src",
+        path: "/ws/src",
+        kind: "dir",
+        children: [
+          { name: "Composer.tsx", path: "/ws/src/Composer.tsx", kind: "file", children: null },
+        ],
+      },
+      {
+        name: "node_modules",
+        path: "/ws/node_modules",
+        kind: "dir",
+        children: [
+          { name: "Composer.tsx", path: "/ws/node_modules/Composer.tsx", kind: "file", children: null },
+        ],
+      },
+    ]);
+    useApp.setState({ workspaceRoot: "/ws", activeSessionId: "", liveMode: false, openFiles: [] });
+
+    const out = await useApp.getState().searchContextCandidates("composer");
+
+    expect(bridge.fsListDir).toHaveBeenCalledWith("/ws", 8);
+    expect(out).toEqual([
+      {
+        kind: "file",
+        label: "Composer.tsx",
+        path: "/ws/src/Composer.tsx",
+        detail: "src/Composer.tsx",
+        line: null,
+      },
+    ]);
+    vi.restoreAllMocks();
+  });
+
   it("accepts and rejects a diff", async () => {
     useApp.setState({
       pendingPatches: [
@@ -620,6 +657,20 @@ describe("app store", () => {
     vi.restoreAllMocks();
   });
 
+  it("restoreAgentRunCheckpoint confirms and checks out the checkpoint commit", async () => {
+    vi.spyOn(bridge, "isTauri").mockReturnValue(true);
+    const checkout = vi.spyOn(bridge, "gitCheckout").mockResolvedValue(undefined);
+    vi.spyOn(bridge, "gitStatus").mockResolvedValue(sampleGitStatus());
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+    useApp.setState({ agentRunCheckpoints: { "run-1": "abcdef1234567890" } });
+
+    await expect(useApp.getState().restoreAgentRunCheckpoint("run-1")).resolves.toBe(true);
+
+    expect(window.confirm).toHaveBeenCalled();
+    expect(checkout).toHaveBeenCalledWith("abcdef1234567890");
+    vi.restoreAllMocks();
+  });
+
   it("git actions are a no-op outside the desktop runtime", async () => {
     vi.spyOn(bridge, "isTauri").mockReturnValue(false);
     await useApp.getState().refreshGit();
@@ -929,4 +980,3 @@ describe("app store", () => {
     }
   });
 });
-

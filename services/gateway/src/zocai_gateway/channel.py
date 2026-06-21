@@ -53,15 +53,17 @@ __all__ = [
 ]
 
 #: Structured planning rows — the "what I intend to do / am reasoning about"
-#: kinds named by R2.7. Mapped onto the eight contract row kinds (R6.3).
-PLANNING_ROW_TYPES: frozenset[str] = frozenset({"intent", "thinking"})
+#: kinds named by R2.7.
+PLANNING_ROW_TYPES: frozenset[str] = frozenset(
+    {"intent", "thinking", "plan", "plan-update"}
+)
 
 #: To-do / progress-checklist rows named by R2.7.
-TODO_ROW_TYPES: frozenset[str] = frozenset({"summary"})
+TODO_ROW_TYPES: frozenset[str] = frozenset({"plan", "plan-update", "summary"})
 
 #: Tool-activity rows — file reads, file edits, and shell commands (R2.7).
 TOOL_ACTIVITY_ROW_TYPES: frozenset[str] = frozenset(
-    {"read-files", "edit-file", "command"}
+    {"read-files", "edit-file", "command", "review"}
 )
 
 #: The union of the three R2.7 categories suppressed while Ask Mode is active.

@@ -378,6 +378,10 @@ export async function gitCommit(message: string): Promise<string> {
   return callOrThrow<string>("git_commit", { message });
 }
 
+export async function gitCheckpointCommit(message: string): Promise<string> {
+  return callOrThrow<string>("git_checkpoint_commit", { message });
+}
+
 export async function gitBranches(): Promise<GitBranchInfo[]> {
   return (await callOrNull<GitBranchInfo[]>("git_branches", {})) ?? [];
 }

@@ -280,6 +280,19 @@ pub fn git_commit(
 }
 
 #[tauri::command]
+pub fn git_checkpoint_commit(
+    workspace: tauri::State<'_, Arc<WorkspaceState>>,
+    message: String,
+) -> Result<String, String> {
+    if message.trim().is_empty() {
+        return Err("commit message is required".into());
+    }
+    git(&workspace, &["add", "-A"])?;
+    git(&workspace, &["commit", "--allow-empty", "-m", &message])?;
+    Ok(git(&workspace, &["rev-parse", "HEAD"])?.trim().to_string())
+}
+
+#[tauri::command]
 pub fn git_branches(
     workspace: tauri::State<'_, Arc<WorkspaceState>>,
 ) -> Result<Vec<GitBranch>, String> {

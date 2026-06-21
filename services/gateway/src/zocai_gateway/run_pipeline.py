@@ -36,12 +36,28 @@ from __future__ import annotations
 import json
 import itertools
 import logging
+import os
+import shutil
+import tempfile
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Protocol
 
-from shared_schema.agent_events import AgentEvent
+from shared_schema.agent_events import (
+    AgentEvent,
+    BudgetEvent,
+    CommandEvent,
+    PlanEvent,
+    PlanUpdateEvent,
+    ReviewCheck,
+    ReviewEvent,
+    ReviewFile,
+    ReviewValidation,
+    SummaryEvent,
+    TestResultsEvent,
+)
 
 from zocai_evolution import (
     CheckOutcome as EvoCheckOutcome,
@@ -58,6 +74,7 @@ from zocai_evolution import (
 )
 
 from zocai_gateway.channel import ModeChannel, TextSink, channel_for
+from zocai_gateway.context_mentions import expand_prompt_file_mentions
 from zocai_gateway.context.mcp_gateway import MCPGateway
 from zocai_gateway.context.rag_matcher import (
     NullRagMatcher,
@@ -71,7 +88,7 @@ from zocai_gateway.context.steering_compiler import (
     SteeringPayload,
     compile_steering,
 )
-from zocai_gateway.context.token_gate import TokenGateResult, fit_fragments
+from zocai_gateway.context.token_gate import TokenGateResult, estimate_tokens, fit_fragments
 from zocai_gateway.edits import EditCoordinator, EditPlan, PlannedChange
 from zocai_gateway.emit_gate import EmitGate
 from zocai_gateway.fsm import FSM
@@ -82,7 +99,12 @@ from zocai_gateway.intent_event import (
     allocation_stage_event_factory,
 )
 from zocai_gateway.memory.matrix import MemoryMatrix
-from zocai_gateway.memory.state_wrapper import Diff, StateWrapper, StateWrapperStore
+from zocai_gateway.memory.state_wrapper import (
+    Diff,
+    FailureRecord,
+    StateWrapper,
+    StateWrapperStore,
+)
 from zocai_gateway.mode_router import (
     AgentRunRequest,
     AskContext,
@@ -101,6 +123,12 @@ from zocai_gateway.model_runtime import (
     generate_text_stream,
 )
 from zocai_gateway.orchestrator import Orchestrator
+from zocai_gateway.project_tests import (
+    ProjectTestCommand,
+    ProjectTestResult,
+    detect_project_test_command,
+    run_project_tests,
+)
 from zocai_gateway.remediation import RemediationLoop
 from zocai_gateway.stages import Stage
 from zocai_gateway.toolsets import FullToolset
@@ -129,6 +157,30 @@ logger = logging.getLogger(__name__)
 #: A Session_Diary append sink (R5.4). Matches ``DiaryWorker.append`` so the
 #: remediation loop can persist captured failures; ``None`` disables it.
 DiarySink = Callable[[Mapping[str, object]], object]
+
+# A review decision waiter supplied by the FastAPI run registry. It returns the
+# pydantic decision object without importing app.py into this composition root.
+ReviewDecisionWaiter = Callable[[float | None], object | None]
+ProjectTestRunner = Callable[[Path, ProjectTestCommand], ProjectTestResult]
+
+_ISOLATED_IGNORE_NAMES = frozenset(
+    {
+        ".git",
+        ".hg",
+        ".svn",
+        "node_modules",
+        "target",
+        "dist",
+        "build",
+        ".next",
+        ".turbo",
+        ".cache",
+        "__pycache__",
+        ".pytest_cache",
+        ".venv",
+        "venv",
+    }
+)
 
 # Concrete tier stubs, one per Model_Tier, used by the default model loader so
 # the hot-swap can load a replacement tier without a real runtime.
@@ -249,7 +301,13 @@ class RuntimeAgentBrain(DefaultAgentBrain):
     PLAN_EDITS reasoning event so the run completes visibly.
     """
 
+    def __init__(self) -> None:
+        self._request: AgentRunRequest | None = None
+        self._context: RunContext | None = None
+
     def edit_plan(self, request: AgentRunRequest, context: RunContext) -> EditPlan:
+        self._request = request
+        self._context = context
         try:
             text = generate_text(
                 request,
@@ -261,6 +319,39 @@ class RuntimeAgentBrain(DefaultAgentBrain):
         if not text:
             return super().edit_plan(request, context)
         return _edit_plan_from_model_text(text)
+
+    def remediation_plan(
+        self, prior: EditPlan, failure: object
+    ) -> EditPlan | None:
+        """Feed failed test output into the next planner call."""
+        request = self._request
+        context = self._context
+        if request is None or context is None or not isinstance(failure, FailureRecord):
+            return None
+        output = failure.log[-16_000:]
+        retry_prompt = (
+            f"{request.prompt}\n\n"
+            "The previous code changes failed the project test command. "
+            "Return a corrected edit plan that addresses this failure.\n"
+            f"Command: {failure.command}\n"
+            f"Exit code: {failure.exit_code}\n"
+            f"Test output:\n{output}"
+        )
+        try:
+            text = generate_text(
+                request.model_copy(update={"prompt": retry_prompt}),
+                system_prompt=_agent_system_prompt(context),
+                timeout=120.0,
+            )
+        except ModelRuntimeError as exc:
+            raise RuntimeError(f"model remediation failed: {exc}") from exc
+        if not text:
+            return None
+        plan = _edit_plan_from_model_text(text)
+        return EditPlan(
+            reasoning=f"{plan.reasoning}\nFailed command: {failure.command}",
+            changes=plan.changes,
+        )
 
 
 def _ask_system_prompt(context: AskContext) -> str:
@@ -338,6 +429,14 @@ def _edit_plan_from_model_text(text: str) -> EditPlan:
     return EditPlan(reasoning=reasoning.strip(), changes=tuple(changes))
 
 
+def _estimate_edit_plan_tokens(plan: EditPlan) -> int:
+    """Estimate model-output tokens represented by a normalized edit plan."""
+    parts = [plan.reasoning]
+    for change in plan.changes:
+        parts.extend((change.path, change.content, change.diff))
+    return sum(estimate_tokens(part) for part in parts)
+
+
 @dataclass(frozen=True, slots=True)
 class RunResult:
     """The terminal outcome of driving a run through the pipeline.
@@ -363,6 +462,61 @@ class RunResult:
 # Maps each gateway FSM stage onto the evolution engine's mirror enum by value.
 def _to_evo_stage(stage: Stage) -> EvoStage:
     return EvoStage(stage.value)
+
+
+def _now() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+def _diff_stats(diff: str) -> tuple[int, int]:
+    adds = 0
+    dels = 0
+    for line in diff.splitlines():
+        if line.startswith("+++") or line.startswith("---"):
+            continue
+        if line.startswith("+"):
+            adds += 1
+        elif line.startswith("-"):
+            dels += 1
+    return adds, dels
+
+
+def _diff_summary(diff: str) -> str | None:
+    for line in diff.splitlines():
+        stripped = line.strip()
+        if stripped and not stripped.startswith(("+++", "---", "@@")):
+            return stripped[:160]
+    return None
+
+
+def _tail(text: str, limit: int = 8000) -> str:
+    if not text:
+        return ""
+    return text[-limit:]
+
+
+def _is_noop_check(command: str) -> bool:
+    return not command.strip() or command.strip() == "noop-check"
+
+
+def _validation_from_checks(checks: list[tuple[str, int]]) -> ReviewValidation:
+    if not checks:
+        return ReviewValidation()
+    command, exit_code = checks[-1]
+    if _is_noop_check(command):
+        return ReviewValidation()
+    return ReviewValidation(
+        typecheck=ReviewCheck(status="skipped"),
+        build=ReviewCheck(status="skipped"),
+        tests=ReviewCheck(status="pass" if exit_code == 0 else "fail"),
+    )
+
+
+def _safe_relative_path(raw_path: str) -> Path:
+    rel = Path(raw_path)
+    if rel.is_absolute() or ".." in rel.parts:
+        raise ValueError(f"unsafe review path: {raw_path!r}")
+    return rel
 
 
 class RunPipeline:
@@ -392,13 +546,26 @@ class RunPipeline:
         rag_matcher: RagMatcher | None = None,
         mcp_gateway: MCPGateway | None = None,
         model_loader: ModelLoader = default_model_loader,
+        wait_for_review_decision: ReviewDecisionWaiter | None = None,
+        project_test_runner: ProjectTestRunner = run_project_tests,
     ) -> None:
-        self.request = request
         self.run_id = run_id
-        self.workspace_root = Path(workspace_root)
+        self.source_workspace_root = Path(workspace_root).resolve()
+        self.original_request = request
+        self.request = request.model_copy(
+            update={
+                "prompt": expand_prompt_file_mentions(
+                    request.prompt,
+                    self.source_workspace_root,
+                    request.context_files,
+                )
+            }
+        )
         self._close = close
         self._text_sink = text_sink
         self._ask_streamed = False
+        self._wait_for_review_decision = wait_for_review_decision
+        self._project_test_runner = project_test_runner
 
         self.brain: AgentBrain = brain if brain is not None else RuntimeAgentBrain()
         self.allocator = allocator if allocator is not None else ModelAllocator()
@@ -410,17 +577,28 @@ class RunPipeline:
         self.evolution = evolution
         self._diary_sink = diary_sink
 
-        matrix = MemoryMatrix(self.workspace_root)
+        # Mode routing (R2.1/R3.1) selects the path; the channel enforces the
+        # mode-scoped discipline: Agent = structured-only through the gate,
+        # Ask = text-only (R6.6/R6.7).
+        self.path = ModeRouter().route(self.request)
+        self._isolated_workspace_root: Path | None = None
+        self._checkpoint_id: str | None = None
+        if self.path.mode is Mode.AGENT and self.request.review_changes:
+            self._isolated_workspace_root = self._create_isolated_workspace(
+                self.source_workspace_root
+            )
+            self.workspace_root = self._isolated_workspace_root
+            self._checkpoint_id = f"isolated-{run_id}"
+        else:
+            self.workspace_root = self.source_workspace_root
+
+        matrix = MemoryMatrix(self.source_workspace_root)
         self.state_store = (
             state_store
             if state_store is not None
             else StateWrapperStore(matrix.state_wrapper_path)
         )
 
-        # Mode routing (R2.1/R3.1) selects the path; the channel enforces the
-        # mode-scoped discipline: Agent = structured-only through the gate,
-        # Ask = text-only (R6.6/R6.7).
-        self.path = ModeRouter().route(request)
         self.toolset = FullToolset(self.workspace_root)
         self.fs_read = FSReadAdapter(self.workspace_root)
         self.shell_spawner = ShellSpawner(self.path.mode, self.workspace_root)
@@ -428,6 +606,55 @@ class RunPipeline:
             self.path, gate=gate, text_sink=text_sink
         )
         self._next_seq: Callable[[], int] = itertools.count().__next__
+
+    @staticmethod
+    def _create_isolated_workspace(source: Path) -> Path:
+        """Copy the workspace to a temp directory for review-before-apply runs."""
+        target = Path(tempfile.mkdtemp(prefix="zoc-agent-review-"))
+        if not source.exists():
+            target.mkdir(parents=True, exist_ok=True)
+            return target
+        shutil.copytree(
+            source,
+            target,
+            dirs_exist_ok=True,
+            ignore=lambda _dir, names: [
+                name for name in names if name in _ISOLATED_IGNORE_NAMES
+            ],
+        )
+        RunPipeline._link_isolated_dependencies(source, target)
+        return target
+
+    @staticmethod
+    def _link_isolated_dependencies(source: Path, target: Path) -> None:
+        """Expose installed dependencies without copying them into review workspaces."""
+        dependency_names = {"node_modules", ".venv", "venv"}
+        prune_names = {".git", ".hg", ".svn", "target", "dist", "build", ".cache"}
+        for current, dirnames, _files in os.walk(source, followlinks=False):
+            current_path = Path(current)
+            for name in list(dirnames):
+                if name in dependency_names:
+                    source_dir = current_path / name
+                    relative = source_dir.relative_to(source)
+                    link = target / relative
+                    link.parent.mkdir(parents=True, exist_ok=True)
+                    try:
+                        link.symlink_to(source_dir, target_is_directory=True)
+                    except OSError:
+                        pass
+                    dirnames.remove(name)
+                elif name in prune_names:
+                    dirnames.remove(name)
+
+    def cleanup(self) -> None:
+        """Remove the isolated workspace after the run has reached a terminal state."""
+        root = self._isolated_workspace_root
+        if root is None:
+            return
+        try:
+            shutil.rmtree(root, ignore_errors=True)
+        finally:
+            self._isolated_workspace_root = None
 
     # -- single ordered emit boundary (R6.5) --------------------------------
 
@@ -449,6 +676,175 @@ class RunPipeline:
                 payload.get("seq"),
             )
 
+    def _emit_plan(self, plan: EditPlan) -> None:
+        has_changes = plan.has_changes
+        items = [
+            {"id": "analyze", "label": "Analyze request", "status": "done"},
+            {"id": "plan", "label": "Create edit plan", "status": "done"},
+            {
+                "id": "apply",
+                "label": "Apply changes in isolated workspace",
+                "status": "active" if has_changes else "done",
+            },
+            {
+                "id": "validate",
+                "label": "Run validation",
+                "status": "pending" if has_changes else "active",
+            },
+            {
+                "id": "review",
+                "label": "Review changes before applying",
+                "status": "pending" if has_changes else "done",
+            },
+            {"id": "summary", "label": "Summarize result", "status": "pending"},
+        ]
+        self._emit(
+            PlanEvent(
+                seq=0,
+                run_id=self.run_id,
+                ts=_now(),
+                items=items,
+                checkpoint_id=self._checkpoint_id,
+            )
+        )
+
+    def _emit_plan_update(self, item_id: str, status: str) -> None:
+        self._emit(
+            PlanUpdateEvent(
+                seq=0,
+                run_id=self.run_id,
+                ts=_now(),
+                id=item_id,
+                status=status,  # type: ignore[arg-type]
+            )
+        )
+
+    def _emit_check_command(self, command: str, exit_code: int, log: str) -> None:
+        status = "skipped" if _is_noop_check(command) else ("pass" if exit_code == 0 else "fail")
+        self._emit(
+            CommandEvent(
+                seq=0,
+                run_id=self.run_id,
+                ts=_now(),
+                command=command or "validation",
+                command_id="validation",
+                status=status,  # type: ignore[arg-type]
+                exit_code=exit_code,
+                output_tail=_tail(log),
+            )
+        )
+
+    def _emit_review(self, applied: list[Diff], checks: list[tuple[str, int]]) -> None:
+        self._emit(
+            ReviewEvent(
+                seq=0,
+                run_id=self.run_id,
+                ts=_now(),
+                files=[
+                    ReviewFile(
+                        path=diff.path,
+                        diff=diff.diff,
+                        adds=_diff_stats(diff.diff)[0],
+                        dels=_diff_stats(diff.diff)[1],
+                        summary=_diff_summary(diff.diff),
+                    )
+                    for diff in applied
+                ],
+                validation=_validation_from_checks(checks),
+                checkpoint_id=self._checkpoint_id,
+            )
+        )
+
+    def _emit_human_summary(self, text: str) -> None:
+        self._emit(
+            SummaryEvent(seq=0, run_id=self.run_id, ts=_now(), text=text)
+        )
+
+    def _emit_test_results(self, result: ProjectTestResult) -> None:
+        self._emit(
+            TestResultsEvent(
+                seq=0,
+                run_id=self.run_id,
+                ts=_now(),
+                status="pass" if result.exit_code == 0 else "fail",
+                command=result.command,
+                source=result.source,
+                passed=result.passed,
+                failed=result.failed,
+                exit_code=result.exit_code,
+                output_tail=_tail(result.output),
+                duration_ms=result.duration_ms,
+                timed_out=result.timed_out,
+            )
+        )
+
+    def _run_post_write_tests(self) -> ProjectTestResult | None:
+        detected = detect_project_test_command(self.workspace_root)
+        if detected is None:
+            return None
+        return self._project_test_runner(self.workspace_root, detected)
+
+    def _emit_budget(
+        self,
+        context: RunContext,
+        orchestrator: Orchestrator,
+        tokens_used: int,
+    ) -> None:
+        """Publish the latest run budget without adding a visible trace row."""
+        self._emit(
+            BudgetEvent(
+                seq=0,
+                run_id=self.run_id,
+                ts=_now(),
+                tokens_used=max(tokens_used, 0),
+                token_limit=context.allocation.context_window,
+                iterations=orchestrator.budget.file_iterations,
+                recoveries=orchestrator.budget.error_recoveries,
+            )
+        )
+
+    def _copy_review_paths(self, paths: list[str]) -> None:
+        isolated = self._isolated_workspace_root
+        if isolated is None:
+            return
+        for raw_path in paths:
+            rel = _safe_relative_path(raw_path)
+            source = isolated / rel
+            target = self.source_workspace_root / rel
+            if not source.exists():
+                raise FileNotFoundError(f"review file disappeared: {raw_path}")
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(source, target)
+
+    def _review_and_maybe_apply(self, applied: list[Diff]) -> str:
+        if not applied:
+            self._emit_plan_update("review", "done")
+            self._emit_plan_update("summary", "active")
+            return "No file changes were needed."
+        self._emit_plan_update("review", "active")
+        waiter = self._wait_for_review_decision
+        if waiter is None:
+            self._emit_plan_update("review", "done")
+            self._emit_plan_update("summary", "active")
+            return "Review is unavailable, so no isolated changes were applied."
+        decision = waiter(None)
+        if decision is None:
+            self._emit_plan_update("review", "done")
+            self._emit_plan_update("summary", "active")
+            return "Review was closed before a decision, so no changes were applied."
+        verdict = getattr(decision, "decision", None)
+        if verdict == "discard":
+            self._emit_plan_update("review", "done")
+            self._emit_plan_update("summary", "active")
+            return "Discarded the isolated changes. Your workspace was left unchanged."
+        accepted_paths = list(getattr(decision, "accepted_paths", []) or [])
+        self._copy_review_paths(accepted_paths)
+        self._emit_plan_update("review", "done")
+        self._emit_plan_update("summary", "active")
+        count = len(accepted_paths)
+        noun = "file" if count == 1 else "files"
+        return f"Applied {count} reviewed {noun} to your workspace."
+
     # -- entrypoint ---------------------------------------------------------
 
     def run(self) -> RunResult:
@@ -468,8 +864,10 @@ class RunPipeline:
         stream is closed.
         """
         result = path.execute(
-            self.request,
-            generate=self._ask_response,
+            self.original_request,
+            generate=lambda _prompt, context: self._ask_response(
+                self.request.prompt, context
+            ),
             workspace_root=self.workspace_root,
             rag_matcher=self.rag_matcher,
         )
@@ -600,13 +998,24 @@ class RunPipeline:
             run_id=self.run_id,
             emit=self._emit,
         )
+        tokens_used = estimate_tokens(self.request.prompt) + estimate_tokens(
+            _agent_system_prompt(context)
+        )
+        self._emit_budget(context, orchestrator, tokens_used)
 
         # INTAKE → ANALYZE → MAP_FILES → READ_FILES → PLAN_EDITS (R3.2).
         for _ in range(4):
             stages.append(fsm.advance())
 
         return self._plan_check_loop(
-            fsm, edits, orchestrator, remediation, context, allocation, stages
+            fsm,
+            edits,
+            orchestrator,
+            remediation,
+            context,
+            allocation,
+            stages,
+            tokens_used,
         )
 
     def _plan_check_loop(
@@ -618,6 +1027,7 @@ class RunPipeline:
         context: RunContext,
         allocation: Allocation,
         stages: list[Stage],
+        tokens_used: int,
     ) -> RunResult:
         """Run PLAN_EDITS→APPLY_EDITS→RUN_CHECKS with the remediation loop (R3/R5).
 
@@ -640,12 +1050,16 @@ class RunPipeline:
                 stages=tuple(stages),
                 allocation=allocation,
             )
+        tokens_used += _estimate_edit_plan_tokens(plan)
+        self._emit_budget(context, orchestrator, tokens_used)
         applied: list[Diff] = []
         checks: list[tuple[str, int]] = []
 
         # The loop can only re-enter PLAN_EDITS as many times as the recovery
         # budget allows; the guard is a hard backstop against a runaway planner.
         for _ in range(orchestrator.budget.ERROR_CEILING + 1):
+            wrote_code = False
+            self._emit_plan(plan)
             edits.plan_edits(plan)  # collapsible thinking event (R3.6)
 
             if plan.has_changes:
@@ -654,9 +1068,11 @@ class RunPipeline:
                 applied.extend(
                     Diff(path=c.path, diff=c.diff) for c in outcome.applied
                 )
+                wrote_code = bool(outcome.applied)
                 for change in outcome.applied:
                     orchestrator.active_file_markers.append(change.path)
                     orchestrator.budget.count_file_op()  # R4.1
+                self._emit_budget(context, orchestrator, tokens_used)
                 if not outcome.ok:
                     # R3.9: apply failed → unrecoverable terminal error close.
                     fsm.fail(outcome.error or "apply failed")
@@ -669,12 +1085,19 @@ class RunPipeline:
                         stages=tuple(stages),
                         allocation=allocation,
                     )
+                self._emit_plan_update("apply", "done")
                 stages.append(fsm.advance())  # APPLY_EDITS → RUN_CHECKS
             else:
                 stages.append(fsm.plan_complete(has_changes=False))  # R3.8
 
+            self._emit_plan_update("validate", "active")
             try:
-                exit_code, command, log = self.brain.run_checks(self.request, plan)
+                test_result = self._run_post_write_tests() if wrote_code else None
+                exit_code, command, log = (
+                    (test_result.exit_code, test_result.command, test_result.output)
+                    if test_result is not None
+                    else self.brain.run_checks(self.request, plan)
+                )
             except Exception as exc:
                 reason = f"run_checks failed: {type(exc).__name__}: {exc}"
                 logger.exception("run %s failed while running checks", self.run_id)
@@ -686,15 +1109,43 @@ class RunPipeline:
                     run_id=self.run_id,
                     stage=Stage.ERROR_CLOSED,
                     stages=tuple(stages),
-                    allocation=allocation,
-                )
+                        allocation=allocation,
+                    )
             checks.append((command, exit_code))
+            self._emit_check_command(command, exit_code, log)
+            if test_result is not None:
+                self._emit_test_results(test_result)
             rem = remediation.on_checks_complete(
                 exit_code, command=command, log=log, prior_plan=plan
             )
+            self._emit_budget(context, orchestrator, tokens_used)
 
             if rem.stage is Stage.SUMMARY:  # R5.8
+                self._emit_plan_update("validate", "done")
                 stages.append(Stage.SUMMARY)
+                if self.request.review_changes and applied:
+                    self._emit_review(applied, checks)
+                try:
+                    summary = (
+                        self._review_and_maybe_apply(applied)
+                        if self.request.review_changes
+                        else "Completed the requested agent run."
+                    )
+                except Exception as exc:
+                    reason = f"review apply failed: {type(exc).__name__}: {exc}"
+                    logger.exception("run %s failed while applying review", self.run_id)
+                    fsm.fail(reason)
+                    stages.append(Stage.ERROR_CLOSED)
+                    self._close()
+                    return RunResult(
+                        mode=Mode.AGENT,
+                        run_id=self.run_id,
+                        stage=Stage.ERROR_CLOSED,
+                        stages=tuple(stages),
+                        allocation=allocation,
+                    )
+                self._emit_human_summary(summary)
+                self._emit_plan_update("summary", "done")
                 stages.append(fsm.advance())  # SUMMARY → DONE (R3.4)
                 self._close()
                 self._record_evolution(stages, applied, checks, reached_done=True)
@@ -728,6 +1179,8 @@ class RunPipeline:
                         hot_swap=hot_swap,
                     )
                 plan = rem.plan
+                tokens_used += _estimate_edit_plan_tokens(plan)
+                self._emit_budget(context, orchestrator, tokens_used)
                 continue
 
             # R5.7: no differing remediation → paused, deferred to developer.
@@ -830,6 +1283,7 @@ def execute_run(
     evolution: EvolutionEngine | None = None,
     diary_sink: DiarySink | None = None,
     brain: AgentBrain | None = None,
+    wait_for_review_decision: ReviewDecisionWaiter | None = None,
 ) -> RunResult:
     """Build a :class:`RunPipeline` for ``request`` and drive it to completion.
 
@@ -848,7 +1302,11 @@ def execute_run(
             evolution=evolution,
             diary_sink=diary_sink,
             brain=brain,
+            wait_for_review_decision=wait_for_review_decision,
         )
-        return pipeline.run()
+        try:
+            return pipeline.run()
+        finally:
+            pipeline.cleanup()
     finally:
         close()

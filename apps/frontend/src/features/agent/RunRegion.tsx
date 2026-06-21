@@ -1,25 +1,15 @@
 /**
  * RunRegion.tsx — the scrollable body (grid row 3) of the Agent_Panel.
  *
- * The panel previously rendered ONLY the Gateway SSE telemetry feed
- * (`AgentRunFeed`), whose eight typed Event_Rows (intent, thinking, read-files,
- * edit-file, command, summary, approval, done) do NOT include a conversation
- * message. As a result the user's own messages — and the assistant's text
- * replies — were written to the store's `chat` array but never displayed, so
- * typing "hi" appeared to do nothing.
- *
- * RunRegion fixes that by rendering BOTH streams in a single scroll container:
- *  1. the conversation (`chat`): user/assistant messages, tool calls and diffs,
- *  2. the live Gateway telemetry events from the single SSE client
- *     (`useAgentStream`), dispatched through the shared `ROW_COMPONENTS`
- *     registry in `rows.tsx` (still the single source of truth for row
- *     selection and the unrecognized-event guard).
- *
- * It auto-scrolls to the newest content so a sent message is always visible.
+ * Renders both streams in a single scroll container:
+ *  1. conversation (`chat`): user/assistant messages, tool calls and diffs
+ *  2. live Gateway telemetry events from the single SSE client (`useAgentStream`),
+ *     dispatched through the shared `ROW_COMPONENTS` registry in `rows.tsx`.
  */
-import { useEffect, useRef } from "react";
-import { MessageSquare } from "lucide-react";
+import { Fragment, useEffect, useRef, useState } from "react";
+import { Zap } from "lucide-react";
 import type { Message } from "@zoc-studio/shared-types";
+import type { AgentEvents } from "@zoc-studio/shared-types";
 
 import { useApp } from "@/lib/store";
 import { EmptyState } from "./EmptyState";
@@ -27,8 +17,9 @@ import { MessageItem } from "./MessageItem";
 import { ToolCallCard } from "./ToolCallCard";
 import { DiffCard } from "./DiffCard";
 import useAgentStream from "./useAgentStream";
-import { ROW_COMPONENTS, isRecognizedEvent } from "./rows";
 import type { AgentEvent, TokenEvent, StreamErrorEvent } from "./useAgentStream";
+import { buildRunTraces } from "./agent-trace";
+import { RunTraceCard } from "./RunTraceCard";
 
 function isTokenEvent(event: AgentEvent): event is TokenEvent {
   return event.type === "token";
@@ -38,22 +29,52 @@ function isStreamErrorEvent(event: AgentEvent): event is StreamErrorEvent {
   return event.type === "error";
 }
 
+function isBudgetEvent(event: AgentEvent): event is AgentEvents.BudgetEvent {
+  return event.type === "budget";
+}
+
 export function RunRegion(): JSX.Element {
-  const chat = useApp((s) => s.chat);
-  const agentMode = useApp((s) => s.agentMode);
-  const activeRunMode = useApp((s) => s.activeRunMode);
-  const runId = useApp((s) => s.runId);
-  const finishGatewayRun = useApp((s) => s.finishGatewayRun);
+  const chat               = useApp((s) => s.chat);
+  const agentMode          = useApp((s) => s.agentMode);
+  const activeRunMode      = useApp((s) => s.activeRunMode);
+  const runId              = useApp((s) => s.runId);
+  const finishGatewayRun   = useApp((s) => s.finishGatewayRun);
+  const updateRunBudget    = useApp((s) => s.updateRunBudget);
   const commitAskStreamMessage = useApp((s) => s.commitAskStreamMessage);
-  const { events } = useAgentStream({ runId, enabled: !!runId });
+  const { events }         = useAgentStream({ runId, enabled: !!runId });
 
-  const scrollRef = useRef<HTMLDivElement>(null);
+  const scrollRef          = useRef<HTMLDivElement>(null);
+  const lastRunIdRef        = useRef<string | null>(null);
+  const [retainedAgentEvents, setRetainedAgentEvents] = useState<AgentEvent[]>([]);
 
-  // Keep the newest message/event in view as the conversation grows.
+  useEffect(() => {
+    if (runId && runId !== lastRunIdRef.current) {
+      lastRunIdRef.current = runId;
+      setRetainedAgentEvents([]);
+    }
+  }, [runId]);
+
+  useEffect(() => {
+    if (runId && activeRunMode === "agent" && events.length > 0) {
+      setRetainedAgentEvents(events);
+    }
+  }, [activeRunMode, events, runId]);
+
   useEffect(() => {
     const el = scrollRef.current;
     if (el) el.scrollTop = el.scrollHeight;
-  }, [chat, events]);
+  }, [chat, events, retainedAgentEvents]);
+
+  useEffect(() => {
+    if (!runId) return;
+    const latestBudget = [...events]
+      .reverse()
+      .find(
+        (event): event is AgentEvents.BudgetEvent =>
+          isBudgetEvent(event) && event.runId === runId,
+      );
+    if (latestBudget) updateRunBudget(latestBudget);
+  }, [events, runId, updateRunBudget]);
 
   useEffect(() => {
     if (!runId) return;
@@ -77,13 +98,19 @@ export function RunRegion(): JSX.Element {
     }
   }, [activeRunMode, agentMode, commitAskStreamMessage, events, finishGatewayRun, runId]);
 
-  const empty = chat.length === 0 && events.length === 0;
+  const visibleEvents = runId ? events : retainedAgentEvents;
+  const runTraces     = buildRunTraces(visibleEvents);
+  const orphanErrors  = visibleEvents.filter(
+    (event): event is StreamErrorEvent => isStreamErrorEvent(event) && !event.runId,
+  );
+  const empty = chat.length === 0 && visibleEvents.length === 0;
+
   if (empty) {
     const isAsk = (activeRunMode ?? agentMode) === "ask";
     return (
       <div className="h-full min-h-0 overflow-y-auto">
         <EmptyState
-          icon={MessageSquare}
+          icon={Zap}
           title={isAsk ? "Ask about your code" : "Start a task"}
           description={
             isAsk
@@ -102,10 +129,14 @@ export function RunRegion(): JSX.Element {
   const streamedAskText = events
     .filter(
       (event): event is TokenEvent =>
-        isTokenEvent(event) && event.runId === runId && !!event.text,
+        (activeRunMode ?? agentMode) === "ask" &&
+        isTokenEvent(event) &&
+        event.runId === runId &&
+        !!event.text,
     )
     .map((event) => event.text)
     .join("");
+
   const streamedAskMessage: Message | null = streamedAskText
     ? {
         id: `ask-stream-${runId}`,
@@ -120,7 +151,7 @@ export function RunRegion(): JSX.Element {
   return (
     <div
       ref={scrollRef}
-      className="agent-run-region flex h-full min-h-0 flex-col gap-2 overflow-y-auto px-3 py-3"
+      className="flex h-full min-h-0 flex-col gap-3 overflow-y-auto px-4 py-4"
       role="log"
       aria-live="polite"
       aria-label="Agent conversation and run feed"
@@ -143,32 +174,31 @@ export function RunRegion(): JSX.Element {
         <MessageItem key={streamedAskMessage.id} message={streamedAskMessage} />
       ) : null}
 
-      {events.map((event) => {
-        if (isTokenEvent(event)) {
-          return null;
-        }
-        if (isStreamErrorEvent(event)) {
-          return (
-            <div
-              key={`err-${event.seq}`}
-              className="feed-item rounded-md border border-[var(--zoc-error)]/40 bg-[var(--zoc-error)]/10 px-2.5 py-1.5 text-[13px] leading-snug text-[var(--zoc-error)]"
-              data-event-type="error"
-            >
-              {event.message}
-            </div>
-          );
-        }
-        // Unrecognized event types are discarded without altering the feed (R3.5).
-        if (!isRecognizedEvent(event)) {
-          return null;
-        }
-        const Row = ROW_COMPONENTS[event.type];
-        return (
-          <div key={`evt-${event.seq}`} className="feed-item">
-            <Row event={event} />
-          </div>
-        );
-      })}
+      {runTraces.map((trace) => (
+        <Fragment key={trace.runId}>
+          <RunTraceCard trace={trace} />
+          {trace.summary ? (
+            <MessageItem
+              message={{
+                id: `agent-summary-${trace.runId}`,
+                role: "assistant",
+                content: trace.summary,
+                created_at: new Date().toISOString(),
+              }}
+            />
+          ) : null}
+        </Fragment>
+      ))}
+
+      {orphanErrors.map((event) => (
+        <div
+          key={`err-${event.seq}`}
+          className="animate-fade-row rounded-xl border border-[var(--zoc-error)]/35 bg-[var(--zoc-error)]/8 px-3 py-2.5 text-[12.5px] leading-snug text-[var(--zoc-error)]"
+          data-event-type="error"
+        >
+          {event.message}
+        </div>
+      ))}
     </div>
   );
 }

@@ -12,11 +12,12 @@ from __future__ import annotations
 import json
 import math
 from collections.abc import Callable, Iterator, Mapping
+from dataclasses import dataclass
 from typing import Any
 
 from zocai_gateway.mode_router import AgentRunRequest
 
-__all__ = ["ModelRuntimeError", "generate_text", "generate_text_stream"]
+__all__ = ["ModelRuntimeError", "StreamMetrics", "generate_text", "generate_text_stream"]
 
 _DEFAULT_MAX_TOKENS = 512
 _STREAM_DONE = object()
@@ -24,6 +25,14 @@ _STREAM_DONE = object()
 
 class ModelRuntimeError(RuntimeError):
     """Raised when a configured model endpoint cannot produce text."""
+
+
+@dataclass(frozen=True)
+class StreamMetrics:
+    """Provider-reported completion metrics from a streaming response."""
+
+    completion_tokens: int | None = None
+    tokens_per_second: float | None = None
 
 
 def generate_text(
@@ -71,6 +80,7 @@ def generate_text_stream(
     system_prompt: str | None = None,
     timeout: float = 60.0,
     on_token: Callable[[str], None] | None = None,
+    on_metrics: Callable[[StreamMetrics], None] | None = None,
 ) -> str | None:
     """Generate text and emit OpenAI-compatible stream chunks as they arrive."""
 
@@ -105,6 +115,7 @@ def generate_text_stream(
         system_prompt=system_prompt,
         timeout=timeout,
         on_token=on_token,
+        on_metrics=on_metrics,
     )
 
 
@@ -164,6 +175,7 @@ def _openai_compatible_chat_stream(
     system_prompt: str | None,
     timeout: float,
     on_token: Callable[[str], None] | None,
+    on_metrics: Callable[[StreamMetrics], None] | None,
 ) -> str:
     headers = {"Content-Type": "application/json"}
     if api_key:
@@ -187,6 +199,9 @@ def _openai_compatible_chat_stream(
         payload,
         timeout,
     ):
+        metrics = _stream_metrics(frame)
+        if metrics is not None and on_metrics is not None:
+            on_metrics(metrics)
         choices = frame.get("choices")
         if not isinstance(choices, list) or not choices:
             continue
@@ -206,6 +221,37 @@ def _openai_compatible_chat_stream(
             raise ModelRuntimeError("provider returned an empty streamed message")
         raise ModelRuntimeError("provider returned no streamed choices")
     return text
+
+
+def _stream_metrics(frame: Mapping[str, Any]) -> StreamMetrics | None:
+    """Read OpenAI usage or llama.cpp timing fields from a stream frame."""
+
+    completion_tokens: int | None = None
+    tokens_per_second: float | None = None
+
+    usage = frame.get("usage")
+    if isinstance(usage, Mapping):
+        value = usage.get("completion_tokens")
+        if isinstance(value, int) and value >= 0:
+            completion_tokens = value
+
+    timings = frame.get("timings")
+    if isinstance(timings, Mapping):
+        predicted_n = timings.get("predicted_n")
+        if completion_tokens is None and isinstance(predicted_n, int) and predicted_n >= 0:
+            completion_tokens = predicted_n
+        predicted_per_second = timings.get("predicted_per_second")
+        if isinstance(predicted_per_second, (int, float)):
+            parsed = float(predicted_per_second)
+            if math.isfinite(parsed) and parsed >= 0:
+                tokens_per_second = parsed
+
+    if completion_tokens is None and tokens_per_second is None:
+        return None
+    return StreamMetrics(
+        completion_tokens=completion_tokens,
+        tokens_per_second=tokens_per_second,
+    )
 
 
 def _sampling_payload(request: AgentRunRequest, provider: str) -> dict[str, Any]:

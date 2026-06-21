@@ -27,19 +27,22 @@ export function MentionAutocomplete({
 }) {
   const search = useApp((s) => s.searchContextCandidates);
   const [items, setItems] = useState<ContextCandidate[]>([]);
+  const [loading, setLoading] = useState(true);
   const [active, setActive] = useState(0);
   const activeRef = useRef(0);
   const itemsRef = useRef<ContextCandidate[]>([]);
 
   useEffect(() => {
     let alive = true;
+    setLoading(true);
     const t = setTimeout(async () => {
-      const out = await search(query);
+      const out = (await search(query)).filter((item) => item.kind === "file");
       if (!alive) return;
       setItems(out);
       itemsRef.current = out;
       setActive(0);
       activeRef.current = 0;
+      setLoading(false);
     }, 100);
     return () => {
       alive = false;
@@ -79,10 +82,17 @@ export function MentionAutocomplete({
     return () => window.removeEventListener("keydown", onKey, true);
   }, [onPick, onClose]);
 
-  if (items.length === 0) return null;
-
   return (
-    <div className="mb-2 max-h-56 overflow-auto rounded-lg border border-[#26262B] bg-[#131318] py-1 shadow-xl">
+    <div
+      role="listbox"
+      className="absolute bottom-full left-2 right-2 z-30 mb-2 max-h-56 overflow-auto rounded-lg border border-[#26262B] bg-[#131318] py-1 shadow-xl"
+    >
+      {loading && (
+        <div className="px-2.5 py-1.5 text-[12px] text-[#71717A]">Searching files...</div>
+      )}
+      {!loading && items.length === 0 && (
+        <div className="px-2.5 py-1.5 text-[12px] text-[#71717A]">No files found</div>
+      )}
       {items.map((c, i) => {
         const Icon = KIND_ICON[c.kind] ?? FileIcon;
         return (

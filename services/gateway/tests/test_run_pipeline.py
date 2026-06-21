@@ -9,6 +9,7 @@ ceiling (R11.1), and verified-run trajectory recording (R12).
 from __future__ import annotations
 
 from pathlib import Path
+from types import SimpleNamespace
 
 from zocai_evolution import EvolutionEngine
 
@@ -18,6 +19,7 @@ from zocai_gateway.hardware_probe import HardwareProfile
 from zocai_gateway.hot_swap import HotSwapOutcomeKind
 from zocai_gateway.memory.matrix import MemoryMatrix
 from zocai_gateway.memory.state_wrapper import StateWrapperStore
+from zocai_gateway.memory.state_wrapper import FailureRecord
 from zocai_gateway.mode_router import AgentRunRequest, Mode
 from zocai_gateway.model_allocator import Allocation
 from zocai_gateway.model_interface import ModelTier
@@ -28,6 +30,7 @@ from zocai_gateway.run_pipeline import (
     RunPipeline,
     RuntimeAgentBrain,
 )
+from zocai_gateway.project_tests import ProjectTestResult
 from zocai_gateway.stages import Stage
 from zocai_gateway.context.steering_compiler import SteeringPayload
 from zocai_gateway.context.token_gate import TokenGateResult
@@ -73,6 +76,94 @@ def test_runtime_agent_brain_parses_model_json(monkeypatch) -> None:
     )
 
 
+def test_runtime_brain_injects_failed_test_output_into_remediation_call(monkeypatch) -> None:
+    prompts: list[str] = []
+
+    def fake_generate_text(request: AgentRunRequest, **_kwargs: object) -> str:
+        prompts.append(request.prompt)
+        return (
+            '{"reasoning":"fix assertion","changes":['
+            '{"path":"src/fix.py","content":"fixed\\n","diff":"+fixed"}'
+            "]}"
+        )
+
+    monkeypatch.setattr("zocai_gateway.run_pipeline.generate_text", fake_generate_text)
+    context = RunContext(
+        allocation=Allocation(ModelTier.LOCAL_SLM, 4000),
+        fragments=(),
+        steering=SteeringPayload(),
+        token_gate=TokenGateResult(fragments=(), dropped=(), token_count=0, window=4000),
+        mcp_tools=(),
+    )
+    brain = RuntimeAgentBrain()
+    request = AgentRunRequest(
+        prompt="fix feature",
+        mode=Mode.AGENT,
+        provider="mock",
+        model="mock-model",
+        base_url="http://model.test",
+    )
+    prior = brain.edit_plan(request, context)
+
+    remediation = brain.remediation_plan(
+        prior,
+        FailureRecord(command="pnpm test", exit_code=1, log="expected true, got false"),
+    )
+
+    assert remediation is not None
+    assert len(prompts) == 2
+    assert "Command: pnpm test" in prompts[1]
+    assert "expected true, got false" in prompts[1]
+
+
+def test_agent_runs_detected_tests_after_writes_and_emits_counts(tmp_path: Path) -> None:
+    (tmp_path / "package.json").write_text(
+        '{"scripts":{"test":"vitest run"}}', encoding="utf-8"
+    )
+    events, gate = _gate()
+
+    class EditingBrain(DefaultAgentBrain):
+        def edit_plan(self, request: AgentRunRequest, context: RunContext) -> EditPlan:
+            return EditPlan(
+                reasoning="write code",
+                changes=(
+                    PlannedChange(path="src.txt", content="code\n", diff="+code"),
+                ),
+            )
+
+    calls: list[str] = []
+
+    def fake_tests(root: Path, command: object) -> ProjectTestResult:
+        calls.append(str(getattr(command, "command")))
+        return ProjectTestResult(
+            command="npm test",
+            source="package.json",
+            exit_code=1,
+            output="3 passed, 2 failed",
+            passed=3,
+            failed=2,
+            duration_ms=800,
+        )
+
+    result = RunPipeline(
+        AgentRunRequest(prompt="write code", mode="agent"),
+        "run-tests",
+        gate=gate,
+        text_sink=lambda chunk: None,
+        close=lambda: None,
+        workspace_root=tmp_path,
+        brain=EditingBrain(),
+        project_test_runner=fake_tests,
+    ).run()
+
+    assert result.paused is True
+    assert calls == ["npm test"]
+    test_event = next(event for event in events if event["type"] == "test-results")
+    assert test_event["passed"] == 3
+    assert test_event["failed"] == 2
+    assert test_event["status"] == "fail"
+
+
 def test_agent_run_drives_to_done_with_intent_first(tmp_path: Path) -> None:
     events, gate = _gate()
     pipeline = RunPipeline(
@@ -92,8 +183,64 @@ def test_agent_run_drives_to_done_with_intent_first(tmp_path: Path) -> None:
     assert events[0]["modelTier"] == "local-slm"
     assert events[0]["contextWindowTokens"] == 4000
     assert events[0]["fallbackReason"] is None
+    budget_events = [event for event in events if event["type"] == "budget"]
+    assert budget_events
+    assert budget_events[-1]["tokenLimit"] == 4000
+    assert budget_events[-1]["tokensUsed"] > 0
+    assert budget_events[-1]["iterations"] == 0
+    assert budget_events[-1]["recoveries"] == 0
     # The terminal event closes the run (R3.4).
     assert events[-1]["type"] == "done"
+
+
+def test_agent_review_apply_copies_only_selected_paths(tmp_path: Path) -> None:
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "a.txt").write_text("old a\n", encoding="utf-8")
+    (tmp_path / "src" / "b.txt").write_text("old b\n", encoding="utf-8")
+    events, gate = _gate()
+
+    class EditingBrain(DefaultAgentBrain):
+        def edit_plan(self, request: AgentRunRequest, context: RunContext) -> EditPlan:
+            return EditPlan(
+                reasoning="update two files",
+                changes=(
+                    PlannedChange(
+                        path="src/a.txt",
+                        content="new a\n",
+                        diff="@@ -1 +1 @@\n-old a\n+new a",
+                    ),
+                    PlannedChange(
+                        path="src/b.txt",
+                        content="new b\n",
+                        diff="@@ -1 +1 @@\n-old b\n+new b",
+                    ),
+                ),
+            )
+
+    def wait_for_review(_timeout: float | None = None) -> object:
+        return SimpleNamespace(decision="apply", accepted_paths=["src/a.txt"])
+
+    result = RunPipeline(
+        AgentRunRequest(prompt="update files", mode="agent", review_changes=True),
+        "run-review",
+        gate=gate,
+        text_sink=lambda chunk: None,
+        close=lambda: None,
+        workspace_root=tmp_path,
+        brain=EditingBrain(),
+        wait_for_review_decision=wait_for_review,
+    ).run()
+
+    assert result.stage is Stage.DONE
+    assert (tmp_path / "src" / "a.txt").read_text(encoding="utf-8") == "new a\n"
+    assert (tmp_path / "src" / "b.txt").read_text(encoding="utf-8") == "old b\n"
+    assert any(event["type"] == "plan" for event in events)
+    review = next(event for event in events if event["type"] == "review")
+    assert [file["path"] for file in review["files"]] == ["src/a.txt", "src/b.txt"]  # type: ignore[index]
+    assert any(
+        event["type"] == "summary" and "Applied 1 reviewed file" in str(event.get("text"))
+        for event in events
+    )
 
 
 def test_emission_uses_one_monotonic_sequence(tmp_path: Path) -> None:

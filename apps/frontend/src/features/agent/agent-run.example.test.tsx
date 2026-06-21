@@ -29,12 +29,28 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, cleanup, act, waitFor, fireEvent } from "@testing-library/react";
 import type { AgentEvents } from "@zoc-studio/shared-types";
 
+const tauriBridgeMock = vi.hoisted(() => ({
+  isTauri: vi.fn(),
+  gitCheckpointCommit: vi.fn(),
+  gitStatus: vi.fn(),
+}));
+
 // The single agent transport is mocked so the store's submit path and the
 // ApprovalRow's default decision client resolve to test doubles (R2.1, R5.4).
 vi.mock("@/features/agent/gateway-client", () => ({
   postAgentRun: vi.fn(),
   postAgentDecision: vi.fn(),
 }));
+
+vi.mock("@/lib/tauri-bridge", async () => {
+  const actual = await vi.importActual<typeof import("@/lib/tauri-bridge")>("@/lib/tauri-bridge");
+  return {
+    ...actual,
+    isTauri: tauriBridgeMock.isTauri,
+    gitCheckpointCommit: tauriBridgeMock.gitCheckpointCommit,
+    gitStatus: tauriBridgeMock.gitStatus,
+  };
+});
 
 import AgentRunFeed, { AgentRunFeedView } from "./AgentRunFeed";
 import { ApprovalRow, isRecognizedEvent } from "./rows";
@@ -86,6 +102,9 @@ async function emitNamed(stream: FakeStream, type: string, event: unknown): Prom
 
 beforeEach(() => {
   vi.clearAllMocks();
+  tauriBridgeMock.isTauri.mockReturnValue(false);
+  tauriBridgeMock.gitCheckpointCommit.mockResolvedValue("checkpointabcdef");
+  tauriBridgeMock.gitStatus.mockResolvedValue(null);
 });
 
 afterEach(() => {
@@ -228,7 +247,17 @@ describe("Ask vs Agent rendering at the feed level (R4.3, R4.4)", () => {
         modelTier: "local-slm",
         contextWindowTokens: 8192,
       },
-      { type: "edit-file", seq: 2, runId: "run-1", ts: TS, path: "src/foo.ts", diff: "@@ -1 +1 @@" },
+      {
+        type: "edit-file",
+        seq: 2,
+        runId: "run-1",
+        ts: TS,
+        path: "src/foo.ts",
+        diff: "@@ -1 +1 @@",
+        adds: 0,
+        dels: 0,
+        status: "done",
+      },
       { type: "command", seq: 3, runId: "run-1", ts: TS, command: "pnpm test", exitCode: 0 },
     ];
 
@@ -280,7 +309,11 @@ describe("Ask vs Agent rendering at the feed level (R4.3, R4.4)", () => {
 
 describe("submit targets the Gateway, not a legacy transport (R2.1, R6.5)", () => {
   it("routes a Composer submit through the gateway-client postAgentRun and no legacy run transport", async () => {
-    vi.mocked(postAgentRun).mockResolvedValue({ runId: "run-xyz" });
+    vi.mocked(postAgentRun).mockImplementation(async (req) => ({
+      runId: req.runId ?? "run-xyz",
+    }));
+    tauriBridgeMock.isTauri.mockReturnValue(true);
+    tauriBridgeMock.gitCheckpointCommit.mockResolvedValue("checkpointabcdef");
 
     // A legacy client double whose run/message transport must stay untouched.
     const postMessage = vi.fn();
@@ -311,7 +344,8 @@ describe("submit targets the Gateway, not a legacy transport (R2.1, R6.5)", () =
 
     // The run was routed to the Gateway control channel exactly once (R2.1).
     expect(postAgentRun).toHaveBeenCalledTimes(1);
-    expect(postAgentRun).toHaveBeenCalledWith({
+    const request = vi.mocked(postAgentRun).mock.calls[0][0];
+    expect(request).toMatchObject({
       input: "investigate the failing test",
       mode: "agent",
       model: "mock-model",
@@ -319,13 +353,63 @@ describe("submit targets the Gateway, not a legacy transport (R2.1, R6.5)", () =
       apiKey: null,
       baseUrl: null,
       workspaceRoot: null,
+      reviewChanges: true,
     });
+    expect(request.runId).toMatch(/^run-/);
+    expect(tauriBridgeMock.gitCheckpointCommit).toHaveBeenCalledWith(
+      `zoc: checkpoint before run ${request.runId}`,
+    );
     // The Gateway-issued runId is recorded on the store.
-    expect(useApp.getState().runId).toBe("run-xyz");
+    expect(useApp.getState().runId).toBe(request.runId);
+    expect(useApp.getState().agentRunCheckpoints[request.runId ?? ""]).toBe("checkpointabcdef");
 
     // No legacy agent run/message transport was touched (R6.5).
     expect(postMessage).not.toHaveBeenCalled();
     expect(runSlashCommand).not.toHaveBeenCalled();
+
+    vi.restoreAllMocks();
+  });
+
+  it("blocks an Agent run when the checkpoint commit fails", async () => {
+    vi.mocked(postAgentRun).mockResolvedValue({ runId: "should-not-start" });
+    tauriBridgeMock.isTauri.mockReturnValue(true);
+    tauriBridgeMock.gitCheckpointCommit.mockRejectedValue(new Error("git identity missing"));
+    vi.spyOn(agentClient, "getAgentClient").mockResolvedValue({
+      memoryStats: vi.fn().mockResolvedValue({
+        context_window: 8192,
+        tokens_used: 0,
+        messages: 0,
+        summaries: 0,
+        facts: 0,
+      }),
+    } as unknown as Awaited<ReturnType<typeof agentClient.getAgentClient>>);
+
+    useApp.setState({
+      liveMode: true,
+      agentMode: "agent",
+      messageQueue: [],
+      selectedModel: { provider: "mock", model: "mock-model" },
+      llamaCppStatus: null,
+      workspaceRoot: null,
+      activeSessionId: "",
+      chat: [],
+      agentItems: [],
+      streaming: false,
+      isRunning: false,
+      runId: null,
+    });
+
+    await useApp.getState().sendUserMessage("fix the failing test");
+
+    expect(tauriBridgeMock.gitCheckpointCommit).toHaveBeenCalled();
+    expect(postAgentRun).not.toHaveBeenCalled();
+    expect(useApp.getState().streaming).toBe(false);
+    expect(useApp.getState().runId).toBeNull();
+    expect(
+      useApp
+        .getState()
+        .chat.some((entry) => entry.message?.content.includes("git identity missing")),
+    ).toBe(true);
 
     vi.restoreAllMocks();
   });
@@ -363,7 +447,52 @@ describe("submit targets the Gateway, not a legacy transport (R2.1, R6.5)", () =
       apiKey: null,
       baseUrl: null,
       workspaceRoot: null,
+      reviewChanges: false,
     });
+
+    vi.restoreAllMocks();
+  });
+
+  it("passes selected @file mention paths to the Gateway while keeping the short token", async () => {
+    vi.mocked(postAgentRun).mockResolvedValue({ runId: "run-mention" });
+    vi.spyOn(agentClient, "getAgentClient").mockResolvedValue({
+      memoryStats: vi.fn().mockResolvedValue({
+        context_window: 8192,
+        tokens_used: 0,
+        messages: 0,
+        summaries: 0,
+        facts: 0,
+      }),
+    } as unknown as Awaited<ReturnType<typeof agentClient.getAgentClient>>);
+
+    useApp.setState({
+      liveMode: true,
+      agentMode: "ask",
+      messageQueue: [],
+      selectedModel: { provider: "mock", model: "mock-model" },
+      llamaCppStatus: null,
+      workspaceRoot: "/ws",
+      activeSessionId: "",
+      attachments: [
+        {
+          id: "att-mention",
+          label: "/ws/src/config.ts",
+          kind: "file",
+          path: "/ws/src/config.ts",
+          token: "config.ts",
+        },
+      ],
+    });
+
+    await useApp.getState().sendUserMessage("explain @config.ts");
+
+    expect(postAgentRun).toHaveBeenCalledWith(
+      expect.objectContaining({
+        input: "explain @config.ts",
+        mode: "ask",
+        contextFiles: [{ token: "config.ts", path: "/ws/src/config.ts" }],
+      }),
+    );
 
     vi.restoreAllMocks();
   });
@@ -466,10 +595,9 @@ describe("ApprovalRow approve/reject and budget-continuation via /decision (R5.1
       decision: "approve",
     });
     await waitFor(() => {
-      expect(approve.disabled).toBe(true);
-      expect(
-        (screen.getByRole("button", { name: /reject/i }) as HTMLButtonElement).disabled,
-      ).toBe(true);
+      expect(screen.getByText("Approved")).toBeInTheDocument();
     });
+    expect(screen.queryByRole("button", { name: /approve/i })).toBeNull();
+    expect(screen.queryByRole("button", { name: /reject/i })).toBeNull();
   });
 });

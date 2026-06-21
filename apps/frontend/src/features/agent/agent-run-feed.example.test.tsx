@@ -170,6 +170,9 @@ describe("recognized-event sequence renders structured rows in order (R4.4)", ()
       ts: TS,
       path: "src/foo.ts",
       diff: "@@ -1 +1 @@",
+      adds: 0,
+      dels: 0,
+      status: "done",
     };
     const command: AgentEvents.CommandEvent = {
       type: "command",

@@ -85,6 +85,7 @@ function baseState(overrides: Partial<AppState> = {}): AppState {
     reviewRunning: false,
     testGenRunning: false,
     testRunRunning: false,
+    runBudget: null,
     cancelStream: vi.fn(),
     selectedModel: { model: "openai/gpt-4o-mini" },
     autonomy: "Medium",
@@ -252,5 +253,28 @@ describe("AgentPanel preservation — active-execution control bar (running)", (
     const { getByText, getByTitle } = render(<AgentPanel />);
     expect(getByTitle("Resume run")).toBeInTheDocument();
     expect(getByText("Paused")).toBeInTheDocument();
+  });
+
+  it("shows the token budget meter below the active header", () => {
+    applyState(
+      baseState({
+        streaming: true,
+        runBudget: {
+          type: "budget",
+          seq: 1,
+          runId: "run-1",
+          ts: "2026-06-21T00:00:00Z",
+          tokensUsed: 2000,
+          tokenLimit: 4000,
+          iterations: 2,
+          recoveries: 0,
+        },
+      }),
+    );
+    const { getByTestId } = render(<AgentPanel />);
+    expect(getByTestId("token-budget-meter")).toHaveAttribute(
+      "title",
+      "2,000 / 4,000 tokens used · 2 iterations · 0 recoveries",
+    );
   });
 });

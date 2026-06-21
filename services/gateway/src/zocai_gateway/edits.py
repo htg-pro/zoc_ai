@@ -165,8 +165,9 @@ class EditCoordinator:
             seq=self.next_seq(),
             run_id=self.run_id,
             ts=self._now(),
-            text=plan.reasoning,
+            text=_sanitize_thinking(plan.reasoning),
             collapsible=True,
+            truncated=len(plan.reasoning) > _THINKING_MAX_CHARS,
         )
         self._record(event)
         return event
@@ -235,6 +236,9 @@ class EditCoordinator:
             ts=self._now(),
             path=change.path,
             diff=change.diff,
+            adds=_diff_stats(change.diff)[0],
+            dels=_diff_stats(change.diff)[1],
+            status="done",
         )
         self._record(event)
 
@@ -245,8 +249,11 @@ class EditCoordinator:
             run_id=self.run_id,
             ts=self._now(),
             command=f"apply-edit:{change.path}",
+            command_id=f"apply-edit:{change.path}",
+            status="fail",
             exit_code=1,
             error_tag=reason,
+            output_tail=reason,
         )
         self._record(event)
 
@@ -260,3 +267,27 @@ class EditCoordinator:
     def _now() -> str:
         """An ISO-8601 UTC timestamp for the ``ts`` field."""
         return datetime.now(timezone.utc).isoformat()
+
+
+_THINKING_MAX_CHARS = 480
+
+
+def _sanitize_thinking(text: str) -> str:
+    """Keep operational context visible without flooding the trace."""
+    stripped = " ".join(text.strip().split())
+    if len(stripped) <= _THINKING_MAX_CHARS:
+        return stripped
+    return stripped[: _THINKING_MAX_CHARS - 1].rstrip() + "…"
+
+
+def _diff_stats(diff: str) -> tuple[int, int]:
+    adds = 0
+    dels = 0
+    for line in diff.splitlines():
+        if line.startswith("+++") or line.startswith("---"):
+            continue
+        if line.startswith("+"):
+            adds += 1
+        elif line.startswith("-"):
+            dels += 1
+    return adds, dels

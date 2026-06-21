@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { Paperclip, Send, ShieldCheck, Square } from "lucide-react";
+import { ArrowUp, Paperclip, ShieldCheck, Square } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { useApp } from "@/lib/store";
@@ -12,41 +12,47 @@ import { AttachmentChips } from "./AttachmentChips";
 import { MessageQueue } from "./MessageQueue";
 import { RulesDialog } from "./RulesDialog";
 import { detectMentionQuery, applyMention } from "@/lib/context-mentions";
+import { basename } from "@/lib/paths";
+import { getActiveSelection } from "@/lib/editor-actions";
+import { resolveSlashCommand } from "@/lib/slash-commands";
 
 const AUTONOMY_CYCLE: AutonomyLevel[] = ["Low", "Medium", "High"];
 
 export function Composer() {
-  const value = useApp((s) => s.input);
-  const setValue = useApp((s) => s.setInput);
+  const value        = useApp((s) => s.input);
+  const setValue     = useApp((s) => s.setInput);
   const [composing, setComposing] = useState(false);
-  const send = useApp((s) => s.sendUserMessage);
+  const send         = useApp((s) => s.sendUserMessage);
   const queueMessage = useApp((s) => s.queueUserMessage);
   const messageQueue = useApp((s) => s.messageQueue);
-  const stopAndSend = useApp((s) => s.stopAndSend);
-  const streaming = useApp((s) => s.streaming);
-  const addAttachment = useApp((s) => s.addAttachment);
+  const stopAndSend  = useApp((s) => s.stopAndSend);
+  const streaming    = useApp((s) => s.streaming);
+  const addAttachment   = useApp((s) => s.addAttachment);
   const clearAttachments = useApp((s) => s.clearAttachments);
   const cancelStream = useApp((s) => s.cancelStream);
-  const activeFile = useApp((s) => s.activeFile);
-  const isRunning = useApp((s) => s.isRunning);
-  const autonomy = useApp((s) => s.autonomy);
-  const setAutonomy = useApp((s) => s.setAutonomy);
+  const activeFile   = useApp((s) => s.activeFile);
+  const isRunning    = useApp((s) => s.isRunning);
+  const autonomy     = useApp((s) => s.autonomy);
+  const setAutonomy  = useApp((s) => s.setAutonomy);
   const reviewRunning = useApp((s) => s.reviewRunning);
-  const testRunning = useApp((s) => s.testGenRunning || s.testRunRunning);
-  const agentMode = useApp((s) => s.agentMode);
+  const testRunning  = useApp((s) => s.testGenRunning || s.testRunRunning);
+  const agentMode    = useApp((s) => s.agentMode);
   const setAgentMode = useApp((s) => s.setAgentMode);
   const projectRules = useApp((s) => s.projectRules);
+
   const ref = useRef<HTMLTextAreaElement>(null);
-  const [submitting, setSubmitting] = useState(false);
+  const [submitting, setSubmitting]         = useState(false);
   const [validationError, setValidationError] = useState<string | null>(null);
-  const [caretPos, setCaret] = useState(0);
-  const mention = caretPos >= 0 && !value.startsWith("/") ? detectMentionQuery(value, caretPos) : null;
-  const runBusy = streaming || reviewRunning || testRunning || isRunning;
-  const busy = runBusy || submitting;
+  const [caretPos, setCaret]                = useState(0);
+
+  const mention  = caretPos >= 0 && !value.startsWith("/") ? detectMentionQuery(value, caretPos) : null;
+  const runBusy  = streaming || reviewRunning || testRunning || isRunning;
+  const busy     = runBusy || submitting;
+  const isAsk    = agentMode === "ask";
+  const hasText  = !!value.trim();
 
   const cycleAutonomy = () => {
-    const next =
-      AUTONOMY_CYCLE[(AUTONOMY_CYCLE.indexOf(autonomy) + 1) % AUTONOMY_CYCLE.length];
+    const next = AUTONOMY_CYCLE[(AUTONOMY_CYCLE.indexOf(autonomy) + 1) % AUTONOMY_CYCLE.length];
     setAutonomy(next);
   };
 
@@ -54,11 +60,10 @@ export function Composer() {
     const el = ref.current;
     if (!el) return;
     el.style.height = "0px";
-    el.style.height = `${Math.min(Math.max(el.scrollHeight, 48), 160)}px`;
+    el.style.height = `${Math.min(Math.max(el.scrollHeight, 44), 160)}px`;
   }, [value]);
 
   const submit = () => {
-    // R4.13: reject empty/whitespace-only (and over-limit) input with feedback.
     const result = validateMessage(value);
     if (!result.valid) {
       setValidationError(
@@ -69,9 +74,6 @@ export function Composer() {
       return;
     }
     if (busy) {
-      // A run is in flight — hold this message and release it automatically
-      // when the run finishes (R4.11 / R4.14). Clear the composer so the user
-      // sees it was accepted.
       const content = value.trim();
       queueMessage(content);
       setValidationError(null);
@@ -82,8 +84,9 @@ export function Composer() {
     setValidationError(null);
     setSubmitting(true);
     setValue("");
+    const pending = send(content);
     clearAttachments();
-    void send(content).finally(() => {
+    void pending.finally(() => {
       setSubmitting(false);
       ref.current?.focus();
     });
@@ -92,106 +95,181 @@ export function Composer() {
   const attachActiveFile = () => {
     if (!activeFile) return;
     const needsSpace = value.length > 0 && !/\s$/.test(value);
-    setValue(`${value}${needsSpace ? " " : ""}@file`);
-    addAttachment({ label: activeFile, kind: "file" });
+    const token = basename(activeFile) || "file";
+    setValue(`${value}${needsSpace ? " " : ""}@${token}`);
+    addAttachment({ label: activeFile, kind: "file", path: activeFile, token });
     ref.current?.focus();
   };
 
-  const isAsk = agentMode === "ask";
-
   return (
-    <div
-      className="shrink-0 border-t border-[#1E1E23] bg-[#101014] p-3"
-      data-testid="composer"
-    >
-      <div className="rounded-[10px] bg-[#131318] border border-[#26262B] p-2.5">
-        {runBusy && (
-          <div className="mb-2 inline-flex items-center gap-1.5 rounded-full border border-[hsl(var(--border-muted))] bg-accent px-2 py-1">
-            <span className="relative flex h-1.5 w-1.5 items-center justify-center">
-              <span className="absolute inline-flex h-2.5 w-2.5 animate-ping rounded-full bg-primary/40 opacity-75" />
-              <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-primary" />
-            </span>
-            <span className="text-[11px] text-muted-foreground">
-              {messageQueue.length > 0
-                ? `${messageQueue.length} message${messageQueue.length === 1 ? "" : "s"} queued — sent as the run completes`
-                : "Will be queued until the current task completes"}
-            </span>
+    <div className="shrink-0 border-t border-[#1A1A1F] bg-[#0C0C10] p-3" data-testid="composer">
+      {/* Queued message indicator */}
+      {runBusy && (
+        <div className="mb-2 flex items-center gap-1.5 rounded-lg border border-[#26262B] bg-[#15151A] px-2.5 py-1.5">
+          <span className="relative flex h-1.5 w-1.5 shrink-0">
+            <span className="absolute inline-flex h-2.5 w-2.5 animate-ping rounded-full bg-[#9B6AF1]/40 opacity-75" />
+            <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-[#9B6AF1]" />
+          </span>
+          <span className="text-[11px] text-[#71717A]">
+            {messageQueue.length > 0
+              ? `${messageQueue.length} message${messageQueue.length === 1 ? "" : "s"} queued — sent when run finishes`
+              : "Will be queued until the current task completes"}
+          </span>
+        </div>
+      )}
+
+      <MessageQueue />
+
+      {/* Main input box */}
+      <div className="relative rounded-xl border border-[#26262B] bg-[#111116] transition-colors focus-within:border-[#3F3F46]">
+        <div className="px-1 pt-1">
+          <div className="px-0.5">
+            <AttachmentChips />
           </div>
-        )}
 
-        <MessageQueue />
+          {value.startsWith("/") && (
+            <SlashAutocomplete
+              prefix={value}
+              onPick={(command) => {
+                const resolved = resolveSlashCommand(command, {
+                  activeFile,
+                  selectedCode: getActiveSelection(),
+                });
+                clearAttachments();
+                setAgentMode(resolved.mode);
+                setValue(resolved.prompt);
+                if (resolved.contextFile) {
+                  addAttachment({
+                    label: resolved.contextFile.path,
+                    kind: "file",
+                    path: resolved.contextFile.path,
+                    token: resolved.contextFile.token,
+                  });
+                }
+                requestAnimationFrame(() => {
+                  ref.current?.focus();
+                  ref.current?.setSelectionRange(resolved.prompt.length, resolved.prompt.length);
+                  setCaret(resolved.prompt.length);
+                });
+              }}
+            />
+          )}
 
-        <div className="px-0.5">
-          <AttachmentChips />
+          {mention && (
+            <MentionAutocomplete
+              query={mention.query}
+              onClose={() => setCaret(-1)}
+              onPick={(c) => {
+                const token = basename(c.path) || c.label;
+                const { text, caret: next } = applyMention(value, mention.start, caretPos, token);
+                setValue(text);
+                addAttachment({ label: c.path, kind: c.kind, path: c.path, token });
+                requestAnimationFrame(() => {
+                  ref.current?.focus();
+                  ref.current?.setSelectionRange(next, next);
+                  setCaret(next);
+                });
+              }}
+            />
+          )}
+
+          <Textarea
+            ref={ref}
+            rows={1}
+            value={value}
+            onChange={(e) => {
+              const val = e.target.value;
+              if (validationError) setValidationError(null);
+              setValue(val);
+              setCaret(e.target.selectionStart ?? val.length);
+            }}
+            onSelect={(e) => setCaret((e.target as HTMLTextAreaElement).selectionStart ?? 0)}
+            onCompositionStart={() => setComposing(true)}
+            onCompositionEnd={() => setComposing(false)}
+            onKeyDown={(e) => {
+              if (
+                e.key === "Enter" &&
+                !e.shiftKey &&
+                !e.altKey &&
+                !composing &&
+                !e.nativeEvent.isComposing &&
+                e.keyCode !== 229
+              ) {
+                e.preventDefault();
+                submit();
+              }
+            }}
+            placeholder={isAsk ? "Ask about your code…" : "Message the agent…"}
+            disabled={busy}
+            data-testid="composer-textarea"
+            className="max-h-40 min-h-[44px] w-full resize-none border-0 bg-transparent px-2 pb-1 pt-2 shadow-none focus-visible:ring-0 text-[13px] text-[#EDEDF0] placeholder:text-[#3F3F46]"
+          />
         </div>
 
-        {value.startsWith("/") && (
-          <SlashAutocomplete
-            prefix={value}
-            onPick={(c) => {
-              setValue("/" + c.name + " ");
-              ref.current?.focus();
-            }}
-          />
-        )}
+        {/* Bottom toolbar */}
+        <div className="flex items-center gap-1.5 px-2 pb-2 pt-1">
+          {/* Mode toggle */}
+          <div className="flex items-center rounded-lg border border-[#1E1E23] bg-[#0F0F14] p-0.5">
+            <button
+              type="button"
+              onClick={() => setAgentMode("ask")}
+              className={cn(
+                "px-2.5 py-1 text-[11px] rounded-md font-medium transition-all",
+                isAsk
+                  ? "bg-[#1A3A5C] text-[#60a5fa] shadow-sm"
+                  : "text-[#52525B] hover:text-[#A1A1AA]",
+              )}
+              title="Ask: read-only Q&A"
+            >
+              Ask
+            </button>
+            <button
+              type="button"
+              onClick={() => setAgentMode("agent")}
+              className={cn(
+                "px-2.5 py-1 text-[11px] rounded-md font-medium transition-all",
+                !isAsk
+                  ? "bg-[#2A1F4E] text-[#9B6AF1] shadow-sm"
+                  : "text-[#52525B] hover:text-[#A1A1AA]",
+              )}
+              title="Agent: full autonomy"
+            >
+              Agent
+            </button>
+          </div>
 
-        {mention && (
-          <MentionAutocomplete
-            query={mention.query}
-            onClose={() => setCaret(-1)}
-            onPick={(c) => {
-              const { text, caret: next } = applyMention(value, mention.start, caretPos, c.path);
-              setValue(text);
-              addAttachment({ label: c.path, kind: c.kind });
-              requestAnimationFrame(() => {
-                ref.current?.focus();
-                ref.current?.setSelectionRange(next, next);
-                setCaret(next);
-              });
-            }}
-          />
-        )}
+          {/* Autonomy / read-only indicator */}
+          {isAsk ? (
+            <span
+              className="flex items-center gap-1 rounded-md border border-[#60a5fa]/20 bg-[#60a5fa]/8 px-2 py-0.5 text-[10.5px] text-[#60a5fa]"
+              title="Ask mode: no files will change"
+            >
+              Read-only
+            </span>
+          ) : (
+            <button
+              type="button"
+              onClick={cycleAutonomy}
+              className="flex items-center gap-1.5 rounded-md border border-[#1E1E23] bg-[#0F0F14] px-2 py-0.5 text-[10.5px] text-[#71717A] transition-colors hover:bg-[#141419]"
+              title={`Autonomy: ${autonomy} — click to cycle`}
+            >
+              <span
+                className={cn(
+                  "h-1.5 w-1.5 rounded-full",
+                  autonomy === "High" ? "bg-[#fb923c]" : autonomy === "Medium" ? "bg-[#9B6AF1]" : "bg-[#4ade80]",
+                )}
+              />
+              {autonomy}
+            </button>
+          )}
 
-        <Textarea
-          ref={ref}
-          rows={1}
-          value={value}
-          onChange={(e) => {
-            const val = e.target.value;
-            if (validationError) setValidationError(null);
-            setValue(val);
-            setCaret(e.target.selectionStart ?? val.length);
-          }}
-          onSelect={(e) => setCaret((e.target as HTMLTextAreaElement).selectionStart ?? 0)}
-          onCompositionStart={() => setComposing(true)}
-          onCompositionEnd={() => setComposing(false)}
-          onKeyDown={(e) => {
-            if (
-              e.key === "Enter" &&
-              !e.shiftKey &&
-              !e.altKey &&
-              !composing &&
-              !e.nativeEvent.isComposing &&
-              e.keyCode !== 229
-            ) {
-              e.preventDefault();
-              submit();
-            }
-          }}
-          placeholder={isAsk ? "Ask about your code…" : "Message the agent…"}
-          disabled={busy}
-          data-testid="composer-textarea"
-          className="max-h-40 min-h-10 resize-none border-0 bg-transparent px-0.5 pb-2 pt-0 shadow-none focus-visible:ring-0 text-[12.5px] text-[#FAFAFA] placeholder:text-[#52525B]"
-        />
-
-        <div className="mt-2.5 flex items-center gap-2">
+          {/* Attach file */}
           {activeFile && (
             <Button
               type="button"
               size="icon"
               variant="ghost"
-              className="h-7 w-7 text-[#71717A] hover:bg-muted hover:text-foreground shrink-0"
-              aria-label="Attach active file"
+              className="h-6 w-6 text-[#52525B] hover:bg-[#1E1E23] hover:text-[#A1A1AA]"
               title="Attach active file"
               onClick={attachActiveFile}
               disabled={busy}
@@ -200,126 +278,73 @@ export function Composer() {
             </Button>
           )}
 
+          {/* Rules badge */}
           {projectRules?.active && (
             <RulesDialog>
               <button
                 type="button"
-                className="inline-flex items-center gap-1 rounded-full border border-[#26262B] bg-[#1B1B21] px-2 py-0.5 text-[10.5px] text-[#A1A1AA] shrink-0 hover:bg-[#26262B]"
-                title="View project rules applied to every run"
+                className="inline-flex items-center gap-1 rounded-md border border-[#1E1E23] bg-[#0F0F14] px-2 py-0.5 text-[10.5px] text-[#71717A] hover:bg-[#141419] transition-colors"
+                title="View project rules"
               >
-                <ShieldCheck className="h-3 w-3 text-emerald-400" />
+                <ShieldCheck className="h-3 w-3 text-[#4ade80]" />
                 Rules
               </button>
             </RulesDialog>
           )}
 
-          <div className="flex items-center bg-[#1B1B21] rounded-full p-0.5 shrink-0 border border-[#26262B]">
-            <button
-              type="button"
-              onClick={() => setAgentMode("ask")}
-              className={cn(
-                "px-3 py-0.5 text-[11px] rounded-full font-semibold transition-all",
-                isAsk
-                  ? "text-[#0b0e14] bg-[var(--zoc-info)] shadow-sm"
-                  : "text-[#71717A] hover:text-[#A1A1AA]"
-              )}
-              title="Ask: read-only Q&A about your code"
-            >
-              Ask
-            </button>
-            <button
-              type="button"
-              onClick={() => setAgentMode("agent")}
-              className={cn(
-                "px-3 py-0.5 text-[11px] rounded-full font-semibold transition-all",
-                !isAsk
-                  ? "text-[#0b0e14] bg-[var(--zoc-ember)] shadow-sm"
-                  : "text-[#71717A] hover:text-[#A1A1AA]"
-              )}
-              title="Agent: full autonomy — can edit files and run commands"
-            >
-              Agent
-            </button>
-          </div>
+          <div className="ml-auto flex items-center gap-1.5">
+            {streaming && hasText && (
+              <button
+                type="button"
+                onClick={() => {
+                  const content = value.trim();
+                  setValue("");
+                  stopAndSend(content);
+                }}
+                className="h-7 rounded-lg border border-[#26262B] bg-[#15151A] px-2.5 text-[11px] text-[#D4D4D8] hover:bg-[#1E1E23] transition-colors"
+                title="Stop current run and send now"
+              >
+                Stop &amp; send
+              </button>
+            )}
 
-          {isAsk ? (
-            <span
-              className="flex items-center gap-1.5 px-1.5 py-0.5 rounded-md border border-[var(--zoc-info)]/40 bg-[var(--zoc-info)]/10 shrink-0"
-              title="Ask mode is read-only — no files change"
-              aria-label="Read-only mode"
-            >
-              <span className="w-1.5 h-1.5 rounded-full bg-[var(--zoc-info)]" />
-              <span className="text-[11px] text-[#A1A1AA]">Read-only</span>
-            </span>
-          ) : (
-            <button
-              type="button"
-              onClick={cycleAutonomy}
-              className="flex items-center gap-1.5 px-1.5 py-0.5 rounded-md border border-[#26262B] bg-[#15151A] shrink-0 hover:bg-[#1B1B21] transition-colors"
-              title={`Autonomy: ${autonomy} (click to change)`}
-              aria-label={`Autonomy level: ${autonomy}`}
-            >
-              <span
-                className={cn(
-                  "w-1.5 h-1.5 rounded-full",
-                  autonomy === "High"
-                    ? "bg-warning"
-                    : autonomy === "Medium"
-                      ? "bg-primary"
-                      : "bg-success",
-                )}
-              ></span>
-              <span className="text-[11px] text-[#A1A1AA]">{autonomy}</span>
-            </button>
-          )}
-
-          {streaming ? (
-            <div className="ml-auto flex items-center gap-1.5 shrink-0">
-              {value.trim() && (
-                <button
-                  type="button"
-                  onClick={() => {
-                    const content = value.trim();
-                    setValue("");
-                    stopAndSend(content);
-                  }}
-                  className="h-7 rounded-lg border border-[#26262B] bg-[#1B1B21] px-2 text-[11px] text-[#D4D4D8] hover:bg-[#26262B]"
-                  title="Stop the current run and send this message now"
-                >
-                  Stop &amp; send
-                </button>
-              )}
+            {streaming ? (
               <button
                 type="button"
                 onClick={() => cancelStream()}
-                className="w-7 h-7 rounded-lg bg-destructive/90 hover:bg-destructive flex items-center justify-center shadow-[0_4px_12px_rgba(239,68,68,0.3)]"
+                className="flex h-7 w-7 items-center justify-center rounded-lg bg-[#f87171]/15 border border-[#f87171]/30 text-[#f87171] hover:bg-[#f87171]/25 transition-colors shadow-[0_0_12px_rgba(248,113,113,0.15)]"
                 aria-label="Stop"
               >
-                <Square className="h-3 w-3 text-white fill-white" />
+                <Square className="h-3 w-3 fill-current" />
               </button>
-            </div>
-          ) : (
-            <button
-              type="button"
-              onClick={submit}
-              disabled={!value.trim() || busy}
-              className="ml-auto w-7 h-7 rounded-lg bg-gradient-to-br from-[#7C3AED] to-[#9B6AF1] flex items-center justify-center shadow-[0_4px_12px_rgba(124,58,237,0.3)] disabled:opacity-40 disabled:pointer-events-none shrink-0"
-              aria-label="Send"
-            >
-              <Send className="h-3 w-3 text-white" />
-            </button>
-          )}
+            ) : (
+              <button
+                type="button"
+                onClick={submit}
+                disabled={!hasText || busy}
+                className={cn(
+                  "flex h-7 w-7 items-center justify-center rounded-lg border transition-all",
+                  hasText && !busy
+                    ? "bg-[#7C3AED] border-[#9B6AF1]/30 text-white shadow-[0_0_16px_rgba(124,58,237,0.4)] hover:bg-[#6D28D9]"
+                    : "border-[#26262B] bg-[#15151A] text-[#3F3F46] cursor-not-allowed",
+                )}
+                aria-label="Send"
+              >
+                <ArrowUp className="h-3.5 w-3.5" />
+              </button>
+            )}
+          </div>
         </div>
       </div>
-      <div className="text-[11px] text-[#52525B] mt-2 px-0.5 leading-snug">
+
+      {/* Footer hint */}
+      <div className="mt-1.5 px-1 text-[10.5px] text-[#3F3F46] leading-snug">
         {validationError ? (
-          <span className="text-destructive" role="alert">
-            {validationError}
-          </span>
+          <span className="text-[var(--zoc-error)]" role="alert">{validationError}</span>
         ) : isAsk ? (
-          "Ask mode is read-only — no files change. Switch to Agent to make edits."
+          "Ask mode is read-only — no files change."
         ) : (
-          "Zoc can make mistakes — checkpoints let you roll back."
+          "Zoc can make mistakes · checkpoints let you roll back"
         )}
       </div>
     </div>

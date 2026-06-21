@@ -157,6 +157,46 @@ class ContextCandidate(_Base):
     line: int | None = None
 
 
+# ── Local model benchmarks ───────────────────────────────────────────────
+
+class RunModelBenchmarkRequest(_Base):
+    """Run the fixed benchmark suite against an already-loaded local model."""
+
+    model_id: str = Field(alias="modelId", min_length=1, max_length=500)
+    model_name: str = Field(alias="modelName", min_length=1, max_length=200)
+    base_url: str = Field(alias="baseUrl", min_length=1, max_length=1000)
+
+
+class ModelBenchmarkPromptResult(_Base):
+    prompt_id: str = Field(alias="promptId")
+    label: str
+    time_to_first_token_ms: float = Field(alias="timeToFirstTokenMs", ge=0)
+    tokens_per_second: float = Field(alias="tokensPerSecond", ge=0)
+    quality_score: float = Field(alias="qualityScore", ge=0, le=100)
+    output_tokens: int = Field(alias="outputTokens", ge=0)
+    error: str | None = None
+
+
+class ModelBenchmarkRun(_Base):
+    id: str
+    model_id: str = Field(alias="modelId")
+    model_name: str = Field(alias="modelName")
+    created_at: str = Field(alias="createdAt")
+    duration_seconds: float = Field(alias="durationSeconds", ge=0)
+    average_time_to_first_token_ms: float = Field(
+        alias="averageTimeToFirstTokenMs",
+        ge=0,
+    )
+    average_tokens_per_second: float = Field(alias="averageTokensPerSecond", ge=0)
+    average_quality_score: float = Field(alias="averageQualityScore", ge=0, le=100)
+    prompts: list[ModelBenchmarkPromptResult] = Field(default_factory=list)
+
+
+class ModelBenchmarkHistory(_Base):
+    model_id: str = Field(alias="modelId")
+    runs: list[ModelBenchmarkRun] = Field(default_factory=list)
+
+
 # ── Sessions ──────────────────────────────────────────────────────────────
 
 class SessionStatus(str, Enum):
@@ -711,6 +751,9 @@ __all__ = [
     "MessageDeltaEvent",
     "MessageEvent",
     "MessageRole",
+    "ModelBenchmarkHistory",
+    "ModelBenchmarkPromptResult",
+    "ModelBenchmarkRun",
     "ModelCapability",
     "ModelDescriptor",
     "OpenFileContext",
@@ -727,6 +770,7 @@ __all__ = [
     "ProviderDescriptor",
     "ProviderKind",
     "RunAgentRequest",
+    "RunModelBenchmarkRequest",
     "RunLifecycleEvent",
     "RunSlashCommandRequest",
     "Session",

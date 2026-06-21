@@ -36,6 +36,7 @@ from collections.abc import AsyncIterator, Mapping
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from pathlib import Path
+from time import monotonic
 from typing import Literal
 
 from fastapi import Depends, FastAPI, HTTPException, Query, status
@@ -45,7 +46,11 @@ from sse_starlette.sse import EventSourceResponse
 
 from shared_schema.agent_events import AgentEvent, DoneEvent
 from shared_schema.models import (
+    ContextCandidate,
     CreateSessionRequest,
+    ModelBenchmarkHistory,
+    ModelBenchmarkRun,
+    RunModelBenchmarkRequest,
     Session,
     TerminalSession,
     TerminalSessionStatus,
@@ -55,6 +60,8 @@ from shared_schema.models import (
 from zocai_evolution import EvolutionEngine
 
 from zocai_gateway.auth import STATE_SETTINGS_KEY, require_admission
+from zocai_gateway.benchmark import BenchmarkStore, ModelBenchmarker
+from zocai_gateway.context_mentions import search_workspace_files
 from zocai_gateway.emit_gate import DiaryMirror, EmitGate
 from zocai_gateway.fsm import FSM
 from zocai_gateway.memory import reconstruction
@@ -85,11 +92,11 @@ logger = logging.getLogger(__name__)
 #: Kinds of decision the control channel accepts (design "Communication
 #: Channels"): explicit approvals (R3.7-style gates) and budget-continuation
 #: prompts (R4.x).
-DecisionKind = Literal["approval", "budget-continuation"]
+DecisionKind = Literal["approval", "budget-continuation", "review"]
 
 #: The verdict a Developer returns for a pending decision. Approvals use
 #: ``approve``/``reject``; budget-continuation prompts use ``continue``/``stop``.
-DecisionVerdict = Literal["approve", "reject", "continue", "stop"]
+DecisionVerdict = Literal["approve", "reject", "continue", "stop", "apply", "discard"]
 
 
 class RunAccepted(BaseModel):
@@ -114,6 +121,7 @@ class DecisionRequest(BaseModel):
     run_id: str = Field(alias="runId")
     kind: DecisionKind
     decision: DecisionVerdict
+    accepted_paths: list[str] = Field(default_factory=list, alias="acceptedPaths")
 
 
 class DecisionAck(BaseModel):
@@ -169,6 +177,7 @@ class _Run:
         "queue",
         "decisions",
         "emit_gate",
+        "_decision_condition",
         "_loop",
         "_lock",
         "_closed",
@@ -183,6 +192,7 @@ class _Run:
         self.queue: asyncio.Queue[dict[str, object] | None] = asyncio.Queue()
         self.decisions: list[DecisionRequest] = []
         self.emit_gate = EmitGate(sink=self._enqueue, diary=diary)
+        self._decision_condition = threading.Condition()
         try:
             self._loop: asyncio.AbstractEventLoop | None = asyncio.get_running_loop()
         except RuntimeError:
@@ -273,6 +283,35 @@ class _Run:
         fsm.emit = self.emit_fsm_event
         return fsm
 
+    def record_decision(self, req: DecisionRequest) -> None:
+        """Record a control-channel decision and wake any waiting producer."""
+        with self._decision_condition:
+            self.decisions.append(req)
+            self._decision_condition.notify_all()
+
+    def wait_for_review_decision(
+        self, timeout: float | None = None
+    ) -> DecisionRequest | None:
+        """Block the worker thread until a review apply/discard decision lands."""
+        deadline = None if timeout is None else monotonic() + timeout
+        with self._decision_condition:
+            seen = 0
+            while True:
+                for req in self.decisions[seen:]:
+                    if req.kind == "review":
+                        return req
+                seen = len(self.decisions)
+                with self._lock:
+                    if self._closed:
+                        return None
+                if deadline is None:
+                    self._decision_condition.wait(timeout=1.0)
+                    continue
+                remaining = deadline - monotonic()
+                if remaining <= 0:
+                    return None
+                self._decision_condition.wait(timeout=min(remaining, 1.0))
+
     def close(self) -> None:
         """Signal end-of-stream by enqueuing the close sentinel."""
         with self._lock:
@@ -296,6 +335,8 @@ class _Run:
                 }
             )
         self._put(None)
+        with self._decision_condition:
+            self._decision_condition.notify_all()
 
     def _put(self, item: dict[str, object] | None) -> None:
         """Put ``item`` onto the SSE queue from either loop or worker thread."""
@@ -325,8 +366,10 @@ class RunRegistry:
         self._runs: dict[str, _Run] = {}
         self._diary = diary
 
-    def create(self, path: ExecutionPath) -> _Run:
-        run_id = uuid.uuid4().hex
+    def create(self, path: ExecutionPath, run_id: str | None = None) -> _Run:
+        run_id = run_id or uuid.uuid4().hex
+        if run_id in self._runs:
+            raise ValueError(f"run already exists: {run_id}")
         run = _Run(run_id=run_id, path=path, diary=self._diary)
         self._runs[run_id] = run
         return run
@@ -635,6 +678,7 @@ def create_app(
     workspace_root: Path | str | None = None,
     brain: AgentBrain | None = None,
     evolution: EvolutionEngine | None = None,
+    benchmarker: ModelBenchmarker | None = None,
     drive: bool = True,
 ) -> FastAPI:
     """Create and configure the gateway FastAPI application.
@@ -660,6 +704,8 @@ def create_app(
             deterministic stand-in in :mod:`zocai_gateway.run_pipeline`.
         evolution: Optional Layer 5 Evolution_Engine; one is created when
             omitted so verified runs record trajectories (R12).
+        benchmarker: Optional local-model benchmark service. Tests may inject
+            an isolated store and deterministic model callbacks.
         drive: When ``True`` (default) an accepted run is driven end to end
             through the composed pipeline so its events stream over the bus.
     """
@@ -693,6 +739,7 @@ def create_app(
 
     # Layer 5: a single Evolution_Engine records verified-run trajectories (R12).
     engine = evolution if evolution is not None else EvolutionEngine()
+    active_benchmarker = benchmarker or ModelBenchmarker(BenchmarkStore())
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
@@ -735,6 +782,7 @@ def create_app(
     app.state.diary_path = diary_path
     app.state.hermes = hermes
     app.state.evolution = engine
+    app.state.model_benchmarker = active_benchmarker
     app.state.state_store = state_store
 
     run_root = str(resolved_root) if resolved_root is not None else "."
@@ -753,6 +801,47 @@ def create_app(
             "workspace_root": run_root,
             "diary_enabled": diary_path is not None,
         }
+
+    @app.get(
+        "/v1/model-benchmarks",
+        response_model=ModelBenchmarkHistory,
+        response_model_by_alias=True,
+        dependencies=[Depends(require_admission)],
+    )
+    async def model_benchmark_history(
+        model_id: str = Query(alias="modelId", min_length=1, max_length=500),
+    ) -> ModelBenchmarkHistory:
+        """Return newest-first benchmark history for one local model."""
+        try:
+            return await asyncio.to_thread(active_benchmarker.store.history, model_id)
+        except RuntimeError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=str(exc),
+            ) from exc
+
+    @app.post(
+        "/v1/model-benchmarks",
+        response_model=ModelBenchmarkRun,
+        response_model_by_alias=True,
+        dependencies=[Depends(require_admission)],
+    )
+    async def run_model_benchmark(
+        req: RunModelBenchmarkRequest,
+    ) -> ModelBenchmarkRun:
+        """Run the fixed five-prompt suite against the active local model."""
+        try:
+            return await asyncio.to_thread(active_benchmarker.run, req)
+        except ValueError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=str(exc),
+            ) from exc
+        except RuntimeError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=str(exc),
+            ) from exc
 
     @app.get(
         "/v1/sessions",
@@ -815,6 +904,42 @@ def create_app(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail=f"unknown session: {session_id}",
             )
+
+    @app.get(
+        "/v1/sessions/{session_id}/context/search",
+        response_model=list[ContextCandidate],
+        dependencies=[Depends(require_admission)],
+    )
+    async def search_context(
+        session_id: str,
+        q: str = Query(default="", max_length=200),
+        limit: int = Query(default=25, ge=1, le=100),
+    ) -> list[ContextCandidate]:
+        """Search workspace files for the Composer `@` picker."""
+        session = sessions.get(session_id)
+        if session is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"unknown session: {session_id}",
+            )
+        workspace = Path(session.workspace_root or run_root)
+        resolved_workspace = workspace.resolve()
+        candidates: list[ContextCandidate] = []
+        for path in search_workspace_files(resolved_workspace, q, limit):
+            try:
+                detail = path.resolve().relative_to(resolved_workspace).as_posix()
+            except ValueError:
+                detail = path.as_posix()
+            candidates.append(
+                ContextCandidate(
+                    kind="file",
+                    label=path.name,
+                    path=detail,
+                    detail=detail,
+                    line=None,
+                )
+            )
+        return candidates
 
     @app.post(
         "/v1/terminal",
@@ -919,7 +1044,13 @@ def create_app(
         R11.1, R1.9). Ask runs stream over the text-only channel (R6.6).
         """
         path = router.route(req)
-        run = registry.create(path)
+        try:
+            run = registry.create(path, run_id=req.run_id)
+        except ValueError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=str(exc),
+            ) from exc
         run_workspace_root = req.workspace_root or run_root
         logger.info(
             "agent run accepted run_id=%s mode=%s provider=%s model=%s base_url=%s",
@@ -945,6 +1076,7 @@ def create_app(
                             evolution=engine,
                             diary_sink=diary_sink,
                             brain=brain,
+                            wait_for_review_decision=run.wait_for_review_decision,
                         ),
                         timeout=resolved_settings.run_timeout_seconds,
                     )
@@ -971,14 +1103,25 @@ def create_app(
         dependencies=[Depends(require_admission)],
     )
     async def agent_decision(req: DecisionRequest) -> DecisionAck:
-        """Record an approval or budget-continuation decision for a run."""
+        """Record an approval, budget-continuation, or review decision."""
         run = registry.get(req.run_id)
         if run is None:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail=f"unknown run: {req.run_id}",
             )
-        run.decisions.append(req)
+        if req.kind == "review":
+            if req.decision not in {"apply", "discard"}:
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail="review decisions must be 'apply' or 'discard'",
+                )
+            if req.decision == "apply" and not req.accepted_paths:
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail="apply requires at least one accepted path",
+                )
+        run.record_decision(req)
         return DecisionAck(run_id=req.run_id, kind=req.kind, decision=req.decision)
 
     @app.get("/v1/agent/events", dependencies=[Depends(require_admission)])
