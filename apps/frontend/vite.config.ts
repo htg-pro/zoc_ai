@@ -1,9 +1,21 @@
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 import path from "node:path";
+import fs from "node:fs";
+
+// Single source of truth for the app version: the frontend package.json,
+// which `scripts/stamp_version.py` keeps in sync with the root VERSION file.
+const appVersion = (
+  JSON.parse(fs.readFileSync(path.resolve(__dirname, "package.json"), "utf-8")) as {
+    version: string;
+  }
+).version;
 
 export default defineConfig(async () => ({
   plugins: [react()],
+  define: {
+    __APP_VERSION__: JSON.stringify(appVersion),
+  },
   resolve: {
     alias: {
       "@": path.resolve(__dirname, "./src"),

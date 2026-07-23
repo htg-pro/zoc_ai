@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "zocai-gateway"
-version = "2.0.0"
+version = "0.0.1"
 description = "FastAPI streaming gateway sidecar for the Zoc AI Ecosystem (Layer 2)."
 requires-python = ">=3.11"
 license = { text = "MIT" }

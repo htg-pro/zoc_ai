@@ -3,6 +3,7 @@ import {
   Blocks,
   Cpu,
   Database,
+  Info,
   KeyRound,
   Keyboard,
   Palette,
@@ -27,6 +28,7 @@ import { ProfilesSection } from "./sections/Profiles";
 import { McpSection } from "./sections/Mcp";
 import { ExtensionsSection } from "./sections/Extensions";
 import { TrustSection } from "./sections/Trust";
+import { AboutSection } from "./sections/About";
 import { cn } from "@/lib/utils";
 
 type Tab =
@@ -40,7 +42,8 @@ type Tab =
   | "keybindings"
   | "profiles"
   | "mcp"
-  | "extensions";
+  | "extensions"
+  | "about";
 
 const TABS: { key: Tab; label: string; Icon: typeof Cpu }[] = [
   { key: "general", label: "Settings", Icon: SlidersHorizontal },
@@ -54,6 +57,7 @@ const TABS: { key: Tab; label: string; Icon: typeof Cpu }[] = [
   { key: "profiles", label: "Profiles", Icon: UserCog },
   { key: "mcp", label: "MCP Servers", Icon: Plug },
   { key: "extensions", label: "Extensions", Icon: Blocks },
+  { key: "about", label: "About", Icon: Info },
 ];
 
 const TAB_KEYS = new Set<string>(TABS.map((t) => t.key));
@@ -120,6 +124,7 @@ export function SettingsView() {
           {tab === "profiles" && <ProfilesSection />}
           {tab === "mcp" && <McpSection />}
           {tab === "extensions" && <ExtensionsSection />}
+          {tab === "about" && <AboutSection />}
         </div>
       </ScrollArea>
     </div>

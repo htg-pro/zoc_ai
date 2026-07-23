@@ -2,6 +2,23 @@
 
 All notable changes to Zoc AI.
 
+## [0.0.1] - 2026-07-23
+
+Preview release. Re-baselines the project version to `0.0.1` while the new
+architecture stabilizes ahead of a public `1.0`.
+
+### Added
+
+- **About section** in Settings (product name, version, application ID,
+  runtime, copyright, and a link to the project repository).
+- Build-time app version injection (`__APP_VERSION__`) sourced from the
+  canonical `VERSION` file, so the UI always reflects the shipped build.
+
+### Changed
+
+- Project version stamped to `0.0.1` across all manifests (`package.json`,
+  `Cargo.toml`, `pyproject.toml`, `tauri.conf.json`).
+
 ## [2.0.0] - 2026-05-28
 
 Full rewrite. The pre-rewrite Electron/Python codebase under `legacy/` has been

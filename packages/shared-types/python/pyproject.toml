@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "zoc-studio-shared-schema"
-version = "2.0.0"
+version = "0.0.1"
 description = "Shared Pydantic schema for Zoc AI (source of truth for TS types)."
 requires-python = ">=3.11"
 license = { text = "MIT" }

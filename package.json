@@ -1,8 +1,8 @@
 {
   "name": "zoc-studio",
-  "version": "2.0.0",
+  "version": "0.0.1",
   "private": true,
-  "description": "Zoc AI — Zencoder/Codex-style local agentic coding desktop app.",
+  "description": "Zoc AI \u2014 Zencoder/Codex-style local agentic coding desktop app.",
   "scripts": {
     "dev": "python3 scripts/stage_dev_binaries.py && pnpm --filter @zoc-studio/desktop dev",
     "dev:frontend": "pnpm --filter @zoc-studio/frontend dev",
