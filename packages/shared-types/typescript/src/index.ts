@@ -544,6 +544,17 @@ export interface UpdateSettingsRequest {
   embedding?: EmbeddingSettings | null;
 }
 
+export interface WorkspaceIndexProgress {
+  type: "index.started" | "index.progress" | "index.completed" | "index.error";
+  sessionId: string;
+  processedFiles: number;
+  totalFiles: number;
+  indexedFiles: number;
+  tokenCount: number;
+  currentFile?: string | null;
+  message?: string | null;
+}
+
 // ── Union Types ───────────────────────────────────────────────────────
 
 export type AgentEvent =

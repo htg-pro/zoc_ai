@@ -12,17 +12,17 @@ from pathlib import Path
 from types import SimpleNamespace
 
 from zocai_evolution import EvolutionEngine
-
+from zocai_gateway.context.steering_compiler import SteeringPayload
+from zocai_gateway.context.token_gate import TokenGateResult
 from zocai_gateway.edits import EditPlan, PlannedChange
 from zocai_gateway.emit_gate import EmitGate
-from zocai_gateway.hardware_probe import HardwareProfile
 from zocai_gateway.hot_swap import HotSwapOutcomeKind
 from zocai_gateway.memory.matrix import MemoryMatrix
-from zocai_gateway.memory.state_wrapper import StateWrapperStore
-from zocai_gateway.memory.state_wrapper import FailureRecord
+from zocai_gateway.memory.state_wrapper import FailureRecord, StateWrapperStore
 from zocai_gateway.mode_router import AgentRunRequest, Mode
 from zocai_gateway.model_allocator import Allocation
 from zocai_gateway.model_interface import ModelTier
+from zocai_gateway.project_tests import ProjectTestResult
 from zocai_gateway.run_pipeline import (
     AllocationSignals,
     DefaultAgentBrain,
@@ -30,10 +30,7 @@ from zocai_gateway.run_pipeline import (
     RunPipeline,
     RuntimeAgentBrain,
 )
-from zocai_gateway.project_tests import ProjectTestResult
 from zocai_gateway.stages import Stage
-from zocai_gateway.context.steering_compiler import SteeringPayload
-from zocai_gateway.context.token_gate import TokenGateResult
 
 
 def _gate() -> tuple[list[dict[str, object]], EmitGate]:
@@ -112,6 +109,8 @@ def test_runtime_brain_injects_failed_test_output_into_remediation_call(monkeypa
 
     assert remediation is not None
     assert len(prompts) == 2
+    assert "Failed tests:" in prompts[1]
+    assert "pnpm test exited with code 1" in prompts[1]
     assert "Command: pnpm test" in prompts[1]
     assert "expected true, got false" in prompts[1]
 
@@ -134,7 +133,7 @@ def test_agent_runs_detected_tests_after_writes_and_emits_counts(tmp_path: Path)
     calls: list[str] = []
 
     def fake_tests(root: Path, command: object) -> ProjectTestResult:
-        calls.append(str(getattr(command, "command")))
+        calls.append(str(command.command))
         return ProjectTestResult(
             command="npm test",
             source="package.json",
@@ -164,7 +163,7 @@ def test_agent_runs_detected_tests_after_writes_and_emits_counts(tmp_path: Path)
     assert test_event["status"] == "fail"
 
 
-def test_agent_run_drives_to_done_with_intent_first(tmp_path: Path) -> None:
+def test_agent_run_without_provider_fails_closed_at_map_files(tmp_path: Path) -> None:
     events, gate = _gate()
     pipeline = RunPipeline(
         AgentRunRequest(prompt="add a feature", mode="agent"),
@@ -177,20 +176,15 @@ def test_agent_run_drives_to_done_with_intent_first(tmp_path: Path) -> None:
 
     result = pipeline.run()
 
-    assert result.stage is Stage.DONE
-    # R1.9: the run's first emitted event records tier + window.
+    assert result.stage is Stage.ERROR_CLOSED
+    # Allocation still emits intent first, then MAP_FILES fails closed before
+    # any map-files row or workspace mutation can occur.
     assert events[0]["type"] == "intent"
     assert events[0]["modelTier"] == "local-slm"
     assert events[0]["contextWindowTokens"] == 4000
     assert events[0]["fallbackReason"] is None
-    budget_events = [event for event in events if event["type"] == "budget"]
-    assert budget_events
-    assert budget_events[-1]["tokenLimit"] == 4000
-    assert budget_events[-1]["tokensUsed"] > 0
-    assert budget_events[-1]["iterations"] == 0
-    assert budget_events[-1]["recoveries"] == 0
-    # The terminal event closes the run (R3.4).
-    assert events[-1]["type"] == "done"
+    assert not any(event["type"] == "map-files" for event in events)
+    assert not any(event["type"] == "done" for event in events)
 
 
 def test_agent_review_apply_copies_only_selected_paths(tmp_path: Path) -> None:
@@ -334,6 +328,7 @@ def test_verified_done_records_trajectory(tmp_path: Path) -> None:
         close=lambda: None,
         workspace_root=tmp_path,
         evolution=engine,
+        brain=DefaultAgentBrain(),
     ).run()
 
     assert engine.bus.collected_count() == 1

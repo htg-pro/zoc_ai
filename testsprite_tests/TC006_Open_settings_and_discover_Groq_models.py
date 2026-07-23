@@ -34,52 +34,51 @@ async def run_test():
 
         # Interact with the page elements to simulate user flow
         # -> navigate
-        await page.goto("http://localhost:1420")
+        await page.goto("http://localhost:1420/")
         try:
             await page.wait_for_load_state("domcontentloaded", timeout=5000)
         except Exception:
             pass
         
-        # -> Click the 'Settings' button in the left activity bar to open the Settings panel so the Providers section can be accessed.
-        # Settings button
-        elem = page.get_by_role('button', name='Settings', exact=True)
+        # -> Click the 'Settings' button to open the Settings panel (after the page reloads).
+        await page.goto("http://localhost:1420/")
+        try:
+            await page.wait_for_load_state("domcontentloaded", timeout=5000)
+        except Exception:
+            pass
+        
+        # -> Click the visible 'Reload' button to reload the frontend page.
+        # Reload button
+        elem = page.locator('[id="reload-button"]')
         await elem.click(timeout=10000)
         
-        # -> Fill the Groq API key field with the provided Groq key, click 'Save', then click 'Fetch live models' (Discover models) to load available Groq models.
-        # sk-… password field
-        elem = page.locator('[id="groq-key"]')
-        await elem.wait_for(state="visible", timeout=10000)
-        await elem.fill("REDACTED_GROQ_KEY_ROTATE_ME")
-        
-        # -> Fill the Groq API key field with the provided Groq key, click 'Save', then click 'Fetch live models' (Discover models) to load available Groq models.
-        # Save button
-        elem = page.get_by_text('Groqconfigured', exact=True).locator("xpath=ancestor-or-self::*[.//button][1]").get_by_role('button', name='Save', exact=True)
+        # -> Click the 'Reload' button to attempt to load the frontend again.
+        # Reload button
+        elem = page.locator('[id="reload-button"]')
         await elem.click(timeout=10000)
         
-        # -> Fill the Groq API key field with the provided Groq key, click 'Save', then click 'Fetch live models' (Discover models) to load available Groq models.
-        # Fetch live models button
-        elem = page.locator('xpath=/html/body/div/div/div/div/div[3]/div/div/div/div/div/div/div/div/div/div/div/div[3]/div[2]/div[3]/div/button')
-        await elem.click(timeout=10000)
+        # -> Open the model server health endpoint (GET /health) at http://127.0.0.1:8080 to check whether the backend model server is running.
+        # Open URL in new tab
+        page = await context.new_page()
+        await page.goto("http://127.0.0.1:8080/health")
+        try:
+            await page.wait_for_load_state("domcontentloaded", timeout=5000)
+        except Exception:
+            pass
         
-        # -> Open the model picker by clicking the 'Select model' button in the Agent panel so the discovered Groq models can be verified in the list and the provider's active status can be checked.
-        # Select model button
-        elem = page.get_by_role('button', name='Choose model', exact=True)
-        await elem.click(timeout=10000)
-        
-        # -> Select the 'llama-3.3-70b-versatile' model from the Agent model picker to activate the Groq provider and confirm the provider/model is shown as active in the Agent header.
-        # llama-3.3-70b-versatile model · tools menu item
-        elem = page.get_by_role('menuitem', name='llama-3.3-70b-versatile model · tools', exact=True)
-        await elem.click(timeout=10000)
+        # -> Switch to the browser tab showing the model server health endpoint (http://127.0.0.1:8080/health) and verify the /health response is OK.
+        # Switch to tab 3E79
+        page = context.pages[-1]  # switch to most recently active tab
         
         # --> Assertions to verify final state
+        # Assert: Verify discovered models are displayed
+        assert False, "Expected: Verify discovered models are displayed (could not be verified on the page)"
+        # Assert: Verify the provider is shown as active
+        assert False, "Expected: Verify the provider is shown as active (could not be verified on the page)"
         
-        # --> Verify discovered models are displayed
-        # Assert: Discovered Groq models are listed in the Models input.
-        await expect(page.locator("xpath=/html/body/div[1]/div/div/div/div[3]/div/div/div[1]/div/div/div/div/div/div/div/div/div[3]/div[2]/div[3]/input").nth(0)).to_have_value("allam-2-7b, canopylabs/orpheus-arabic-saudi, canopylabs/orpheus-v1-english, groq/compound, groq/compound-mini, llama-3.1-8b-instant, llama-3.3-70b-versatile, meta-llama/llama-4-scout-17b-16e-instruct, meta-llama/llama-prompt-guard-2-22m, meta-llama/llama-prompt-guard-2-86m, openai/gpt-oss-120b, openai/gpt-oss-20b, openai/gpt-oss-safeguard-20b, qwen/qwen3-32b, whisper-large-v3, whisper-large-v3-turbo", timeout=15000), "Discovered Groq models are listed in the Models input."
-        
-        # --> Verify the provider is shown as active
-        # Assert: Agent header shows 'llama-3.3-70b-versatile' as the active model.
-        await expect(page.locator("xpath=/html/body/div[1]/div/div/div/div[5]/div/div/div[1]/div/div[2]/button").nth(0)).to_have_text("llama-3.3-70b-versatile", timeout=15000), "Agent header shows 'llama-3.3-70b-versatile' as the active model."
+        # --> Test blocked by environment/access constraints during agent run
+        # Reason: TEST BLOCKED The test could not be run because the frontend or required backend health endpoint is not reachable. Observations: - The frontend at http://127.0.0.1:1420 shows an "ERR_EMPTY_RESPONSE" page with only a "Reload" button (screenshot confirms the browser error). - The model server health endpoint at http://127.0.0.1:8080/health did not show an 'OK' status (search for "OK" returned no m...
+        raise AssertionError("Test blocked during agent run: " + "TEST BLOCKED The test could not be run because the frontend or required backend health endpoint is not reachable. Observations: - The frontend at http://127.0.0.1:1420 shows an \"ERR_EMPTY_RESPONSE\" page with only a \"Reload\" button (screenshot confirms the browser error). - The model server health endpoint at http://127.0.0.1:8080/health did not show an 'OK' status (search for \"OK\" returned no m..." + " — the exported script cannot reproduce a PASS in this environment.")
         await asyncio.sleep(5)
 
     finally:

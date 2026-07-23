@@ -1,5 +1,5 @@
 import type { Message } from "@zoc-studio/shared-types";
-import { Bot, User } from "lucide-react";
+import { Bot } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 const ROLE_LABEL = { user: "You", assistant: "Zoc", system: "System", tool: "Tool" } as const;
@@ -12,7 +12,6 @@ const ROLE_LABEL = { user: "You", assistant: "Zoc", system: "System", tool: "Too
  */
 export function MessageItem({ message }: { message: Message }) {
   const isUser = message.role === "user";
-  const isAssistant = message.role === "assistant";
   const isSystem = message.role === "system";
   const isError =
     isSystem &&

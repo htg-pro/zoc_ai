@@ -1,33 +1,10 @@
-"""Property test for Agent-Mode contract conformance + valid discriminator (task 7.4).
+"""Property test for Agent-Mode rendered-event contract conformance.
 
-Feature: zocai-ecosystem-rebuild, Property 26: Every Agent-Mode event conforms to
-the contract with a valid discriminator.
-
-**Validates: Requirements 6.2**
-
-Design Property 26 (verbatim intent): *For any* event emitted in Agent Mode, the
-payload validates against the Event_Contract and its ``type`` discriminator
-matches exactly one of the eight defined row kinds.
-
-Strategy
---------
-We build Hypothesis strategies that generate *valid* instances of each of the
-eight contract row kinds (intent, thinking, read-files, edit-file, command,
-summary, approval, done) directly from the real ``shared_schema`` Pydantic
-models — no mocks. Each generated model is dumped to its wire form and pushed
-through the real :class:`EmitGate.emit` (the single Agent-Mode emission gate).
-
-For every generated event the property asserts that:
-
-* ``emit`` returns ``True`` — the payload conformed to the Event_Contract and
-  was forwarded to the sink (R6.2),
-* the gate recorded **no** contract violation,
-* the forwarded wire payload carries a ``type`` discriminator that matches
-  **exactly one** of the eight defined row kinds, and
-* that discriminator equals the kind we generated.
-
-Because the eight model strategies span every row kind, the property holds
-*for any* Agent-Mode event, which is the universal claim of Property 26.
+The generated strategy spans every member of the 12-kind rendered ``EventType``
+domain (including plan, plan-update, map-files, and review). Each payload is
+validated by the real EmitGate, and its discriminator must identify exactly one
+rendered kind. Validated-only telemetry remains in AgentEvent but outside this
+row-registry domain.
 """
 
 from __future__ import annotations
@@ -38,7 +15,7 @@ from typing import get_args
 from hypothesis import given, settings
 from hypothesis import strategies as st
 
-# The eight row kinds are derived from the contract's EventType Literal so the
+# The twelve row kinds are derived from the contract's EventType Literal so the
 # test stays in lock-step with the schema: exactly these are valid discriminators.
 from shared_schema.agent_events import (
     ApprovalEvent,
@@ -47,16 +24,21 @@ from shared_schema.agent_events import (
     EditFileEvent,
     EventType,
     IntentEvent,
+    MapFilesEvent,
+    PlanEvent,
+    PlanItem,
+    PlanUpdateEvent,
     ReadFileRef,
     ReadFilesEvent,
+    ReviewEvent,
+    ReviewFile,
     SummaryEvent,
     ThinkingEvent,
 )
-
 from zocai_gateway.emit_gate import EmitGate
 
-#: The eight and only valid discriminator values per the Event_Contract (R6.3).
-EIGHT_ROW_KINDS: frozenset[str] = frozenset(get_args(EventType))
+#: The twelve and only valid discriminator values per the Event_Contract (R6.3).
+RENDERED_ROW_KINDS: frozenset[str] = frozenset(get_args(EventType))
 
 
 class _RecordingSink:
@@ -116,6 +98,59 @@ def _thinking_events() -> st.SearchStrategy[ThinkingEvent]:
     return st.fixed_dictionaries(
         {"seq": _seqs, "run_id": _run_ids, "ts": _ts, "text": _text}
     ).map(lambda d: ThinkingEvent(**d))
+
+
+def _plan_events() -> st.SearchStrategy[PlanEvent]:
+    items = st.lists(
+        st.fixed_dictionaries(
+            {
+                "id": st.text(min_size=1, max_size=20),
+                "label": _text,
+                "status": st.sampled_from(["pending", "active", "done"]),
+            }
+        ).map(lambda d: PlanItem(**d)),
+        max_size=6,
+    )
+    return st.fixed_dictionaries(
+        {"seq": _seqs, "run_id": _run_ids, "ts": _ts, "items": items}
+    ).map(lambda d: PlanEvent(**d))
+
+
+def _plan_update_events() -> st.SearchStrategy[PlanUpdateEvent]:
+    return st.fixed_dictionaries(
+        {
+            "seq": _seqs,
+            "run_id": _run_ids,
+            "ts": _ts,
+            "id": st.text(min_size=1, max_size=20),
+            "status": st.sampled_from(["pending", "active", "done"]),
+        }
+    ).map(lambda d: PlanUpdateEvent(**d))
+
+
+def _map_files_events() -> st.SearchStrategy[MapFilesEvent]:
+    return st.fixed_dictionaries(
+        {
+            "seq": _seqs,
+            "run_id": _run_ids,
+            "ts": _ts,
+            "read_list": st.lists(_paths, max_size=8),
+            "write_list": st.lists(_paths, max_size=12),
+            "rationale": _text,
+        }
+    ).map(lambda d: MapFilesEvent(**d))
+
+
+def _review_events() -> st.SearchStrategy[ReviewEvent]:
+    files = st.lists(
+        st.fixed_dictionaries(
+            {"path": _paths, "diff": st.text(max_size=200)}
+        ).map(lambda d: ReviewFile(**d)),
+        max_size=6,
+    )
+    return st.fixed_dictionaries(
+        {"seq": _seqs, "run_id": _run_ids, "ts": _ts, "files": files}
+    ).map(lambda d: ReviewEvent(**d))
 
 
 def _read_files_events() -> st.SearchStrategy[ReadFilesEvent]:
@@ -186,13 +221,17 @@ def _done_events() -> st.SearchStrategy[DoneEvent]:
     ).map(lambda d: DoneEvent(**d))
 
 
-#: A valid instance of *any* of the eight row kinds — spans the whole contract.
+#: A valid instance of *any* of the twelve row kinds — spans the whole contract.
 ANY_AGENT_EVENT = st.one_of(
     _intent_events(),
     _thinking_events(),
+    _plan_events(),
+    _plan_update_events(),
+    _map_files_events(),
     _read_files_events(),
     _edit_file_events(),
     _command_events(),
+    _review_events(),
     _summary_events(),
     _approval_events(),
     _done_events(),
@@ -224,27 +263,31 @@ def test_agent_event_conforms_and_has_valid_discriminator(event: object) -> None
     wire = sink.events[0]
     discriminator = wire["type"]
 
-    # The discriminator matches exactly one of the eight defined row kinds.
-    assert discriminator in EIGHT_ROW_KINDS
-    matches = [k for k in EIGHT_ROW_KINDS if k == discriminator]
+    # The discriminator matches exactly one of the twelve defined row kinds.
+    assert discriminator in RENDERED_ROW_KINDS
+    matches = [k for k in RENDERED_ROW_KINDS if k == discriminator]
     assert len(matches) == 1
 
     # ...and it is exactly the kind we generated.
     assert discriminator == event.type  # type: ignore[attr-defined]
 
 
-def test_contract_defines_exactly_eight_row_kinds() -> None:
-    """Guard: the discriminator domain is exactly the eight contract kinds (R6.3)."""
-    assert EIGHT_ROW_KINDS == frozenset(
+def test_contract_defines_exactly_twelve_rendered_row_kinds() -> None:
+    """Guard: EventType is exactly the rendered row-registry domain."""
+    assert frozenset(
         {
             "intent",
             "thinking",
+            "plan",
+            "plan-update",
+            "map-files",
             "read-files",
             "edit-file",
             "command",
+            "review",
             "summary",
             "approval",
             "done",
         }
-    )
-    assert len(EIGHT_ROW_KINDS) == 8
+    ) == RENDERED_ROW_KINDS
+    assert len(RENDERED_ROW_KINDS) == 12

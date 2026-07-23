@@ -260,6 +260,58 @@ export function PlanUpdateRow({ event }: RowProps<AgentEvents.PlanUpdateEvent>):
   );
 }
 
+export function MapFilesRow({ event }: RowProps<AgentEvents.MapFilesEvent>): JSX.Element {
+  const reads = event.readList.length;
+  const writes = event.writeList.length;
+  return (
+    <TimelineRow
+      icon={<ListChecks className="h-3 w-3" />}
+      iconColor="text-[var(--zoc-info)]"
+      iconBg="bg-[rgba(96,165,250,0.10)]"
+      label="File scope"
+      labelColor="text-[var(--zoc-info)]"
+      meta={`${reads} read · ${writes} write`}
+      collapsible
+      defaultOpen
+      data-event-type="map-files"
+    >
+      <div className="flex flex-col gap-2 text-[11.5px]">
+        <div>
+          <div className="mb-1 font-medium text-[#A1A1AA]">Read</div>
+          {reads === 0 ? (
+            <div className="text-[#52525B]">No files selected</div>
+          ) : (
+            <div className="flex flex-col gap-0.5">
+              {event.readList.map((path, index) => (
+                <div key={`read:${path}:${index}`} className="rounded border border-[#1E1E23] bg-[#0f0f14] px-2 py-1 font-mono text-[#C8C8CE]">
+                  {path}
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+        <div>
+          <div className="mb-1 font-medium text-[#A1A1AA]">Create or modify</div>
+          {writes === 0 ? (
+            <div className="text-[#52525B]">No writes declared</div>
+          ) : (
+            <div className="flex flex-col gap-0.5">
+              {event.writeList.map((path, index) => (
+                <div key={`write:${path}:${index}`} className="rounded border border-[#1E1E23] bg-[#0f0f14] px-2 py-1 font-mono text-[#C8C8CE]">
+                  {path}
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+        {event.rationale && (
+          <p className="leading-relaxed text-[#71717A]">{event.rationale}</p>
+        )}
+      </div>
+    </TimelineRow>
+  );
+}
+
 export function ReadFilesRow({ event }: RowProps<AgentEvents.ReadFilesEvent>): JSX.Element {
   const single = event.files.length === 1;
   return (
@@ -520,6 +572,7 @@ export const ROW_COMPONENTS: Record<EventType, RowComponent> = {
   thinking: ThinkingRow as RowComponent,
   plan: PlanRow as RowComponent,
   "plan-update": PlanUpdateRow as RowComponent,
+  "map-files": MapFilesRow as RowComponent,
   "read-files": ReadFilesRow as RowComponent,
   "edit-file": EditFileRow as RowComponent,
   command: CommandRow as RowComponent,

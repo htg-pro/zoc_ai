@@ -108,6 +108,22 @@ def test_test_results_event_validates_with_counts_and_output() -> None:
     assert event.failed == 2
 
 
+def test_recovery_attempt_event_validates_failures() -> None:
+    event = AgentEventModel.model_validate(
+        {
+            "type": "recovery-attempt",
+            "seq": 7,
+            "runId": "run",
+            "ts": TS,
+            "attempt": 2,
+            "failures": ["tests/test_api.py::test_create"],
+        }
+    ).root
+
+    assert event.type == "recovery-attempt"
+    assert event.attempt == 2
+
+
 def test_plan_update_rejects_unknown_status() -> None:
     with pytest.raises(ValidationError):
         AgentEventModel.model_validate(

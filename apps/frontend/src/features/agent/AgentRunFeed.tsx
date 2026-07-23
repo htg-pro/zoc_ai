@@ -4,9 +4,10 @@
  * Adapted from `apps/workbench/src/AgentFeed.tsx` (branch
  * `zocai-ecosystem-rebuild`) into the preserved `apps/frontend` shell. It is
  * the NEW run-feed body that replaces `AgentTimeline.tsx` inside row 3 of
- * `AgentPanel.tsx` (the wiring itself lands in task 4.2). It renders the eight
- * typed Event_Rows fed by the single SSE client `useAgentStream` and must not
- * enclose or alter the Panel_Shell (R3.7).
+ * `AgentPanel.tsx` (the wiring itself lands in task 4.2). It renders the typed
+ * Event_Rows registered by `ROW_COMPONENTS` and intentionally drops validated
+ * telemetry kinds with no row component; it must not enclose or alter the
+ * Panel_Shell (R3.7).
  *
  * Requirements (merge spec):
  * - R3.2 / R3.3: WHEN the Run_Feed receives an Event_Contract payload it

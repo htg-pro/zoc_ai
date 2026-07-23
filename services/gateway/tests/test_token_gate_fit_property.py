@@ -37,11 +37,11 @@ from collections.abc import Sequence
 
 from hypothesis import given, settings
 from hypothesis import strategies as st
-
 from zocai_gateway.context.rag_matcher import FragmentSource, RagFragment
 from zocai_gateway.context.token_gate import (
     TokenGateResult,
     estimate_tokens,
+    fit_chunks,
     fit_fragments,
 )
 
@@ -129,6 +129,41 @@ def test_token_gate_fits_and_truncates_lowest_relevance_first(
     # (3) Relevance prefix: kept fragments are in non-increasing score order.
     kept_scores = [f.score for f in result.fragments]
     assert kept_scores == sorted(kept_scores, reverse=True)
+
+
+@settings(max_examples=100, deadline=None)
+@given(
+    chunks=st.lists(st.text(alphabet="abc xyz", max_size=80), max_size=20),
+    budget=st.integers(min_value=-10, max_value=300),
+)
+def test_chunk_gate_keeps_exact_ranking_prefix(
+    chunks: list[str], budget: int
+) -> None:
+    """Feature: advanced-context-engine, Property 10: budget prefix.
+
+    **Validates: Requirements 5.2, 5.3, 5.4, 5.5, 5.6, 5.7**
+    """
+    result = fit_chunks(chunks, budget)
+    safe_budget = max(budget, 0)
+    assert result.budget == safe_budget
+
+    expected: list[str] = []
+    used = 0
+    if budget > 0:
+        for chunk in chunks:
+            cost = estimate_tokens(chunk)
+            if used + cost > safe_budget:
+                break
+            expected.append(chunk)
+            used += cost
+
+    assert result.chunks == tuple(expected)
+    assert result.chunks == tuple(chunks[: len(result.chunks)])
+    assert result.total_tokens == used
+    assert result.total_tokens <= safe_budget
+    if budget <= 0 or not chunks:
+        assert result.chunks == ()
+        assert result.total_tokens == 0
 
 
 if __name__ == "__main__":  # pragma: no cover

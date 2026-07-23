@@ -42,19 +42,26 @@ from collections.abc import Mapping
 
 from hypothesis import given, settings
 from hypothesis import strategies as st
-
 from zocai_gateway.emit_gate import EmitGate
 
 # The eight defined row kinds (R6.3). Anything else is a non-conforming type.
 VALID_TYPES = (
     "intent",
     "thinking",
+    "plan",
+    "plan-update",
+    "map-files",
     "read-files",
     "edit-file",
     "command",
+    "review",
     "summary",
     "approval",
     "done",
+    "recovery-attempt",
+    "budget",
+    "test-results",
+    "context-compressed",
 )
 
 
@@ -95,9 +102,22 @@ def conforming_payloads(draw: st.DrawFn) -> dict[str, object]:
     if kind == "intent":
         base["text"] = draw(st.text(max_size=20))
         base["modelTier"] = draw(st.sampled_from(["local-slm", "edge", "cloud"]))
-        base["contextWindowTokens"] = draw(st.integers(min_value=0, max_value=100_000))
+        base["contextWindowTokens"] = draw(st.integers(min_value=1, max_value=100_000))
     elif kind == "thinking":
         base["text"] = draw(st.text(max_size=20))
+    elif kind == "plan":
+        base["items"] = []
+    elif kind == "plan-update":
+        base["id"] = draw(st.text(min_size=1, max_size=12))
+        base["status"] = draw(st.sampled_from(["pending", "active", "done"]))
+    elif kind == "map-files":
+        base["readList"] = draw(
+            st.lists(st.text(min_size=1, max_size=8), max_size=8)
+        )
+        base["writeList"] = draw(
+            st.lists(st.text(min_size=1, max_size=8), max_size=4)
+        )
+        base["rationale"] = draw(st.text(max_size=20))
     elif kind == "read-files":
         base["files"] = [
             {"path": p}
@@ -108,12 +128,35 @@ def conforming_payloads(draw: st.DrawFn) -> dict[str, object]:
         base["diff"] = draw(st.text(max_size=20))
     elif kind == "command":
         base["command"] = draw(st.text(min_size=1, max_size=12))
+    elif kind == "review":
+        base["files"] = []
     elif kind == "summary":
         base["text"] = draw(st.text(max_size=20))
     elif kind == "approval":
         base["prompt"] = draw(st.text(max_size=20))
     elif kind == "done":
         base["ok"] = draw(st.booleans())
+    elif kind == "recovery-attempt":
+        base["attempt"] = draw(st.integers(min_value=1, max_value=10))
+        base["failures"] = draw(st.lists(st.text(max_size=20), max_size=4))
+    elif kind == "budget":
+        base["tokensUsed"] = draw(st.integers(min_value=0, max_value=100_000))
+        base["tokenLimit"] = draw(st.integers(min_value=0, max_value=100_000))
+        base["iterations"] = draw(st.integers(min_value=0, max_value=100))
+        base["recoveries"] = draw(st.integers(min_value=0, max_value=100))
+    elif kind == "test-results":
+        base["status"] = draw(st.sampled_from(["pass", "fail"]))
+        base["command"] = draw(st.text(min_size=1, max_size=12))
+        base["source"] = draw(st.text(min_size=1, max_size=12))
+        base["passed"] = draw(st.integers(min_value=0, max_value=100))
+        base["failed"] = draw(st.integers(min_value=0, max_value=100))
+        base["exitCode"] = draw(st.integers(min_value=-10, max_value=10))
+    elif kind == "context-compressed":
+        original = draw(st.integers(min_value=1, max_value=100_000))
+        compressed = draw(st.integers(min_value=0, max_value=original))
+        base["originalTokens"] = original
+        base["compressedTokens"] = compressed
+        base["compressionRatio"] = compressed / original
     return base
 
 
@@ -124,12 +167,26 @@ def conforming_payloads(draw: st.DrawFn) -> dict[str, object]:
 _REQUIRED_BY_KIND: dict[str, tuple[str, ...]] = {
     "intent": ("type", "seq", "runId", "ts", "text", "modelTier", "contextWindowTokens"),
     "thinking": ("type", "seq", "runId", "ts", "text"),
+    "plan": ("type", "seq", "runId", "ts", "items"),
+    "plan-update": ("type", "seq", "runId", "ts", "id", "status"),
+    "map-files": ("type", "seq", "runId", "ts", "readList", "writeList", "rationale"),
     "read-files": ("type", "seq", "runId", "ts", "files"),
     "edit-file": ("type", "seq", "runId", "ts", "path", "diff"),
     "command": ("type", "seq", "runId", "ts", "command"),
+    "review": ("type", "seq", "runId", "ts", "files"),
     "summary": ("type", "seq", "runId", "ts", "text"),
     "approval": ("type", "seq", "runId", "ts", "prompt"),
     "done": ("type", "seq", "runId", "ts", "ok"),
+    "recovery-attempt": ("type", "seq", "runId", "ts", "attempt", "failures"),
+    "budget": (
+        "type", "seq", "runId", "ts", "tokensUsed", "tokenLimit", "iterations", "recoveries"
+    ),
+    "test-results": (
+        "type", "seq", "runId", "ts", "status", "command", "source", "passed", "failed", "exitCode"
+    ),
+    "context-compressed": (
+        "type", "seq", "runId", "ts", "originalTokens", "compressedTokens", "compressionRatio"
+    ),
 }
 
 

@@ -17,8 +17,8 @@ import json
 from pathlib import Path
 
 from fastapi.testclient import TestClient
-
 from zocai_gateway.app import create_app
+from zocai_gateway.run_pipeline import DefaultAgentBrain
 
 
 def _parse_sse_frames(raw: str) -> list[tuple[str, dict[str, object]]]:
@@ -49,7 +49,7 @@ def test_events_endpoint_is_event_stream_and_streams_in_order(tmp_path: Path) ->
     first, ``done`` last, ``seq`` strictly increasing — with each SSE ``event:``
     name matching its ``data:`` payload's discriminator.
     """
-    app = create_app(workspace_root=tmp_path)
+    app = create_app(workspace_root=tmp_path, brain=DefaultAgentBrain())
     with TestClient(app) as client:
         run_id = client.post(
             "/v1/agent/run",
@@ -89,10 +89,9 @@ def test_events_endpoint_event_stream_without_run() -> None:
     With no/unknown ``runId`` the bus still opens as Server-Sent Events and
     closes cleanly, so a subscriber always sees a valid stream.
     """
-    with TestClient(create_app()) as client:
-        with client.stream("GET", "/v1/agent/events") as resp:
-            assert resp.status_code == 200
-            assert resp.headers["content-type"].startswith("text/event-stream")
-            # Drains to completion without hanging.
-            body = "".join(resp.iter_text())
+    with TestClient(create_app()) as client, client.stream("GET", "/v1/agent/events") as resp:
+        assert resp.status_code == 200
+        assert resp.headers["content-type"].startswith("text/event-stream")
+        # Drains to completion without hanging.
+        body = "".join(resp.iter_text())
     assert "event: ping" in body or "event:ping" in body

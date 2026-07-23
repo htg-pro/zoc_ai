@@ -174,16 +174,63 @@ export async function secretClear(key: string): Promise<void> {
   await callOrNull<void>("secret_clear", { key });
 }
 
+// ── Web (non-Tauri) HTTP helpers ──────────────────────────────────────────
+// These are used when running in a plain browser (Replit preview) instead of
+// the Tauri desktop shell.  All paths passed from the store are the absolute
+// paths returned by the backend's file-tree, so the backend's `safePath`
+// helper accepts them directly.
+
+async function webFsGet<T>(endpoint: string, params: Record<string, string> = {}): Promise<T | null> {
+  try {
+    const qs  = new URLSearchParams(params).toString();
+    const url = `${endpoint}${qs ? "?" + qs : ""}`;
+    const res = await fetch(url);
+    if (!res.ok) return null;
+    return res.json() as Promise<T>;
+  } catch {
+    return null;
+  }
+}
+
+async function webFsPost<T>(endpoint: string, body: unknown): Promise<T | null> {
+  try {
+    const res = await fetch(endpoint, {
+      method:  "POST",
+      headers: { "Content-Type": "application/json" },
+      body:    JSON.stringify(body),
+    });
+    if (!res.ok) return null;
+    return res.json() as Promise<T>;
+  } catch {
+    return null;
+  }
+}
+
 /** Lists a directory tree rooted at `root`, recursive up to `depth`. */
 export async function fsListDir(root: string, depth?: number): Promise<FileNode[]> {
+  if (!isTauri()) {
+    const tree = await webFsGet<FileNode[]>("/api/fs/list", {
+      path:  root,
+      depth: String(depth ?? 4),
+    });
+    return tree ?? [];
+  }
   return (await callOrNull<FileNode[]>("fs_list_dir", { root, depth })) ?? [];
 }
 
 export async function fsReadText(path: string): Promise<string | null> {
+  if (!isTauri()) {
+    const data = await webFsGet<{ content: string }>("/api/fs/read", { path });
+    return data?.content ?? null;
+  }
   return callOrNull<string>("fs_read_text", { path });
 }
 
 export async function fsWriteText(path: string, content: string): Promise<boolean> {
+  if (!isTauri()) {
+    const res = await webFsPost<{ ok: boolean }>("/api/fs/write", { path, content });
+    return res?.ok ?? false;
+  }
   const b = await bindings();
   if (!b) return false;
   try {
@@ -204,38 +251,71 @@ export interface FileStat {
 }
 
 export async function fsStat(path: string): Promise<FileStat | null> {
+  if (!isTauri()) {
+    return webFsGet<FileStat>("/api/fs/stat", { path });
+  }
   return callOrNull<FileStat>("fs_stat", { path });
 }
 
 /** Create an empty file. Throws (with the Rust error string) on failure or
  *  outside the desktop runtime. Returns the created absolute path. */
 export async function fsCreateFile(path: string): Promise<string> {
+  if (!isTauri()) {
+    const res = await webFsPost<{ ok: boolean; path: string }>("/api/fs/create", { path });
+    if (!res?.ok) throw new Error(`Failed to create file: ${path}`);
+    return res.path;
+  }
   return callOrThrow<string>("fs_create_file", { path });
 }
 
 export async function fsCreateDir(path: string): Promise<string> {
+  if (!isTauri()) {
+    const res = await webFsPost<{ ok: boolean; path: string }>("/api/fs/mkdir", { path });
+    if (!res?.ok) throw new Error(`Failed to create directory: ${path}`);
+    return res.path;
+  }
   return callOrThrow<string>("fs_create_dir", { path });
 }
 
 export async function fsRename(from: string, to: string): Promise<string> {
+  if (!isTauri()) {
+    const res = await webFsPost<{ ok: boolean; path: string }>("/api/fs/rename", { from, to });
+    if (!res?.ok) throw new Error(`Failed to rename ${from} → ${to}`);
+    return res.path;
+  }
   return callOrThrow<string>("fs_rename", { from, to });
 }
 
 export async function fsMove(from: string, to: string): Promise<string> {
+  if (!isTauri()) {
+    const res = await webFsPost<{ ok: boolean; path: string }>("/api/fs/move", { from, to });
+    if (!res?.ok) throw new Error(`Failed to move ${from} → ${to}`);
+    return res.path;
+  }
   return callOrThrow<string>("fs_move", { from, to });
 }
 
 export async function fsDelete(path: string): Promise<void> {
+  if (!isTauri()) {
+    await fetch(`/api/fs/delete?path=${encodeURIComponent(path)}`, { method: "DELETE" });
+    return;
+  }
   await callOrThrow<void>("fs_delete", { path });
 }
 
 /** Duplicate a file/dir to a "… copy" sibling. Returns the new absolute path. */
 export async function fsDuplicate(path: string): Promise<string> {
+  if (!isTauri()) {
+    const res = await webFsPost<{ ok: boolean; path: string }>("/api/fs/duplicate", { path });
+    if (!res?.ok) throw new Error(`Failed to duplicate: ${path}`);
+    return res.path;
+  }
   return callOrThrow<string>("fs_duplicate", { path });
 }
 
-/** Reveal a path in the OS file manager (best-effort). */
+/** Reveal a path in the OS file manager (best-effort, no-op in web mode). */
 export async function fsReveal(path: string): Promise<void> {
+  if (!isTauri()) return; // No-op in browser
   await callOrThrow<void>("fs_reveal", { path });
 }
 
@@ -626,10 +706,39 @@ export async function llamacppLoad(
 ): Promise<LlamaCppStatus> {
   const b = await bindings();
   if (!b) {
+    const h = host?.trim() || "127.0.0.1";
+    const p = port ?? 8080;
+    const base = `http://${h}:${p}`;
+    try {
+      const res = await fetch(`${base}/health`);
+      if (res.ok) {
+        return {
+          running: true,
+          host: h,
+          port: p,
+          base_url: base,
+          loaded_model_id: modelId,
+          loaded_model_path: path,
+          n_gpu_layers: nGpuLayers,
+          n_ctx: nCtx ?? null,
+          n_threads: nThreads ?? null,
+          n_batch: nBatch ?? null,
+          temperature: temperature ?? null,
+          top_p: topP ?? null,
+          top_k: topK ?? null,
+          repeat_penalty: repeatPenalty ?? null,
+          max_tokens: maxTokens ?? null,
+          flash_attn: flashAttn ?? null,
+          last_error: null,
+        };
+      }
+    } catch {
+      // fall through to offline status
+    }
     return {
       running: false,
-      host: null,
-      port: null,
+      host: h,
+      port: p,
       base_url: null,
       loaded_model_id: null,
       loaded_model_path: null,
@@ -643,7 +752,8 @@ export async function llamacppLoad(
       repeat_penalty: null,
       max_tokens: null,
       flash_attn: null,
-      last_error: "Tauri runtime unavailable (browser preview)",
+      last_error:
+        "Tauri runtime unavailable (browser preview). Start llama-server on the configured host/port or use the desktop app.",
     };
   }
   return b.invoke<LlamaCppStatus>("llamacpp_load", {

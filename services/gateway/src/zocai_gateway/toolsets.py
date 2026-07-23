@@ -24,10 +24,10 @@ import subprocess
 from pathlib import Path
 
 __all__ = [
+    "FullToolset",
+    "ReadOnlyToolset",
     "ReadOnlyViolation",
     "Toolset",
-    "ReadOnlyToolset",
-    "FullToolset",
 ]
 
 
@@ -105,6 +105,38 @@ class FullToolset(Toolset):
         target = self._resolve_within_workspace(rel_path, "make_dir")
         target.mkdir(parents=True, exist_ok=True)
 
+    def delete_file(self, rel_path: Path | str) -> None:
+        """Delete a workspace file, confined to the workspace (R8.5, R10.1).
+
+        Resolves ``rel_path`` through :meth:`_resolve_within_workspace`, so an
+        out-of-workspace target raises :class:`ReadOnlyViolation` before any
+        filesystem effect (R9.5). An in-workspace failure — most commonly the
+        target not existing — surfaces the underlying :class:`OSError`
+        (e.g. :class:`FileNotFoundError`) unchanged (R9.6).
+        """
+        target = self._resolve_within_workspace(rel_path, "delete_file")
+        target.unlink()
+
+    def move_file(self, src_rel: Path | str, dst_rel: Path | str) -> None:
+        """Rename/move a workspace file, confining **both** ends (R8.5, R10.1).
+
+        Both the source and the destination are resolved through
+        :meth:`_resolve_within_workspace`, so an out-of-workspace source *or*
+        destination raises :class:`ReadOnlyViolation` before any filesystem
+        effect (R9.5). Moving a missing source or onto an existing destination
+        surfaces the underlying error (:class:`FileNotFoundError` /
+        :class:`FileExistsError`) unchanged rather than silently clobbering the
+        target (R9.6).
+        """
+        source = self._resolve_within_workspace(src_rel, "move_file")
+        destination = self._resolve_within_workspace(dst_rel, "move_file")
+        if destination.exists():
+            raise FileExistsError(
+                f"move destination already exists: {destination.name!r}"
+            )
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        source.rename(destination)
+
     def run_shell(self, argv: list[str]) -> subprocess.CompletedProcess[str]:
         """Run a shell command with the workspace as the working directory.
 
@@ -112,7 +144,7 @@ class FullToolset(Toolset):
         the command is executed without a shell, avoiding injection (R3.5,
         R8.9). The process runs with ``cwd`` set to the workspace root.
         """
-        return subprocess.run(  # noqa: S603 - argv form, no shell, workspace-confined cwd
+        return subprocess.run(
             argv,
             cwd=self.workspace_root,
             capture_output=True,

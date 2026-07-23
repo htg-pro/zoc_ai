@@ -13,12 +13,24 @@ import type { OnMount } from "@monaco-editor/react";
 import type { OpenFile } from "@/lib/store";
 import { useApp } from "@/lib/store";
 import { useReducedMotion } from "@/lib/reduced-motion";
-import { clearActiveEditor, setActiveEditor, setCursorPosition } from "@/lib/editor-actions";
+import { clearActiveEditor, setActiveEditor, setCursorPosition, revealPosition, takePendingReveal } from "@/lib/editor-actions";
 import type { Severity } from "@/lib/problem-matchers";
+import {
+  captureMonaco,
+  ensureServicesInitialized,
+  toMonacoModelUri,
+} from "./lsp/monaco-services";
+import { createInlineCompletionsProvider } from "./inline-completions";
+import { streamCompletion } from "@/lib/completions-client";
 
-const Editor = lazy(() =>
-  import("@monaco-editor/react").then((m) => ({ default: m.default })),
-);
+const Editor = lazy(async () => {
+  // `monaco-vscode-api` must initialize before the first editor is created.
+  // Initialization failure is non-fatal for editing: the boundary still loads
+  // Monaco, while the LSP lifecycle reports the server state as unavailable.
+  await ensureServicesInitialized().catch(() => undefined);
+  const module = await import("@monaco-editor/react");
+  return { default: module.default };
+});
 
 // Loosely-typed Monaco handles — we only touch a small, stable surface so we
 // avoid a hard dependency on monaco's types in the view layer.
@@ -49,7 +61,12 @@ export function MonacoView({
   const minimap = useApp((s) => s.editorSettings.minimap);
   const stickyScroll = useApp((s) => s.editorSettings.stickyScroll);
   const diagnostics = useApp((s) => s.diagnostics);
+  const workspaceRoot = useApp((s) => s.workspaceRoot);
   const reducedMotion = useReducedMotion();
+  const modelUri = useMemo(
+    () => toMonacoModelUri(file.path, workspaceRoot),
+    [file.path, workspaceRoot],
+  );
 
   const editorRef = useRef<MonacoEditor | null>(null);
   const monacoRef = useRef<MonacoNamespace | null>(null);
@@ -60,6 +77,7 @@ export function MonacoView({
     widget: unknown;
     position: { lineNumber: number; column: number };
   } | null>(null);
+  const inlineCompletionsRef = useRef<{ dispose(): void } | null>(null);
   const [mountTick, setMountTick] = useState(0);
 
   const editorOptions = useMemo(
@@ -88,6 +106,22 @@ export function MonacoView({
   const handleMount = useCallback<OnMount>((editor, monaco) => {
     editorRef.current = editor;
     monacoRef.current = monaco;
+    // Capture the single Monaco instance @monaco-editor/react loaded so the LSP
+    // service layer initializes against it (task 7.1). Idempotent.
+    captureMonaco(monaco);
+    // §3.3 R8.1: register the inline AI completions provider against the
+    // captured Monaco instance. Streamed tokens grow the ghost text by
+    // re-triggering the inline-suggest query (R10.2). Disposed on unmount.
+    inlineCompletionsRef.current?.dispose();
+    inlineCompletionsRef.current = createInlineCompletionsProvider(
+      monaco as unknown as Parameters<typeof createInlineCompletionsProvider>[0],
+      {
+        streamCompletion,
+        rerender: () => {
+          editor.trigger?.("inline-completions", "editor.action.inlineSuggest.trigger", {});
+        },
+      },
+    );
     setActiveEditor(editor as never);
     editor.onDidFocusEditorText?.(() => setActiveEditor(editor as never));
     // Track caret position for the status bar (Phase 14).
@@ -277,8 +311,11 @@ export function MonacoView({
       const M = monaco.editor.MarkerSeverity;
       return s === "error" ? M.Error : s === "warning" ? M.Warning : s === "info" ? M.Info : M.Hint;
     };
-    const items = Object.values(diagnostics)
-      .flat()
+    const items = Object.entries(diagnostics)
+      // §3.2 R2.6: native LSP markers (via the language client) own LSP
+      // squiggles; skip `lsp:`-keyed store entries so they are not drawn twice.
+      .filter(([key]) => !key.startsWith("lsp:"))
+      .flatMap(([, list]) => list)
       .filter((d) => d.file === file.path || file.path.endsWith(d.file));
     monaco.editor.setModelMarkers(
       model,
@@ -301,9 +338,22 @@ export function MonacoView({
       const e = editorRef.current;
       if (e) clearActiveEditor(e as never);
       setCursorPosition(null);
+      inlineCompletionsRef.current?.dispose();
+      inlineCompletionsRef.current = null;
     },
     [],
   );
+
+  // R3.2/R3.3: flush a buffered reveal target once this file's editor is
+  // mounted/active. A Problems-panel click that opened a not-yet-mounted file
+  // buffers (line, column) via `requestReveal`; consume it here for this path
+  // so the scroll + caret still land. `mountTick` ensures the active editor is
+  // registered before we reveal.
+  useEffect(() => {
+    if (mountTick === 0) return;
+    const target = takePendingReveal(file.path);
+    if (target) revealPosition(target.line, target.column);
+  }, [file.path, mountTick]);
 
   return (
     <div className="flex h-full min-h-0 w-full min-w-0 flex-1 overflow-hidden bg-[#1e1e1e]">
@@ -318,7 +368,7 @@ export function MonacoView({
             width="100%"
             theme="vs-dark"
             language={file.language}
-            path={file.path}
+            path={modelUri}
             value={file.content}
             onChange={(v) => update(file.path, v ?? "")}
             onMount={handleMount}

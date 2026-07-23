@@ -546,6 +546,32 @@ describe("app store", () => {
     vi.restoreAllMocks();
   });
 
+  it("creates and opens workspace instructions when they are missing", async () => {
+    vi.spyOn(bridge, "isTauri").mockReturnValue(true);
+    vi.spyOn(bridge, "fsStat").mockResolvedValue({
+      exists: false,
+      is_dir: false,
+      is_file: false,
+      size: 0,
+      modified_ms: null,
+    });
+    vi.spyOn(bridge, "fsCreateFile").mockResolvedValue(
+      "/ws/.zoc/instructions.md",
+    );
+    vi.spyOn(bridge, "fsReadText").mockResolvedValue("");
+    useApp.setState({ workspaceRoot: "/ws", openFiles: [], activeFile: null });
+
+    const result = await useApp.getState().openProjectInstructions();
+
+    expect(result).toBe("/ws/.zoc/instructions.md");
+    expect(bridge.fsCreateFile).toHaveBeenCalledWith(
+      "/ws/.zoc/instructions.md",
+    );
+    expect(useApp.getState().activeFile).toBe("/ws/.zoc/instructions.md");
+    expect(useApp.getState().mainView).toBe("editor");
+    vi.restoreAllMocks();
+  });
+
   it("applyReplace stashes undo and refreshes open buffers", async () => {
     vi.spyOn(bridge, "isTauri").mockReturnValue(true);
     vi.spyOn(bridge, "fsReplaceApply").mockResolvedValue({

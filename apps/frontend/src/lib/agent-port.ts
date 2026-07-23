@@ -3,7 +3,7 @@ import { agentPort, agentStatus, isTauri } from "./tauri-bridge";
 export const PORT_WAIT_MS = 30_000;
 export const HEALTH_WAIT_MS = 30_000;
 export const PORT_POLL_MS = 250;
-export const DEFAULT_DEV_PORT = 8765;
+export const DEFAULT_DEV_PORT = 3001;
 
 function delay(ms: number): Promise<void> {
   return new Promise((resolve) => globalThis.setTimeout(resolve, ms));

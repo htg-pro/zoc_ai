@@ -101,4 +101,26 @@ describe("agent trace reducer", () => {
     expect(trace.testResults).toMatchObject({ status: "pass", passed: 12, failed: 0 });
     expect(trace.summary).toBe("Applied 1 reviewed file.");
   });
+
+  it("folds recovery attempts into the activity feed", () => {
+    const events = [
+      {
+        type: "recovery-attempt",
+        seq: 1,
+        runId: "run-recovery",
+        ts: TS,
+        attempt: 1,
+        failures: ["tests/test_api.py::test_create"],
+      },
+    ] satisfies AgentEvents.AgentEvent[];
+
+    const [trace] = buildRunTraces(events);
+
+    expect(trace.activities[0]).toMatchObject({
+      id: "recovery:1",
+      label: "Recovery attempt 1",
+      detail: "tests/test_api.py::test_create",
+      status: "running",
+    });
+  });
 });

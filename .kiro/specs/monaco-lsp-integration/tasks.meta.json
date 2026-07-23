@@ -1,0 +1,184 @@
+{
+  "pbtResults": {},
+  "executionHistory": {
+    "1.1 Add `monaco-languageclient` and `vscode-ws-jsonrpc` to `apps/frontend/package.json`": [
+      {
+        "executionId": "1176c9e9-0c26-498d-90a7-f22c8bca335f",
+        "chatSessionId": "sess_44e4ba76-9062-4337-aaee-b645d8a52503",
+        "timestamp": 1783074639616
+      },
+      {
+        "executionId": "1176c9e9-0c26-498d-90a7-f22c8bca335f",
+        "chatSessionId": "sess_44e4ba76-9062-4337-aaee-b645d8a52503",
+        "timestamp": 1783074655245
+      }
+    ],
+    "2.1 Implement `LANGUAGE_SERVERS`, `serverForLanguage`, `requiredServers`, `activeLanguageIds`, and `reconcile`": [
+      {
+        "executionId": "1176c9e9-0c26-498d-90a7-f22c8bca335f",
+        "chatSessionId": "sess_44e4ba76-9062-4337-aaee-b645d8a52503",
+        "timestamp": 1783074639652
+      },
+      {
+        "executionId": "1176c9e9-0c26-498d-90a7-f22c8bca335f",
+        "chatSessionId": "sess_44e4ba76-9062-4337-aaee-b645d8a52503",
+        "timestamp": 1783074656214
+      }
+    ],
+    "3.1 Implement `formatLspStatus`, `lspIndicatorViews`, `isLspActive`, and the `LspStatusView` type": [
+      {
+        "executionId": "1176c9e9-0c26-498d-90a7-f22c8bca335f",
+        "chatSessionId": "sess_44e4ba76-9062-4337-aaee-b645d8a52503",
+        "timestamp": 1783074639688
+      }
+    ],
+    "4.1 Implement `openLspConnection`, `lspConnectionUrl`, close-code constants, and the `LspSocket`/`LspSocketFactory`/`LspConnection` types": [
+      {
+        "executionId": "1176c9e9-0c26-498d-90a7-f22c8bca335f",
+        "chatSessionId": "sess_44e4ba76-9062-4337-aaee-b645d8a52503",
+        "timestamp": 1783074639730
+      },
+      {
+        "executionId": "1176c9e9-0c26-498d-90a7-f22c8bca335f",
+        "chatSessionId": "sess_44e4ba76-9062-4337-aaee-b645d8a52503",
+        "timestamp": 1783074657445
+      }
+    ],
+    "5.1 Implement `createLspClient` with a singleton `Map<ServerName, ManagedClient>`": [
+      {
+        "executionId": "1176c9e9-0c26-498d-90a7-f22c8bca335f",
+        "chatSessionId": "sess_44e4ba76-9062-4337-aaee-b645d8a52503",
+        "timestamp": 1783074639759
+      }
+    ],
+    "6.1 Add the `serverStates` slice to `apps/frontend/src/lib/store.ts`": [
+      {
+        "executionId": "1176c9e9-0c26-498d-90a7-f22c8bca335f",
+        "chatSessionId": "sess_44e4ba76-9062-4337-aaee-b645d8a52503",
+        "timestamp": 1783074639788
+      }
+    ],
+    "6.2 Add `createLspRegistry` to `apps/frontend/src/features/editor/lsp/lsp-registry.ts`": [
+      {
+        "executionId": "1176c9e9-0c26-498d-90a7-f22c8bca335f",
+        "chatSessionId": "sess_44e4ba76-9062-4337-aaee-b645d8a52503",
+        "timestamp": 1783074639815
+      }
+    ],
+    "6.3 Implement `LspStatusIndicators.tsx` and render it in `apps/frontend/src/components/layout/StatusBar.tsx`": [
+      {
+        "executionId": "1176c9e9-0c26-498d-90a7-f22c8bca335f",
+        "chatSessionId": "sess_44e4ba76-9062-4337-aaee-b645d8a52503",
+        "timestamp": 1783074639847
+      }
+    ],
+    "7.1 Capture the Monaco instance in `apps/frontend/src/features/editor/MonacoView.tsx` and implement `ensureServicesInitialized`": [
+      {
+        "executionId": "1176c9e9-0c26-498d-90a7-f22c8bca335f",
+        "chatSessionId": "sess_44e4ba76-9062-4337-aaee-b645d8a52503",
+        "timestamp": 1783074639874
+      }
+    ],
+    "7.2 Implement the `useLspLifecycle` hook (`apps/frontend/src/features/editor/useLspLifecycle.ts`)": [
+      {
+        "executionId": "1176c9e9-0c26-498d-90a7-f22c8bca335f",
+        "chatSessionId": "sess_44e4ba76-9062-4337-aaee-b645d8a52503",
+        "timestamp": 1783074639911
+      }
+    ],
+    "7.3 Mount `useLspLifecycle` in `apps/frontend/src/features/editor/EditorArea.tsx`": [
+      {
+        "executionId": "1176c9e9-0c26-498d-90a7-f22c8bca335f",
+        "chatSessionId": "sess_44e4ba76-9062-4337-aaee-b645d8a52503",
+        "timestamp": 1783074639943
+      }
+    ],
+    "8. Checkpoint - frontend": [
+      {
+        "executionId": "1176c9e9-0c26-498d-90a7-f22c8bca335f",
+        "chatSessionId": "sess_44e4ba76-9062-4337-aaee-b645d8a52503",
+        "timestamp": 1783074639970
+      }
+    ],
+    "9.1 Add the new Application close-code constants": [
+      {
+        "executionId": "1176c9e9-0c26-498d-90a7-f22c8bca335f",
+        "chatSessionId": "sess_44e4ba76-9062-4337-aaee-b645d8a52503",
+        "timestamp": 1783074639999
+      },
+      {
+        "executionId": "1176c9e9-0c26-498d-90a7-f22c8bca335f",
+        "chatSessionId": "sess_44e4ba76-9062-4337-aaee-b645d8a52503",
+        "timestamp": 1783074659217
+      }
+    ],
+    "9.2 Classify spawn failures after `accept`": [
+      {
+        "executionId": "1176c9e9-0c26-498d-90a7-f22c8bca335f",
+        "chatSessionId": "sess_44e4ba76-9062-4337-aaee-b645d8a52503",
+        "timestamp": 1783074640027
+      }
+    ],
+    "9.3 Detect abnormal subprocess exit while the socket is open": [
+      {
+        "executionId": "1176c9e9-0c26-498d-90a7-f22c8bca335f",
+        "chatSessionId": "sess_44e4ba76-9062-4337-aaee-b645d8a52503",
+        "timestamp": 1783074640058
+      }
+    ],
+    "10.1 Extend the in-memory fakes for the new paths": [
+      {
+        "executionId": "1176c9e9-0c26-498d-90a7-f22c8bca335f",
+        "chatSessionId": "sess_44e4ba76-9062-4337-aaee-b645d8a52503",
+        "timestamp": 1783074640113
+      }
+    ],
+    "11. Checkpoint - gateway": [
+      {
+        "executionId": "1176c9e9-0c26-498d-90a7-f22c8bca335f",
+        "chatSessionId": "sess_44e4ba76-9062-4337-aaee-b645d8a52503",
+        "timestamp": 1783074640143
+      }
+    ],
+    "12.1 Create `scripts/install-language-servers.sh` with the shared binary→install-command table": [
+      {
+        "executionId": "1176c9e9-0c26-498d-90a7-f22c8bca335f",
+        "chatSessionId": "sess_44e4ba76-9062-4337-aaee-b645d8a52503",
+        "timestamp": 1783074640171
+      },
+      {
+        "executionId": "1176c9e9-0c26-498d-90a7-f22c8bca335f",
+        "chatSessionId": "sess_44e4ba76-9062-4337-aaee-b645d8a52503",
+        "timestamp": 1783074659588
+      }
+    ],
+    "12.2 Extend the `Makefile` `install` target": [
+      {
+        "executionId": "1176c9e9-0c26-498d-90a7-f22c8bca335f",
+        "chatSessionId": "sess_44e4ba76-9062-4337-aaee-b645d8a52503",
+        "timestamp": 1783074640194
+      }
+    ],
+    "12.3 Extend the `Makefile` `doctor` target with a language-servers section": [
+      {
+        "executionId": "1176c9e9-0c26-498d-90a7-f22c8bca335f",
+        "chatSessionId": "sess_44e4ba76-9062-4337-aaee-b645d8a52503",
+        "timestamp": 1783074640226
+      }
+    ],
+    "13.1 Verify the frontend": [
+      {
+        "executionId": "1176c9e9-0c26-498d-90a7-f22c8bca335f",
+        "chatSessionId": "sess_44e4ba76-9062-4337-aaee-b645d8a52503",
+        "timestamp": 1783074640254
+      }
+    ],
+    "13.2 Verify the gateway": [
+      {
+        "executionId": "1176c9e9-0c26-498d-90a7-f22c8bca335f",
+        "chatSessionId": "sess_44e4ba76-9062-4337-aaee-b645d8a52503",
+        "timestamp": 1783074640280
+      }
+    ]
+  }
+}

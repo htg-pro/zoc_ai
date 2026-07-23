@@ -28,6 +28,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { MOCK_TREE, type FileNode as MockFileNode } from "@/lib/mock-data";
+import { getAgentClient } from "@/lib/agent-client";
 import { useApp } from "@/lib/store";
 import {
   fsListDir,
@@ -78,11 +79,13 @@ function AgentEditingDot({ path }: { path: string }) {
 
 export function FileTree({ root }: { root?: string }) {
   const workspaceRoot = useApp((s) => s.workspaceRoot);
-  const tauri = isTauri();
   const effectiveRoot = root ?? workspaceRoot ?? null;
-  if (!tauri || !effectiveRoot) {
+  if (!effectiveRoot) {
+    // Workspace root not yet resolved — show mock tree as placeholder.
     return <MockFileTreeView />;
   }
+  // LiveFileTree works in both Tauri (via IPC) and web (via HTTP fallback
+  // in tauri-bridge's fsListDir / fsWatchStart / onFsChanged).
   return <LiveFileTree root={effectiveRoot} />;
 }
 
@@ -243,6 +246,7 @@ function ExplorerToolbar({
 
 function LiveFileTree({ root }: { root: string }) {
   const openFile = useApp((s) => s.openFile);
+  const activeSessionId = useApp((s) => s.activeSessionId);
   const activeFile = useApp((s) => s.activeFile);
   const workspaceRoot = useApp((s) => s.workspaceRoot) ?? root;
   const fsRefreshNonce = useApp((s) => s.fsRefreshNonce);
@@ -278,14 +282,21 @@ function LiveFileTree({ root }: { root: string }) {
     void refresh(root);
     void fsWatchStart(root);
     let off: (() => void) | undefined;
-    onFsChanged(() => setVersion((v) => v + 1)).then((fn) => {
+    onFsChanged((paths) => {
+      setVersion((v) => v + 1);
+      if (activeSessionId && paths.length > 0) {
+        void getAgentClient()
+          .then((client) => client.indexFilesChanged(activeSessionId, paths))
+          .catch(() => undefined);
+      }
+    }).then((fn) => {
       off = fn;
     });
     return () => {
       off?.();
       void fsWatchStop();
     };
-  }, [root, refresh]);
+  }, [activeSessionId, root, refresh]);
 
   useEffect(() => {
     for (const path of Object.keys(expanded)) {

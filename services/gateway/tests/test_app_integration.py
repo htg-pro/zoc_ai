@@ -12,8 +12,8 @@ import json
 from pathlib import Path
 
 from fastapi.testclient import TestClient
-
 from zocai_gateway.app import create_app
+from zocai_gateway.run_pipeline import DefaultAgentBrain
 
 
 def _data_events(raw: str) -> list[dict[str, object]]:
@@ -36,7 +36,7 @@ def _drain_events(client: TestClient, run_id: str) -> list[dict[str, object]]:
 
 
 def test_agent_run_streams_ordered_events_and_mirrors_diary(tmp_path: Path) -> None:
-    app = create_app(workspace_root=tmp_path)
+    app = create_app(workspace_root=tmp_path, brain=DefaultAgentBrain())
     with TestClient(app) as client:
         run_id = client.post(
             "/v1/agent/run", json={"prompt": "build the thing", "mode": "agent"}

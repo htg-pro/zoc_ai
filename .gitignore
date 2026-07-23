@@ -39,8 +39,7 @@ zoc-studio-v*.zip
 # Local
 .env
 .env.local
-.local/.commit_message
-node_modules
+.local/
 
 # Secrets / credentials (never commit real keys)
 *.env
@@ -54,3 +53,8 @@ credentials.json
 .claude/settings.local.json
 
 testsprite_tests/tmp/config.json
+
+# Local archives / backups / large artifacts (not source)
+/Archive.zip
+/zipFile.zip
+*.bak

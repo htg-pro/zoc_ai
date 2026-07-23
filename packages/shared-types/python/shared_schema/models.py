@@ -419,6 +419,24 @@ class IndexStatus(_Base):
     embedder: EmbedderInfo | None = None
 
 
+class WorkspaceIndexProgress(_Base):
+    """Live progress frame emitted while a workspace index is rebuilt."""
+
+    type: Literal[
+        "index.started",
+        "index.progress",
+        "index.completed",
+        "index.error",
+    ]
+    session_id: str = Field(alias="sessionId")
+    processed_files: int = Field(alias="processedFiles", ge=0)
+    total_files: int = Field(alias="totalFiles", ge=0)
+    indexed_files: int = Field(alias="indexedFiles", ge=0)
+    token_count: int = Field(alias="tokenCount", ge=0)
+    current_file: str | None = Field(default=None, alias="currentFile")
+    message: str | None = None
+
+
 class IndexConfig(_Base):
     # Folder that gets scanned/indexed for the session.
     workspace_root: str
@@ -744,6 +762,7 @@ __all__ = [
     "IndexConfig",
     "IndexQueryResult",
     "IndexStatus",
+    "WorkspaceIndexProgress",
     "InlineEditResult",
     "LogEvent",
     "MemoryStats",

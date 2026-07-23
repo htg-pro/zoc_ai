@@ -1,97 +1,165 @@
 #!/bin/sh
-# Bootstrap script: links required packages from the pnpm store into
-# apps/frontend/node_modules so vite can start without a full pnpm install.
+# Bootstrap script for Replit development.
+#
+# 1. Starts the Zoc AI backend server (Node.js, port 3001).
+# 2. Ensures apps/frontend/node_modules has proper symlinks to pnpm store pkgs.
+# 3. Starts the Vite dev server on port 5000.
 
 set -e
 
-PNPM="node_modules/.pnpm"
-FE="apps/frontend/node_modules"
 NODE="/nix/store/1lagpgadaybvs1n2312gysg2phjk89y8-nodejs-20.20.0-wrapped/bin/node"
-VITE_JS="$PNPM/vite@5.4.21_@types+node@22.19.19/node_modules/vite/bin/vite.js"
+PNPM="node_modules/.pnpm"
 
-mkdir -p "$FE/.bin" "$FE/@vitejs" "$FE/@radix-ui" "$FE/@types" \
-         "$FE/@tauri-apps" "$FE/@xterm" "$FE/@zoc-studio" "$FE/@monaco-editor"
-
-link() {
-  src="$1"; dst="$2"
+# ── Helper: (re-)create a symlink, removing any existing dir/file first ────────
+forcelink() {
+  src="$(pwd)/$1"
+  dst="$2"
   if [ -d "$src" ] || [ -f "$src" ]; then
-    ln -sfn "$(pwd)/$src" "$dst"
+    rm -rf "$dst"
+    ln -sfn "$src" "$dst"
   fi
 }
 
-# ── Core build tools ────────────────────────────────────────────────────────
-link "$PNPM/vite@5.4.21_@types+node@22.19.19/node_modules/vite"                          "$FE/vite"
-link "$PNPM/@vitejs+plugin-react@4.7.0_vite@5.4.21_@types+node@22.19.19_/node_modules/@vitejs/plugin-react" "$FE/@vitejs/plugin-react"
-link "$PNPM/tailwindcss@3.4.19/node_modules/tailwindcss"                                  "$FE/tailwindcss"
-link "$PNPM/postcss@8.5.15/node_modules/postcss"                                          "$FE/postcss"
-link "$PNPM/autoprefixer@10.5.0_postcss@8.5.15/node_modules/autoprefixer"                 "$FE/autoprefixer"
-link "$PNPM/tailwindcss-animate@1.0.7_tailwindcss@3.4.19/node_modules/tailwindcss-animate" "$FE/tailwindcss-animate"
-link "$PNPM/typescript@5.9.3/node_modules/typescript"                                     "$FE/typescript"
+# ── Locate vite.js in the pnpm store ─────────────────────────────────────────
+VITE_PKG=""
+if [ -d "$PNPM" ]; then
+  VITE_PKG=$(ls "$PNPM" 2>/dev/null | grep "^vite@6\." | head -1)
+fi
 
-# ── React ───────────────────────────────────────────────────────────────────
-link "$PNPM/react@18.3.1/node_modules/react"                                              "$FE/react"
-link "$PNPM/react-dom@18.3.1_react@18.3.1/node_modules/react-dom"                        "$FE/react-dom"
-link "$PNPM/react-refresh@0.17.0/node_modules/react-refresh"                             "$FE/react-refresh"
+if [ -n "$VITE_PKG" ]; then
+  VITE_JS="$PNPM/$VITE_PKG/node_modules/vite/bin/vite.js"
+  [ ! -f "$VITE_JS" ] && VITE_JS=""
+fi
 
-# ── UI libraries ────────────────────────────────────────────────────────────
-link "$PNPM/lucide-react@0.453.0_react@18.3.1/node_modules/lucide-react"                 "$FE/lucide-react"
-link "$PNPM/class-variance-authority@0.7.1/node_modules/class-variance-authority"        "$FE/class-variance-authority"
-link "$PNPM/clsx@2.1.1/node_modules/clsx"                                                "$FE/clsx"
-link "$PNPM/tailwind-merge@2.6.1/node_modules/tailwind-merge"                            "$FE/tailwind-merge"
-link "$PNPM/diff@9.0.0/node_modules/diff"                                                "$FE/diff"
-link "$PNPM/fuse.js@7.3.0/node_modules/fuse.js"                                          "$FE/fuse.js"
-link "$PNPM/zustand@5.0.14_@types+react@18.3.29_react@18.3.1/node_modules/zustand"       "$FE/zustand"
-link "$PNPM/cmdk@1.1.1_@types+react-dom@18.3.7_@types+react@18.3.29__@types+react@18.3.29_react-dom_2cf4484ccbaf6c475eede2018fdbe564/node_modules/cmdk" "$FE/cmdk"
-link "$PNPM/monaco-editor@0.55.1/node_modules/monaco-editor"                             "$FE/monaco-editor"
+if [ -z "$VITE_JS" ] && [ -f "apps/frontend/node_modules/vite/bin/vite.js" ]; then
+  VITE_JS="apps/frontend/node_modules/vite/bin/vite.js"
+fi
 
-# sonner
-SONNER=$(ls "$PNPM" | grep "^sonner@" | head -1)
-[ -n "$SONNER" ] && link "$PNPM/$SONNER/node_modules/sonner" "$FE/sonner"
+if [ -z "$VITE_JS" ]; then
+  echo "ERROR: vite not found. Run: pnpm install" >&2
+  exit 1
+fi
 
-# react-resizable-panels
-RRP=$(ls "$PNPM" | grep "^react-resizable-panels@" | head -1)
-[ -n "$RRP" ] && link "$PNPM/$RRP/node_modules/react-resizable-panels" "$FE/react-resizable-panels"
+echo "✓ Using vite: $VITE_JS"
 
-# @monaco-editor/react
-MREACT=$(ls "$PNPM" | grep "^@monaco-editor+react@" | head -1)
-[ -n "$MREACT" ] && link "$PNPM/$MREACT/node_modules/@monaco-editor/react" "$FE/@monaco-editor/react"
+# ── Fix / create symlinks in apps/frontend/node_modules ──────────────────────
+FE="apps/frontend/node_modules"
+mkdir -p "$FE/.bin" "$FE/@vitejs" "$FE/@radix-ui" "$FE/@types" \
+         "$FE/@tauri-apps" "$FE/@xterm" "$FE/@zoc-studio" "$FE/@monaco-editor" \
+         "$FE/@codingame"
 
-# ── @zoc-studio/shared-types (workspace package) ────────────────────────────
-[ -d "packages/shared-types" ] && ln -sfn "$(pwd)/packages/shared-types" "$FE/@zoc-studio/shared-types"
+if [ -d "$PNPM" ]; then
+  # ── vite (critical: pnpm may create as a directory; force symlink) ──────────
+  forcelink "$PNPM/$VITE_PKG/node_modules/vite" "$FE/vite"
 
-# ── @types ─────────────────────────────────────────────────────────────────
-ANODE=$(ls "$PNPM" | grep "^@types+node@" | head -1)
-AREACT=$(ls "$PNPM" | grep "^@types+react@" | head -1)
-AREACTDOM=$(ls "$PNPM" | grep "^@types+react-dom@" | head -1)
-[ -n "$ANODE" ]     && link "$PNPM/$ANODE/node_modules/@types/node"      "$FE/@types/node"
-[ -n "$AREACT" ]    && link "$PNPM/$AREACT/node_modules/@types/react"    "$FE/@types/react"
-[ -n "$AREACTDOM" ] && link "$PNPM/$AREACTDOM/node_modules/@types/react-dom" "$FE/@types/react-dom"
+  # ── @vitejs/plugin-react ────────────────────────────────────────────────────
+  VR=$(ls "$PNPM" 2>/dev/null | grep "^@vitejs+plugin-react@4\." | grep "_vite@6\." | head -1)
+  [ -n "$VR" ] && forcelink "$PNPM/$VR/node_modules/@vitejs/plugin-react" "$FE/@vitejs/plugin-react"
 
-# ── @xterm ──────────────────────────────────────────────────────────────────
-XTERM=$(ls "$PNPM" | grep "^@xterm+xterm@" | head -1)
-XTERMFIT=$(ls "$PNPM" | grep "^@xterm+addon-fit@" | head -1)
-[ -n "$XTERM" ]    && link "$PNPM/$XTERM/node_modules/@xterm/xterm"        "$FE/@xterm/xterm"
-[ -n "$XTERMFIT" ] && link "$PNPM/$XTERMFIT/node_modules/@xterm/addon-fit" "$FE/@xterm/addon-fit"
+  # ── Core packages (force symlink in case pnpm made them dirs) ───────────────
+  for name in tailwindcss postcss autoprefixer; do
+    dir=$(ls "$PNPM" 2>/dev/null | grep "^${name}@" | head -1)
+    [ -n "$dir" ] && forcelink "$PNPM/$dir/node_modules/$name" "$FE/$name"
+  done
 
-# ── @radix-ui packages ───────────────────────────────────────────────────────
-for radix_dir in $(ls "$PNPM" | grep "^@radix-ui+"); do
-  pkg_name=$(echo "$radix_dir" | sed 's/^@radix-ui+//' | sed 's/@.*//' | sed 's/+/-/g')
-  link "$PNPM/$radix_dir/node_modules/@radix-ui/$pkg_name" "$FE/@radix-ui/$pkg_name"
+  TA=$(ls "$PNPM" 2>/dev/null | grep "^tailwindcss-animate@" | head -1)
+  [ -n "$TA" ] && forcelink "$PNPM/$TA/node_modules/tailwindcss-animate" "$FE/tailwindcss-animate"
+
+  TS=$(ls "$PNPM" 2>/dev/null | grep "^typescript@5" | head -1)
+  [ -n "$TS" ] && forcelink "$PNPM/$TS/node_modules/typescript" "$FE/typescript"
+
+  # ── React ───────────────────────────────────────────────────────────────────
+  R=$(ls "$PNPM" 2>/dev/null | grep "^react@18\." | head -1)
+  [ -n "$R" ] && forcelink "$PNPM/$R/node_modules/react" "$FE/react"
+
+  RD=$(ls "$PNPM" 2>/dev/null | grep "^react-dom@18\." | head -1)
+  [ -n "$RD" ] && forcelink "$PNPM/$RD/node_modules/react-dom" "$FE/react-dom"
+
+  RR=$(ls "$PNPM" 2>/dev/null | grep "^react-refresh@" | head -1)
+  [ -n "$RR" ] && forcelink "$PNPM/$RR/node_modules/react-refresh" "$FE/react-refresh"
+
+  # ── UI libs ─────────────────────────────────────────────────────────────────
+  for pkg in lucide-react class-variance-authority clsx tailwind-merge diff fuse.js; do
+    dir=$(ls "$PNPM" 2>/dev/null | grep "^${pkg}@" | head -1)
+    [ -n "$dir" ] && forcelink "$PNPM/$dir/node_modules/$pkg" "$FE/$pkg"
+  done
+
+  ZU=$(ls "$PNPM" 2>/dev/null | grep "^zustand@" | head -1)
+  [ -n "$ZU" ] && forcelink "$PNPM/$ZU/node_modules/zustand" "$FE/zustand"
+
+  CM=$(ls "$PNPM" 2>/dev/null | grep "^cmdk@" | head -1)
+  [ -n "$CM" ] && forcelink "$PNPM/$CM/node_modules/cmdk" "$FE/cmdk"
+
+  SONNER=$(ls "$PNPM" 2>/dev/null | grep "^sonner@" | head -1)
+  [ -n "$SONNER" ] && forcelink "$PNPM/$SONNER/node_modules/sonner" "$FE/sonner"
+
+  RRP=$(ls "$PNPM" 2>/dev/null | grep "^react-resizable-panels@" | head -1)
+  [ -n "$RRP" ] && forcelink "$PNPM/$RRP/node_modules/react-resizable-panels" "$FE/react-resizable-panels"
+
+  # ── Monaco ───────────────────────────────────────────────────────────────────
+  MVAPI=$(ls "$PNPM" 2>/dev/null | grep "^@codingame+monaco-vscode-api@" | head -1)
+  MEAPI=$(ls "$PNPM" 2>/dev/null | grep "^@codingame+monaco-vscode-editor-api@" | head -1)
+  MLC=$(ls "$PNPM" 2>/dev/null | grep "^monaco-languageclient@" | head -1)
+  VSRPC=$(ls "$PNPM" 2>/dev/null | grep "^vscode-ws-jsonrpc@" | head -1)
+  MREACT=$(ls "$PNPM" 2>/dev/null | grep "^@monaco-editor+react@" | head -1)
+
+  [ -n "$MVAPI" ]  && forcelink "$PNPM/$MVAPI/node_modules/@codingame/monaco-vscode-api"    "$FE/@codingame/monaco-vscode-api"
+  [ -n "$MEAPI" ]  && forcelink "$PNPM/$MEAPI/node_modules/@codingame/monaco-vscode-editor-api" "$FE/monaco-editor"
+  [ -n "$MLC" ]    && forcelink "$PNPM/$MLC/node_modules/monaco-languageclient"              "$FE/monaco-languageclient"
+  [ -n "$VSRPC" ]  && forcelink "$PNPM/$VSRPC/node_modules/vscode-ws-jsonrpc"                "$FE/vscode-ws-jsonrpc"
+  [ -n "$MREACT" ] && forcelink "$PNPM/$MREACT/node_modules/@monaco-editor/react"            "$FE/@monaco-editor/react"
+
+  # ── Shared types ─────────────────────────────────────────────────────────────
+  [ -d "packages/shared-types" ] && rm -rf "$FE/@zoc-studio/shared-types" && \
+    ln -sfn "$(pwd)/packages/shared-types" "$FE/@zoc-studio/shared-types"
+
+  # ── @types ───────────────────────────────────────────────────────────────────
+  AN=$(ls "$PNPM" 2>/dev/null | grep "^@types+node@" | head -1)
+  AR=$(ls "$PNPM" 2>/dev/null | grep "^@types+react@" | head -1)
+  AD=$(ls "$PNPM" 2>/dev/null | grep "^@types+react-dom@" | head -1)
+  [ -n "$AN" ] && forcelink "$PNPM/$AN/node_modules/@types/node"      "$FE/@types/node"
+  [ -n "$AR" ] && forcelink "$PNPM/$AR/node_modules/@types/react"     "$FE/@types/react"
+  [ -n "$AD" ] && forcelink "$PNPM/$AD/node_modules/@types/react-dom" "$FE/@types/react-dom"
+
+  # ── @xterm ───────────────────────────────────────────────────────────────────
+  XT=$(ls "$PNPM" 2>/dev/null | grep "^@xterm+xterm@" | head -1)
+  XF=$(ls "$PNPM" 2>/dev/null | grep "^@xterm+addon-fit@" | head -1)
+  [ -n "$XT" ] && forcelink "$PNPM/$XT/node_modules/@xterm/xterm"        "$FE/@xterm/xterm"
+  [ -n "$XF" ] && forcelink "$PNPM/$XF/node_modules/@xterm/addon-fit"    "$FE/@xterm/addon-fit"
+
+  # ── @radix-ui ────────────────────────────────────────────────────────────────
+  for d in $(ls "$PNPM" 2>/dev/null | grep "^@radix-ui+"); do
+    n=$(echo "$d" | sed 's/^@radix-ui+//' | sed 's/@.*//' | sed 's/+/-/g')
+    forcelink "$PNPM/$d/node_modules/@radix-ui/$n" "$FE/@radix-ui/$n"
+  done
+
+  # ── @tauri-apps ───────────────────────────────────────────────────────────────
+  for d in $(ls "$PNPM" 2>/dev/null | grep "^@tauri-apps+"); do
+    n=$(echo "$d" | sed 's/^@tauri-apps+//' | sed 's/@.*//' | sed 's/+/-/g')
+    forcelink "$PNPM/$d/node_modules/@tauri-apps/$n" "$FE/@tauri-apps/$n"
+  done
+fi
+
+echo "✓ Frontend node_modules ready"
+
+# ── Start the Zoc AI backend server ──────────────────────────────────────────
+echo "Starting Zoc AI backend on :3001 ..."
+"$NODE" "$(pwd)/server/index.js" &
+
+# Wait for backend (max 5 s)
+for i in 1 2 3 4 5; do
+  sleep 1
+  if "$NODE" -e "
+    const http = require('http');
+    const req = http.get('http://127.0.0.1:3001/health', r => process.exit(r.statusCode===200?0:1));
+    req.on('error', () => process.exit(1));
+  " 2>/dev/null; then
+    echo "✓ Backend ready"
+    break
+  fi
 done
 
-# ── @tauri-apps packages ─────────────────────────────────────────────────────
-for tauri_dir in $(ls "$PNPM" | grep "^@tauri-apps+"); do
-  pkg_name=$(echo "$tauri_dir" | sed 's/^@tauri-apps+//' | sed 's/@.*//' | sed 's/+/-/g')
-  link "$PNPM/$tauri_dir/node_modules/@tauri-apps/$pkg_name" "$FE/@tauri-apps/$pkg_name"
-done
-
-# ── vite bin wrapper ────────────────────────────────────────────────────────
-cat > "$FE/.bin/vite" << VITEEOF
-#!/bin/sh
-exec $NODE $(pwd)/$VITE_JS "\$@"
-VITEEOF
-chmod +x "$FE/.bin/vite"
-
-echo "✓ Frontend node_modules bootstrapped"
-echo "Starting vite dev server on :5000..."
-cd apps/frontend && "$NODE" "../../$VITE_JS" --port 5000 --host 0.0.0.0
+# ── Start Vite dev server ─────────────────────────────────────────────────────
+echo "Starting Vite dev server on :5000 ..."
+cd apps/frontend
+exec "$NODE" "../../$VITE_JS" --port 5000 --host 0.0.0.0

@@ -19,19 +19,20 @@ Requirements: 6.2, 6.3 (plus allocator fields R1.6, R1.9 on IntentEvent).
 
 from __future__ import annotations
 
-from typing import Annotated, Literal
+from typing import Annotated, Literal, Self
 
-from pydantic import BaseModel, ConfigDict, Field, RootModel
+from pydantic import BaseModel, ConfigDict, Field, RootModel, model_validator
 
 # ── Discriminator + scalar aliases ─────────────────────────────────────────
 
-#: The Agent trace event kinds. ``plan-update`` patches the active plan row and
-#: is not rendered as a separate visual row.
+#: Event kinds with dedicated frontend row components. Validated-only telemetry
+#: (for example ``budget`` and ``context-compressed``) intentionally stays out.
 EventType = Literal[
     "intent",
     "thinking",
     "plan",
     "plan-update",
+    "map-files",
     "read-files",
     "edit-file",
     "command",
@@ -55,7 +56,7 @@ class BaseEvent(BaseModel):
     ts: str  # ISO-8601
 
 
-# ── The eight row kinds ─────────────────────────────────────────────────────
+# ── Structured event payloads ───────────────────────────────────────────────
 
 class IntentEvent(BaseEvent):
     type: Literal["intent"] = "intent"
@@ -108,9 +109,33 @@ class ReadFileRef(BaseModel):
     span: tuple[int, int] | None = None
 
 
+class MapFilesEvent(BaseEvent):
+    """The confined file scope selected before READ_FILES and APPLY_EDITS."""
+
+    type: Literal["map-files"] = "map-files"
+    read_list: list[str] = Field(alias="readList", max_length=8)
+    write_list: list[str] = Field(alias="writeList")
+    rationale: str
+
+
 class ReadFilesEvent(BaseEvent):
     type: Literal["read-files"] = "read-files"
     files: list[ReadFileRef]
+
+
+class ContextCompressedEvent(BaseEvent):
+    """Token counts emitted after best-effort conversation compression."""
+
+    type: Literal["context-compressed"] = "context-compressed"
+    original_tokens: int = Field(alias="originalTokens", gt=0)
+    compressed_tokens: int = Field(alias="compressedTokens", ge=0)
+    compression_ratio: float = Field(alias="compressionRatio", ge=0, le=1)
+
+    @model_validator(mode="after")
+    def compressed_count_does_not_exceed_original(self) -> Self:
+        if self.compressed_tokens > self.original_tokens:
+            raise ValueError("compressedTokens must not exceed originalTokens")
+        return self
 
 
 class EditFileEvent(BaseEvent):
@@ -185,6 +210,12 @@ class ApprovalEvent(BaseEvent):
     decision: Literal["approve", "reject"] | None = None
 
 
+class RecoveryAttemptEvent(BaseEvent):
+    type: Literal["recovery-attempt"] = "recovery-attempt"
+    attempt: int = Field(ge=1)
+    failures: list[str]
+
+
 class BudgetEvent(BaseEvent):
     """Latest run-scoped execution and context-budget usage."""
 
@@ -218,18 +249,21 @@ class DoneEvent(BaseEvent):
 
 # ── Discriminated union + emit-gate entrypoint ──────────────────────────────
 
-#: Discriminated union of all eight row kinds, keyed on the ``type`` field.
+#: Discriminated union of every validated structured event, keyed on ``type``.
 AgentEvent = Annotated[
     IntentEvent
     | ThinkingEvent
     | PlanEvent
     | PlanUpdateEvent
+    | MapFilesEvent
     | ReadFilesEvent
+    | ContextCompressedEvent
     | EditFileEvent
     | CommandEvent
     | ReviewEvent
     | SummaryEvent
     | ApprovalEvent
+    | RecoveryAttemptEvent
     | BudgetEvent
     | TestResultsEvent
     | DoneEvent,
@@ -254,10 +288,12 @@ __all__ = [
     "BaseEvent",
     "BudgetEvent",
     "CommandEvent",
+    "ContextCompressedEvent",
     "DoneEvent",
     "EditFileEvent",
     "EventType",
     "IntentEvent",
+    "MapFilesEvent",
     "ModelTier",
     "PlanEvent",
     "PlanItem",
@@ -265,6 +301,7 @@ __all__ = [
     "PlanUpdateEvent",
     "ReadFileRef",
     "ReadFilesEvent",
+    "RecoveryAttemptEvent",
     "ReviewCheck",
     "ReviewCheckStatus",
     "ReviewEvent",

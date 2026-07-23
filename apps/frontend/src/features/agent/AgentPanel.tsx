@@ -1,5 +1,5 @@
 import { Component, useState, useEffect, type ErrorInfo, type ReactNode } from "react";
-import { Pause, Play, Square, Zap } from "lucide-react";
+import { FilePenLine, Pause, Play, Square, Zap } from "lucide-react";
 import { useApp } from "@/lib/store";
 import { cn } from "@/lib/utils";
 import { formatElapsed } from "@/lib/format-elapsed";
@@ -27,6 +27,8 @@ export function AgentPanel() {
   const runBudget       = useApp((s) => s.runBudget);
   const pauseAgent      = useApp((s) => s.pauseAgent);
   const resumeAgent     = useApp((s) => s.resumeAgent);
+  const workspaceRoot    = useApp((s) => s.workspaceRoot);
+  const openInstructions = useApp((s) => s.openProjectInstructions);
   const [showContextLimit, setShowContextLimit] = useState(false);
   const [elapsedMs, setElapsedMs] = useState(0);
 
@@ -73,6 +75,17 @@ export function AgentPanel() {
           </div>
 
           <div className="ml-auto flex items-center gap-2 shrink-0">
+            <button
+              type="button"
+              onClick={() => void openInstructions()}
+              disabled={!workspaceRoot}
+              className="inline-flex h-6 items-center gap-1.5 rounded px-1.5 text-[10px] font-medium text-[#71717A] transition-colors hover:bg-[#17171C] hover:text-[#C8C8CE] disabled:cursor-not-allowed disabled:opacity-40"
+              title={workspaceRoot ? "Open .zoc/instructions.md" : "Open a workspace first"}
+            >
+              <FilePenLine className="h-3 w-3 shrink-0" />
+              <span>Edit instructions</span>
+            </button>
+
             {runActive ? (
               /* ── Live status pill ── */
               <div className="flex items-center gap-2 rounded-full border border-[#26262B] bg-[#15151A] px-2.5 py-1">

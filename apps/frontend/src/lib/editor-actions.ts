@@ -70,6 +70,49 @@ export function revealLine(line: number): void {
   active?.focus?.();
 }
 
+/**
+ * R3.2/R3.3: scroll `line` into view and place the caret at (`line`, `column`),
+ * both 1-based. Used by the Problems panel to jump to the exact diagnostic
+ * position in the already-active editor.
+ */
+export function revealPosition(line: number, column: number): void {
+  active?.revealLineInCenter?.(line);
+  active?.setPosition?.({ lineNumber: line, column });
+  active?.focus?.();
+}
+
+// ── Pending reveal buffer (R3.2/R3.3 for a freshly-opened file) ─────────────
+// When a Problems-panel click opens a not-yet-mounted file, the active editor
+// is not registered yet. The click buffers a single (path, line, column)
+// target here; `MonacoView` consumes it on mount for the matching path so the
+// scroll/caret still lands. A target for a different path is discarded.
+interface PendingReveal {
+  path: string;
+  line: number;
+  column: number;
+}
+
+let pendingReveal: PendingReveal | null = null;
+
+/** Buffer a reveal target to be flushed when `path` mounts (single-consume). */
+export function requestReveal(path: string, line: number, column: number): void {
+  pendingReveal = { path, line, column };
+}
+
+/**
+ * Consume and return the buffered reveal target for `path`, or `null` when none
+ * is buffered for that path. Consuming clears the buffer so it fires once; a
+ * buffered target for a different path is discarded (returns `null`) so a stale
+ * target never lands on the wrong file.
+ */
+export function takePendingReveal(path: string): { line: number; column: number } | null {
+  const target = pendingReveal;
+  if (!target) return null;
+  pendingReveal = null;
+  if (target.path !== path) return null;
+  return { line: target.line, column: target.column };
+}
+
 // ── Cursor position (Phase 14 status bar) ──────────────────────────────────
 export interface CursorPosition {
   line: number;

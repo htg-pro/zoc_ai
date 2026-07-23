@@ -3,11 +3,15 @@ import { EditorTabs } from "./EditorTabs";
 import { MonacoView } from "./MonacoView";
 import { Breadcrumbs } from "./Breadcrumbs";
 import { InlineDiffView } from "./InlineDiffView";
+import { useLspLifecycle } from "./useLspLifecycle";
 import { Check, FileText, Sparkles, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { toast } from "@/components/ui/toast";
 
 export function EditorArea() {
+  // Construct the LSP client + registry once for the editor's lifetime (R2.2,
+  // R2.4). Called before any early return so the hook order stays stable.
+  useLspLifecycle();
   const openFiles = useApp((s) => s.openFiles);
   const activeFile = useApp((s) => s.activeFile);
   const pendingPatches = useApp((s) => s.pendingPatches);

@@ -29,6 +29,7 @@ from pathlib import Path
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from zocai_gateway.context.project_instructions import read_project_instructions
 from zocai_gateway.context.rag_matcher import NullRagMatcher, RagFragment, RagMatcher
 from zocai_gateway.context.steering_compiler import (
     DEFAULT_STEERING_DIR,
@@ -171,13 +172,13 @@ def is_edit_request(prompt: str) -> bool:
 class AskContext:
     """The context payload assembled before generating an Ask response.
 
-    Built by :func:`build_ask_context` from the compiled steering guides
-    (R2.5) and the RAG-extracted code fragments (R2.6), so every Ask response
-    is generated against steering + RAG context.
+    Built by :func:`build_ask_context` from workspace instructions, compiled
+    steering guides (R2.5), and RAG-extracted code fragments (R2.6).
     """
 
     steering: SteeringPayload
     rag_fragments: tuple[RagFragment, ...] = ()
+    project_instructions: str = ""
 
 
 @dataclass(frozen=True, slots=True)
@@ -258,7 +259,11 @@ def build_ask_context(
     steering = compile_steering(resolved_steering_dir)
     matcher: RagMatcher = rag_matcher if rag_matcher is not None else NullRagMatcher()
     fragments = tuple(matcher.extract(prompt))
-    return AskContext(steering=steering, rag_fragments=fragments)
+    return AskContext(
+        steering=steering,
+        rag_fragments=fragments,
+        project_instructions=read_project_instructions(workspace_root),
+    )
 
 
 class ExecutionPath(abc.ABC):

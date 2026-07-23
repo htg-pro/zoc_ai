@@ -33,32 +33,47 @@ a default agent run walks INTAKE→…→DONE cleanly.
 
 from __future__ import annotations
 
-import json
+import contextlib
+import functools
 import itertools
+import json
 import logging
 import os
+import re
 import shutil
 import tempfile
+import time
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from dataclasses import dataclass, field, replace
+from datetime import UTC, datetime
+from enum import Enum
 from pathlib import Path
 from typing import Protocol
 
+from pydantic import ValidationError
 from shared_schema.agent_events import (
     AgentEvent,
     BudgetEvent,
     CommandEvent,
     PlanEvent,
     PlanUpdateEvent,
+    ReadFileRef,
+    ReadFilesEvent,
+    RecoveryAttemptEvent,
     ReviewCheck,
     ReviewEvent,
     ReviewFile,
     ReviewValidation,
     SummaryEvent,
     TestResultsEvent,
+    ThinkingEvent,
 )
-
+from shared_schema.agent_events import (
+    ContextCompressedEvent as ContextCompressedContractEvent,
+)
+from shared_schema.agent_events import (
+    MapFilesEvent as MapFilesContractEvent,
+)
 from zocai_evolution import (
     CheckOutcome as EvoCheckOutcome,
 )
@@ -74,8 +89,11 @@ from zocai_evolution import (
 )
 
 from zocai_gateway.channel import ModeChannel, TextSink, channel_for
-from zocai_gateway.context_mentions import expand_prompt_file_mentions
 from zocai_gateway.context.mcp_gateway import MCPGateway
+from zocai_gateway.context.project_instructions import (
+    prepend_project_instructions,
+    read_project_instructions,
+)
 from zocai_gateway.context.rag_matcher import (
     NullRagMatcher,
     RagFragment,
@@ -85,20 +103,37 @@ from zocai_gateway.context.rag_matcher import (
 from zocai_gateway.context.shell_fs import FSReadAdapter, ShellSpawner
 from zocai_gateway.context.steering_compiler import (
     DEFAULT_STEERING_DIR,
+    PER_FILE_TOKEN_CAP,
+    FileSelector,
+    MapFilesError,
+    MapFilesEvent,
     SteeringPayload,
+    build_read_files_payload,
     compile_steering,
+    preapproved_writes,
+    runtime_file_selector,
+    select_map_files,
 )
 from zocai_gateway.context.token_gate import TokenGateResult, estimate_tokens, fit_fragments
+from zocai_gateway.context_mentions import expand_prompt_file_mentions
 from zocai_gateway.edits import EditCoordinator, EditPlan, PlannedChange
 from zocai_gateway.emit_gate import EmitGate
-from zocai_gateway.fsm import FSM
+from zocai_gateway.fsm import FSM, EmitSink
 from zocai_gateway.hardware_probe import HardwareProfile
 from zocai_gateway.hot_swap import HotSwapCoordinator, HotSwapResult, ModelLoader
 from zocai_gateway.intent_event import (
     DEFAULT_INTENT_TEXT,
     allocation_stage_event_factory,
 )
-from zocai_gateway.memory.matrix import MemoryMatrix
+from zocai_gateway.memory.matrix import (
+    CompressionError,
+    ConversationMemory,
+    MemoryMatrix,
+    Message,
+    Role,
+    runtime_summarizer,
+    tokenizer_kind_for_tier,
+)
 from zocai_gateway.memory.state_wrapper import (
     Diff,
     FailureRecord,
@@ -121,26 +156,36 @@ from zocai_gateway.model_runtime import (
     ModelRuntimeError,
     generate_text,
     generate_text_stream,
+    generate_with_tools,
 )
 from zocai_gateway.orchestrator import Orchestrator
+from zocai_gateway.plan import AgentPlan
 from zocai_gateway.project_tests import (
     ProjectTestCommand,
     ProjectTestResult,
     detect_project_test_command,
     run_project_tests,
 )
+from zocai_gateway.react import ReActExecutor, ToolModelFn
 from zocai_gateway.remediation import RemediationLoop
 from zocai_gateway.stages import Stage
 from zocai_gateway.toolsets import FullToolset
+from zocai_gateway.verification import parse_verify_result
+from zocai_gateway.workspace_index import WorkspaceIndexer
 
 __all__ = [
     "AgentBrain",
     "AllocationSignals",
+    "ApplyExecutor",
+    "ApplyResult",
+    "ApplyStrategy",
     "DefaultAgentBrain",
+    "ReActApplyExecutor",
     "RunContext",
     "RunPipeline",
     "RunResult",
     "RuntimeAgentBrain",
+    "SinglePassApplyExecutor",
     "TextSink",
     "default_model_loader",
     "default_workspace_rag_matcher",
@@ -227,10 +272,9 @@ class AllocationSignals:
 class RunContext:
     """The enriched context payload assembled by the Context Bus for a run.
 
-    Carries the allocation it was sized against, the token-gated RAG fragments
-    that fit the window (R8.5), the compiled steering payload (R8.2), and the
-    MCP tool identifiers available to the run (R8.3). It is handed to the brain
-    so the edit plan can be produced against real context.
+    Carries the allocation it was sized against, project instructions, the
+    token-gated RAG fragments that fit the window (R8.5), the compiled steering
+    payload (R8.2), and MCP tool identifiers available to the run (R8.3).
     """
 
     allocation: Allocation
@@ -238,6 +282,10 @@ class RunContext:
     steering: SteeringPayload
     token_gate: TokenGateResult
     mcp_tools: tuple[str, ...]
+    project_instructions: str = ""
+    scratchpad: str = ""
+    read_files_payload: str = ""
+    conversation_history: str = ""
 
 
 class AgentBrain(Protocol):
@@ -249,6 +297,12 @@ class AgentBrain(Protocol):
     """
 
     def allocation_signals(self, request: AgentRunRequest) -> AllocationSignals: ...
+
+    def think(self, request: AgentRunRequest, context: RunContext) -> str: ...
+
+    def structured_plan(
+        self, request: AgentRunRequest, context: RunContext
+    ) -> AgentPlan: ...
 
     def edit_plan(self, request: AgentRunRequest, context: RunContext) -> EditPlan: ...
 
@@ -274,6 +328,14 @@ class DefaultAgentBrain:
 
     def allocation_signals(self, request: AgentRunRequest) -> AllocationSignals:
         return AllocationSignals()
+
+    def think(self, request: AgentRunRequest, context: RunContext) -> str:
+        return ""
+
+    def structured_plan(
+        self, request: AgentRunRequest, context: RunContext
+    ) -> AgentPlan:
+        return AgentPlan(steps=[], verification_command=None, confidence=1.0)
 
     def edit_plan(self, request: AgentRunRequest, context: RunContext) -> EditPlan:
         return EditPlan(reasoning=f"no changes required for: {request.prompt}")
@@ -304,6 +366,97 @@ class RuntimeAgentBrain(DefaultAgentBrain):
     def __init__(self) -> None:
         self._request: AgentRunRequest | None = None
         self._context: RunContext | None = None
+        self._structured_plan: AgentPlan | None = None
+
+    def update_context(self, context: RunContext) -> None:
+        self._context = context
+
+    def think(self, request: AgentRunRequest, context: RunContext) -> str:
+        thinking_request = request.model_copy(update={"max_tokens": 1024})
+        try:
+            text = generate_text(
+                thinking_request,
+                system_prompt=_thinking_system_prompt(context),
+                timeout=60.0,
+            )
+        except ModelRuntimeError as exc:
+            raise RuntimeError(f"model thinking failed: {exc}") from exc
+        if not text:
+            # No provider configured (empty response): produce no scratchpad
+            # and proceed to ANALYZE like the DefaultAgentBrain path (R1.7/1.8).
+            return ""
+        if not _has_think_block(text):
+            # R2.4: a non-empty response that carries no complete
+            # <think>...</think> block (including an opening <think> with no
+            # matching close) fails closed.
+            raise RuntimeError(
+                "model thinking response did not contain a complete "
+                "<think>...</think> block"
+            )
+        # A complete-but-empty/whitespace block is a valid extraction that
+        # yields no scratchpad: proceed to ANALYZE with no ThinkingEvent, just
+        # like the no-provider path (the R1.3 vs R2.4 boundary).
+        return _extract_thinking(text)
+
+    def structured_plan(
+        self, request: AgentRunRequest, context: RunContext
+    ) -> AgentPlan:
+        self._request = request
+        self._context = context
+        response_format = _agent_plan_response_format()
+        supports_response_format = (request.provider or "").lower() != "anthropic"
+        system_prompt = _structured_plan_system_prompt(
+            context, include_schema=not supports_response_format
+        )
+        try:
+            text = generate_text(
+                request,
+                system_prompt=system_prompt,
+                response_format=response_format if supports_response_format else None,
+                timeout=120.0,
+            )
+        except ModelRuntimeError:
+            if not supports_response_format:
+                raise
+            supports_response_format = False
+            text = generate_text(
+                request,
+                system_prompt=_structured_plan_system_prompt(context, include_schema=True),
+                timeout=120.0,
+            )
+        if not text:
+            plan = super().structured_plan(request, context)
+            self._structured_plan = plan
+            return plan
+        try:
+            plan = _agent_plan_from_model_text(text)
+        except ValidationError as exc:
+            retry_request = request.model_copy(
+                update={
+                    "prompt": (
+                        f"{request.prompt}\n\nYour previous plan had this JSON error: "
+                        f"{exc}. Correct it and try again."
+                    )
+                }
+            )
+            retry = generate_text(
+                retry_request,
+                system_prompt=_structured_plan_system_prompt(
+                    context, include_schema=not supports_response_format
+                ),
+                response_format=response_format if supports_response_format else None,
+                timeout=120.0,
+            )
+            if not retry:
+                raise RuntimeError("model returned an empty corrected plan") from exc
+            try:
+                plan = _agent_plan_from_model_text(retry)
+            except ValidationError as retry_exc:
+                raise RuntimeError(
+                    f"model returned an invalid structured plan after retry: {retry_exc}"
+                ) from retry_exc
+        self._structured_plan = plan
+        return plan
 
     def edit_plan(self, request: AgentRunRequest, context: RunContext) -> EditPlan:
         self._request = request
@@ -311,7 +464,7 @@ class RuntimeAgentBrain(DefaultAgentBrain):
         try:
             text = generate_text(
                 request,
-                system_prompt=_agent_system_prompt(context),
+                system_prompt=_agent_system_prompt(context, self._structured_plan),
                 timeout=120.0,
             )
         except ModelRuntimeError as exc:
@@ -328,11 +481,21 @@ class RuntimeAgentBrain(DefaultAgentBrain):
         context = self._context
         if request is None or context is None or not isinstance(failure, FailureRecord):
             return None
-        output = failure.log[-16_000:]
+        output = failure.log[-2_000:]
+        verify_result = parse_verify_result(
+            failure.command, failure.log, failure.exit_code
+        )
+        failed_tests = "\n".join(f"- {name}" for name in verify_result.failures)
+        prior_steps = "\n".join(
+            f"- {change.path}: {change.diff or 'full-file replacement'}"
+            for change in prior.changes
+        )
         retry_prompt = (
             f"{request.prompt}\n\n"
             "The previous code changes failed the project test command. "
-            "Return a corrected edit plan that addresses this failure.\n"
+            "Return the minimum corrected edit plan that addresses this failure.\n"
+            f"Previously applied plan steps:\n{prior_steps or '- no file changes'}\n"
+            f"Failed tests:\n{failed_tests}\n"
             f"Command: {failure.command}\n"
             f"Exit code: {failure.exit_code}\n"
             f"Test output:\n{output}"
@@ -340,7 +503,7 @@ class RuntimeAgentBrain(DefaultAgentBrain):
         try:
             text = generate_text(
                 request.model_copy(update={"prompt": retry_prompt}),
-                system_prompt=_agent_system_prompt(context),
+                system_prompt=_agent_system_prompt(context, self._structured_plan),
                 timeout=120.0,
             )
         except ModelRuntimeError as exc:
@@ -352,6 +515,92 @@ class RuntimeAgentBrain(DefaultAgentBrain):
             reasoning=f"{plan.reasoning}\nFailed command: {failure.command}",
             changes=plan.changes,
         )
+
+
+THINKING_SYSTEM_PROMPT = (
+    "You are thinking through a coding task privately.\n"
+    "Wrap ALL your reasoning in <think>...</think>.\n"
+    "After the closing tag, output nothing else.\n"
+    "Consider: what files are relevant? what could go wrong? what is the "
+    "minimum set of changes? are there edge cases?"
+)
+
+_THINK_BLOCK_RE = re.compile(r"<think>(.*?)</think>", re.IGNORECASE | re.DOTALL)
+
+
+def _extract_thinking(text: str) -> str:
+    """Extract only the private scratchpad block from a thinking response.
+
+    Returns the stripped content between the first ``<think>`` and the first
+    ``</think>`` that follows it (R1.3, R2.3). Returns ``""`` when no complete
+    block is present *or* when the block is present but empty/whitespace; use
+    :func:`_has_think_block` to distinguish those two cases (the R1.3 vs R2.4
+    boundary).
+    """
+    match = _THINK_BLOCK_RE.search(text)
+    return match.group(1).strip() if match is not None else ""
+
+
+def _has_think_block(text: str) -> bool:
+    """Whether a *complete* ``<think>...</think>`` block is present (R2.4).
+
+    A complete block requires both the opening ``<think>`` and a following
+    ``</think>``; a response with an opening tag but no matching close has no
+    complete block and so returns ``False``. This is the signal that separates
+    "no complete block" (fail closed, R2.4) from "a complete but empty block"
+    (a valid extraction yielding no scratchpad, R1.3).
+    """
+    return _THINK_BLOCK_RE.search(text) is not None
+
+
+def _thinking_system_prompt(context: RunContext) -> str:
+    return prepend_project_instructions(
+        THINKING_SYSTEM_PROMPT, context.project_instructions
+    )
+
+
+def _agent_plan_response_format() -> dict[str, object]:
+    return {
+        "type": "json_schema",
+        "json_schema": {
+            "name": "agent_plan",
+            "strict": True,
+            "schema": AgentPlan.model_json_schema(),
+        },
+    }
+
+
+def _structured_plan_system_prompt(
+    context: RunContext, *, include_schema: bool
+) -> str:
+    parts = [
+        "Create a concise, ordered edit plan for the coding task. Return only "
+        "JSON matching the AgentPlan schema. Paths must be workspace-relative, "
+        "rationales must be one sentence, and search strings must be exact.",
+    ]
+    if context.scratchpad:
+        parts.append(f"Private planning scratchpad:\n{context.scratchpad}")
+    if context.read_files_payload:
+        parts.append(f"Selected workspace files:\n{context.read_files_payload}")
+    if context.conversation_history:
+        parts.append(f"Conversation history:\n{context.conversation_history}")
+    if include_schema:
+        parts.append(
+            "AgentPlan schema (JSON, also valid YAML):\n"
+            + json.dumps(AgentPlan.model_json_schema(), indent=2, sort_keys=True)
+        )
+    return prepend_project_instructions(
+        "\n\n".join(parts), context.project_instructions
+    )
+
+
+def _agent_plan_from_model_text(text: str) -> AgentPlan:
+    raw = text.strip()
+    if raw.startswith("```"):
+        raw = raw.strip("`").strip()
+        if raw.lower().startswith("json"):
+            raw = raw[4:].strip()
+    return AgentPlan.model_validate_json(raw)
 
 
 def _ask_system_prompt(context: AskContext) -> str:
@@ -367,10 +616,12 @@ def _ask_system_prompt(context: AskContext) -> str:
         for fragment in context.rag_fragments[:8]:
             fragments.append(f"{fragment.path}:\n{fragment.content}")
         parts.append("Relevant code context:\n\n" + "\n\n".join(fragments))
-    return "\n\n".join(parts)
+    return prepend_project_instructions("\n\n".join(parts), context.project_instructions)
 
 
-def _agent_system_prompt(context: RunContext) -> str:
+def _agent_system_prompt(
+    context: RunContext, structured_plan: AgentPlan | None = None
+) -> str:
     parts = [
         "You are Zoc Agent, a coding agent planner. Return only JSON with this "
         'shape: {"reasoning":"short explanation","changes":[{"path":"relative/path","content":"full replacement file content","diff":"short summary"}]}.',
@@ -378,6 +629,17 @@ def _agent_system_prompt(context: RunContext) -> str:
         "content. If the request is only chat or you are unsure, return an "
         'empty changes array with useful reasoning.',
     ]
+    if context.scratchpad:
+        parts.append(f"Private planning scratchpad:\n{context.scratchpad}")
+    if context.read_files_payload:
+        parts.append(f"Selected workspace files:\n{context.read_files_payload}")
+    if context.conversation_history:
+        parts.append(f"Conversation history:\n{context.conversation_history}")
+    if structured_plan is not None:
+        parts.append(
+            "Approved structured plan:\n"
+            + structured_plan.model_dump_json(exclude_none=True)
+        )
     steering = context.steering.text.strip()
     if steering:
         parts.append(f"Project steering:\n{steering}")
@@ -388,7 +650,7 @@ def _agent_system_prompt(context: RunContext) -> str:
         parts.append("Relevant code context:\n\n" + "\n\n".join(fragments))
     if context.mcp_tools:
         parts.append("Available MCP tools: " + ", ".join(context.mcp_tools))
-    return "\n\n".join(parts)
+    return prepend_project_instructions("\n\n".join(parts), context.project_instructions)
 
 
 def _edit_plan_from_model_text(text: str) -> EditPlan:
@@ -465,7 +727,7 @@ def _to_evo_stage(stage: Stage) -> EvoStage:
 
 
 def _now() -> str:
-    return datetime.now(timezone.utc).isoformat()
+    return datetime.now(UTC).isoformat()
 
 
 def _diff_stats(diff: str) -> tuple[int, int]:
@@ -519,6 +781,140 @@ def _safe_relative_path(raw_path: str) -> Path:
     return rel
 
 
+def _edit_step_label(action: str, file: str, rationale: str) -> str:
+    """Build the per-EditStep plan-item label (R5.4, R5.5).
+
+    The label always names the Action and the file; the Rationale is appended
+    only when it is non-blank (R5.4). When the Rationale is empty or contains
+    only whitespace the label is ``"{Action} {file}"`` (R5.5).
+    """
+    prefix = f"{action.capitalize()} {file}"
+    trimmed = rationale.strip()
+    return f"{prefix}: {trimmed}" if trimmed else prefix
+
+
+# ── APPLY_EDITS strategy seam (Req 8, R3.7-R3.9) ─────────────────────────────
+
+
+class ApplyStrategy(str, Enum):
+    """Which APPLY_EDITS executor a run drives (design "strategy seam").
+
+    Defaults to :attr:`SINGLE_PASS` so the net-new ReAct loop is additive and
+    instantly reversible: leaving the default in place restores the legacy
+    single-shot apply exactly.
+    """
+
+    SINGLE_PASS = "single_pass"
+    REACT = "react"
+
+
+@dataclass(frozen=True, slots=True)
+class ApplyResult:
+    """The uniform result of an APPLY_EDITS pass, whichever strategy produced it.
+
+    ``applied`` are the diffs written (retained even on failure, R3.9),
+    ``satisfied_step_ids`` the ``edit-{index}`` ids marked done, ``wrote_code``
+    whether any file changed (drives post-write verification), ``failed`` /
+    ``error`` an unrecoverable apply failure (→ ERROR_CLOSED, R3.9), and
+    ``paused`` a file-iteration-ceiling pause (→ PAUSED, R10.2/10.7).
+    """
+
+    applied: tuple[Diff, ...] = ()
+    satisfied_step_ids: tuple[str, ...] = ()
+    wrote_code: bool = False
+    failed: bool = False
+    error: str | None = None
+    paused: bool = False
+
+
+class ApplyExecutor(Protocol):
+    """Applies an approved plan and returns a uniform :class:`ApplyResult`."""
+
+    def apply(self) -> ApplyResult: ...
+
+
+@dataclass(slots=True)
+class SinglePassApplyExecutor:
+    """Legacy single-shot apply: ``EditCoordinator.apply_edits`` in one pass.
+
+    Behavior-preserving wrapper of the pre-seam APPLY_EDITS body: writes the
+    pre-computed ``EditPlan`` through the confined toolset (R3.7), counts each
+    applied change against the file budget (R10.1), emits ``plan-update`` done
+    for each structured step whose file was applied (R5.6), and reports an
+    apply failure for the ERROR_CLOSED path (R3.9).
+    """
+
+    edits: EditCoordinator
+    orchestrator: Orchestrator
+    plan: EditPlan
+    structured_plan: AgentPlan
+    emit_plan_update: Callable[[str, str], None]
+    emit_budget: Callable[[], None]
+
+    def apply(self) -> ApplyResult:
+        outcome = self.edits.apply_edits(self.plan)
+        applied = tuple(Diff(path=c.path, diff=c.diff) for c in outcome.applied)
+        for change in outcome.applied:
+            self.orchestrator.active_file_markers.append(change.path)
+            self.orchestrator.budget.count_file_op()  # R10.1 / R4.1
+        applied_paths = {change.path for change in outcome.applied}
+        satisfied: list[str] = []
+        for index, step in enumerate(self.structured_plan.steps, start=1):
+            if step.file in applied_paths:
+                self.emit_plan_update(f"edit-{index}", "done")  # R5.6
+                satisfied.append(f"edit-{index}")
+        self.emit_budget()  # R10.4
+        return ApplyResult(
+            applied=applied,
+            satisfied_step_ids=tuple(satisfied),
+            wrote_code=bool(outcome.applied),
+            failed=outcome.failed is not None,
+            error=outcome.error,
+            paused=outcome.paused,
+        )
+
+
+@dataclass(slots=True)
+class ReActApplyExecutor:
+    """ReAct multi-step apply: drives a :class:`ReActExecutor` over the toolset.
+
+    Constructs the ReAct loop over the run's toolset/orchestrator/AgentPlan and
+    the single ordered emit boundary, then maps its ``ReActOutcome`` onto the
+    uniform :class:`ApplyResult` (R8/R9/R10.1).
+    """
+
+    toolset: FullToolset
+    orchestrator: Orchestrator
+    structured_plan: AgentPlan
+    request: AgentRunRequest
+    context: RunContext
+    emit: EmitSink
+    run_id: str
+    tokens_used: int
+    authorize_write: Callable[[str], bool] | None = None
+    run_with_tools: ToolModelFn = generate_with_tools
+
+    def apply(self) -> ApplyResult:
+        outcome = ReActExecutor(
+            toolset=self.toolset,
+            orchestrator=self.orchestrator,
+            plan=self.structured_plan,
+            request=self.request,
+            context=self.context,
+            emit=self.emit,
+            run_id=self.run_id,
+            tokens_used=self.tokens_used,
+            run_with_tools=self.run_with_tools,
+            authorize_write=self.authorize_write,
+        ).run()
+        return ApplyResult(
+            applied=outcome.applied_diffs,
+            satisfied_step_ids=outcome.satisfied_step_ids,
+            wrote_code=bool(outcome.applied_diffs),
+            paused=outcome.paused,
+        )
+
+
 class RunPipeline:
     """Composes and drives the full backend path for a single run (task 14.1).
 
@@ -547,7 +943,14 @@ class RunPipeline:
         mcp_gateway: MCPGateway | None = None,
         model_loader: ModelLoader = default_model_loader,
         wait_for_review_decision: ReviewDecisionWaiter | None = None,
+        wait_for_approval_decision: ReviewDecisionWaiter | None = None,
+        file_selector: FileSelector | None = None,
+        workspace_indexer: WorkspaceIndexer | None = None,
+        index_session_id: str | None = None,
+        hybrid_candidate_source: bool = False,
         project_test_runner: ProjectTestRunner = run_project_tests,
+        apply_strategy: ApplyStrategy = ApplyStrategy.SINGLE_PASS,
+        run_with_tools: ToolModelFn = generate_with_tools,
     ) -> None:
         self.run_id = run_id
         self.source_workspace_root = Path(workspace_root).resolve()
@@ -565,7 +968,21 @@ class RunPipeline:
         self._text_sink = text_sink
         self._ask_streamed = False
         self._wait_for_review_decision = wait_for_review_decision
+        self._wait_for_approval_decision = wait_for_approval_decision
         self._project_test_runner = project_test_runner
+        self.apply_strategy = apply_strategy
+        self._run_with_tools = run_with_tools
+        self._workspace_indexer = workspace_indexer
+        self._index_session_id = index_session_id or request.run_id or run_id
+        self._hybrid_candidate_source = hybrid_candidate_source
+        self._enforce_write_allowlist = file_selector is not None or brain is None
+        self._file_selector = file_selector
+        if self._file_selector is None and brain is not None:
+            # Injected brains are deterministic test/runtime substitutes; keep
+            # their existing runs isolated from the live provider boundary.
+            self._file_selector = lambda _prompt: (
+                '{"read":[],"write":[],"rationale":"injected brain"}'
+            )
 
         self.brain: AgentBrain = brain if brain is not None else RuntimeAgentBrain()
         self.allocator = allocator if allocator is not None else ModelAllocator()
@@ -638,10 +1055,8 @@ class RunPipeline:
                     relative = source_dir.relative_to(source)
                     link = target / relative
                     link.parent.mkdir(parents=True, exist_ok=True)
-                    try:
+                    with contextlib.suppress(OSError):
                         link.symlink_to(source_dir, target_is_directory=True)
-                    except OSError:
-                        pass
                     dirnames.remove(name)
                 elif name in prune_names:
                     dirnames.remove(name)
@@ -676,28 +1091,62 @@ class RunPipeline:
                 payload.get("seq"),
             )
 
-    def _emit_plan(self, plan: EditPlan) -> None:
+    def _emit_scratchpad(self, scratchpad: str, elapsed_ms: int) -> None:
+        self._emit(
+            ThinkingEvent(
+                seq=0,
+                run_id=self.run_id,
+                ts=_now(),
+                text=scratchpad,
+                collapsible=True,
+                gist="Private task analysis",
+                elapsed_ms=elapsed_ms,
+                truncated=False,
+            )
+        )
+
+    def _emit_plan(
+        self, plan: EditPlan, structured_plan: AgentPlan | None = None
+    ) -> None:
         has_changes = plan.has_changes
         items = [
             {"id": "analyze", "label": "Analyze request", "status": "done"},
             {"id": "plan", "label": "Create edit plan", "status": "done"},
-            {
+        ]
+        if structured_plan is not None:
+            items.extend(
+                {
+                    "id": f"edit-{index}",
+                    "label": _edit_step_label(step.action, step.file, step.rationale),
+                    "status": "pending",
+                }
+                for index, step in enumerate(structured_plan.steps, start=1)
+            )
+        items.extend(
+            [
+                {
                 "id": "apply",
                 "label": "Apply changes in isolated workspace",
                 "status": "active" if has_changes else "done",
-            },
-            {
+                },
+                {
                 "id": "validate",
-                "label": "Run validation",
+                "label": (
+                    f"Run {structured_plan.verification_command}"
+                    if structured_plan is not None
+                    and structured_plan.verification_command
+                    else "Run validation"
+                ),
                 "status": "pending" if has_changes else "active",
-            },
-            {
+                },
+                {
                 "id": "review",
                 "label": "Review changes before applying",
                 "status": "pending" if has_changes else "done",
-            },
-            {"id": "summary", "label": "Summarize result", "status": "pending"},
-        ]
+                },
+                {"id": "summary", "label": "Summarize result", "status": "pending"},
+            ]
+        )
         self._emit(
             PlanEvent(
                 seq=0,
@@ -715,7 +1164,7 @@ class RunPipeline:
                 run_id=self.run_id,
                 ts=_now(),
                 id=item_id,
-                status=status,  # type: ignore[arg-type]
+                status=status,
             )
         )
 
@@ -728,7 +1177,7 @@ class RunPipeline:
                 ts=_now(),
                 command=command or "validation",
                 command_id="validation",
-                status=status,  # type: ignore[arg-type]
+                status=status,
                 exit_code=exit_code,
                 output_tail=_tail(log),
             )
@@ -778,11 +1227,33 @@ class RunPipeline:
             )
         )
 
+    def _emit_recovery_attempt(self, attempt: int, failures: list[str]) -> None:
+        self._emit(
+            RecoveryAttemptEvent(
+                seq=0,
+                run_id=self.run_id,
+                ts=_now(),
+                attempt=attempt,
+                failures=failures,
+            )
+        )
+
     def _run_post_write_tests(self) -> ProjectTestResult | None:
         detected = detect_project_test_command(self.workspace_root)
         if detected is None:
             return None
         return self._project_test_runner(self.workspace_root, detected)
+
+    def _provider_configured(self) -> bool:
+        """Whether a model provider and model are configured for this run.
+
+        The ReAct strategy only engages with a real tool-calling model behind
+        it (design selection rule); with no provider the run falls back to the
+        single-pass path or the empty-plan skip.
+        """
+        return bool(
+            (self.request.provider or "").strip() and (self.request.model or "").strip()
+        )
 
     def _emit_budget(
         self,
@@ -873,9 +1344,7 @@ class RunPipeline:
         )
         if isinstance(result, AskResponse):
             text = result.text
-        elif isinstance(result, SwitchToAgentMessage):
-            text = result.message
-        elif isinstance(result, AskError):
+        elif isinstance(result, (SwitchToAgentMessage, AskError)):
             text = result.message
         else:  # pragma: no cover - exhaustive over AskResult
             text = ""
@@ -942,7 +1411,101 @@ class RunPipeline:
             steering=steering,
             token_gate=gated,
             mcp_tools=self.mcp_gateway.available_tools(),
+            project_instructions=read_project_instructions(self.source_workspace_root),
         )
+
+    def _map_candidates(self) -> tuple[object, ...]:
+        indexer = self._workspace_indexer
+        if (
+            self._hybrid_candidate_source
+            and indexer is not None
+            and indexer.is_ready(self._index_session_id)
+        ):
+            return tuple(
+                indexer.query(
+                    self._index_session_id,
+                    self.request.prompt,
+                    top_k=20,
+                )
+            )
+        return tuple(self.rag_matcher.extract(self.request.prompt))
+
+    def _select_files(self) -> MapFilesEvent:
+        selector = self._file_selector
+        if selector is None:
+            if not self._provider_configured():
+                raise MapFilesError("file-selection requires a configured provider")
+            selector = runtime_file_selector(self.request)
+        return select_map_files(
+            self.request.prompt,
+            self._map_candidates(),
+            select=selector,
+            workspace_root=self.workspace_root,
+        )
+
+    def _read_selected_files(
+        self, event: MapFilesEvent
+    ) -> tuple[str, tuple[str, ...]]:
+        read_paths: list[str] = []
+
+        def read_file(path: str) -> str:
+            content = self.toolset.read_file(path)
+            read_paths.append(path)
+            return content
+
+        payload = build_read_files_payload(
+            event.read_list,
+            read_file,
+            token_cap=PER_FILE_TOKEN_CAP,
+        )
+        return payload, tuple(read_paths)
+
+    def _new_conversation_memory(self, context: RunContext) -> ConversationMemory:
+        return ConversationMemory(
+            messages=[
+                Message(
+                    Role.SYSTEM,
+                    "You are Zoc Agent, a workspace-confined coding assistant.",
+                    Stage.INTAKE.value,
+                ),
+                Message(Role.USER, self.request.prompt, Stage.INTAKE.value),
+            ],
+            tokenizer_kind=tokenizer_kind_for_tier(context.allocation.tier),
+        )
+
+    @staticmethod
+    def _context_with_memory(
+        context: RunContext, memory: ConversationMemory
+    ) -> RunContext:
+        rendered = "\n".join(
+            f"{message.role.value}: {message.content}" for message in memory.messages
+        )
+        return replace(context, conversation_history=rendered)
+
+    def _maybe_compress(
+        self, memory: ConversationMemory, max_tokens: int
+    ) -> None:
+        memory.summarizer = (
+            runtime_summarizer(self.request) if self._provider_configured() else None
+        )
+        try:
+            event = memory.compress(max_tokens)
+        except (CompressionError, ModelRuntimeError):
+            return
+        except Exception:
+            logger.exception("run %s context compression failed", self.run_id)
+            return
+        if event is not None:
+            self._emit(
+                ContextCompressedContractEvent(
+                    seq=0,
+                    run_id=self.run_id,
+                    ts=_now(),
+                    original_tokens=event.original_tokens,
+                    compressed_tokens=event.compressed_tokens,
+                    compression_ratio=event.compression_ratio,
+                )
+            )
 
     # -- Agent Mode (FSM-driven structured channel) -------------------------
 
@@ -986,7 +1549,109 @@ class RunPipeline:
             emit=self._emit,
             stage_event_factory=factory,
         )
-        edits = EditCoordinator(toolset=self.toolset, run_id=self.run_id, emit=self._emit)
+        memory = self._new_conversation_memory(context)
+        self._maybe_compress(memory, allocation.context_window)
+        context = self._context_with_memory(context, memory)
+        thinking_started = time.monotonic()
+        try:
+            scratchpad = self.brain.think(self.request, context)
+        except Exception as exc:
+            reason = f"thinking failed: {type(exc).__name__}: {exc}"
+            logger.exception("run %s failed during private thinking", self.run_id)
+            fsm.fail(reason)
+            stages.append(Stage.ERROR_CLOSED)
+            self._close()
+            return RunResult(
+                mode=Mode.AGENT,
+                run_id=self.run_id,
+                stage=Stage.ERROR_CLOSED,
+                stages=tuple(stages),
+                allocation=allocation,
+            )
+        if scratchpad:
+            memory.messages.append(
+                Message(Role.ASSISTANT, scratchpad, Stage.ANALYZE.value)
+            )
+            context = replace(context, scratchpad=scratchpad)
+            context = self._context_with_memory(context, memory)
+            self._emit_scratchpad(
+                scratchpad,
+                max(0, int((time.monotonic() - thinking_started) * 1000)),
+            )
+
+        stages.append(fsm.advance())  # INTAKE → ANALYZE
+        stages.append(fsm.advance())  # ANALYZE → MAP_FILES
+        try:
+            map_event = self._select_files()
+        except Exception as exc:
+            reason = f"map_files failed: {type(exc).__name__}: {exc}"
+            logger.exception("run %s failed during MAP_FILES", self.run_id)
+            fsm.fail(reason)
+            stages.append(Stage.ERROR_CLOSED)
+            self._close()
+            return RunResult(
+                mode=Mode.AGENT,
+                run_id=self.run_id,
+                stage=Stage.ERROR_CLOSED,
+                stages=tuple(stages),
+                allocation=allocation,
+            )
+        self._emit(
+            MapFilesContractEvent(
+                seq=0,
+                run_id=self.run_id,
+                ts=_now(),
+                read_list=list(map_event.read_list),
+                write_list=list(map_event.write_list),
+                rationale=map_event.rationale,
+            )
+        )
+        memory.messages.append(
+            Message(
+                Role.ASSISTANT,
+                json.dumps(
+                    {
+                        "read": map_event.read_list,
+                        "write": map_event.write_list,
+                        "rationale": map_event.rationale,
+                    }
+                ),
+                Stage.MAP_FILES.value,
+            )
+        )
+
+        stages.append(fsm.advance())  # MAP_FILES → READ_FILES
+        read_payload, read_paths = self._read_selected_files(map_event)
+        context = replace(context, read_files_payload=read_payload)
+        if read_payload:
+            memory.messages.append(
+                Message(Role.TOOL_RESULT, read_payload, Stage.READ_FILES.value)
+            )
+        context = self._context_with_memory(context, memory)
+        try:
+            self._emit(
+                ReadFilesEvent(
+                    seq=0,
+                    run_id=self.run_id,
+                    ts=_now(),
+                    files=[ReadFileRef(path=path) for path in read_paths],
+                )
+            )
+        except Exception:
+            logger.exception("run %s failed to emit READ_FILES", self.run_id)
+        stages.append(fsm.advance())  # READ_FILES → PLAN_EDITS
+
+        edits = EditCoordinator(
+            toolset=self.toolset,
+            run_id=self.run_id,
+            emit=self._emit,
+            write_allowlist=(
+                preapproved_writes(map_event)
+                if self._enforce_write_allowlist
+                else None
+            ),
+            wait_for_approval=self._wait_for_approval_decision,
+        )
         orchestrator = Orchestrator(
             fsm=fsm, edits=edits, run_id=self.run_id, emit=self._emit
         )
@@ -1003,16 +1668,13 @@ class RunPipeline:
         )
         self._emit_budget(context, orchestrator, tokens_used)
 
-        # INTAKE → ANALYZE → MAP_FILES → READ_FILES → PLAN_EDITS (R3.2).
-        for _ in range(4):
-            stages.append(fsm.advance())
-
         return self._plan_check_loop(
             fsm,
             edits,
             orchestrator,
             remediation,
             context,
+            memory,
             allocation,
             stages,
             tokens_used,
@@ -1025,6 +1687,7 @@ class RunPipeline:
         orchestrator: Orchestrator,
         remediation: RemediationLoop,
         context: RunContext,
+        memory: ConversationMemory,
         allocation: Allocation,
         stages: list[Stage],
         tokens_used: int,
@@ -1036,7 +1699,39 @@ class RunPipeline:
         the State_Wrapper for a hot-swap instead of looping forever (R11.1).
         """
         try:
+            self._maybe_compress(memory, allocation.context_window)
+            context = self._context_with_memory(context, memory)
+            structured_plan = self.brain.structured_plan(self.request, context)
+            memory.messages.append(
+                Message(
+                    Role.ASSISTANT,
+                    structured_plan.model_dump_json(exclude_none=True),
+                    Stage.PLAN_EDITS.value,
+                )
+            )
+            self._maybe_compress(memory, allocation.context_window)
+            context = self._context_with_memory(context, memory)
             plan = self.brain.edit_plan(self.request, context)
+            memory.messages.append(
+                Message(
+                    Role.ASSISTANT,
+                    json.dumps(
+                        {
+                            "reasoning": plan.reasoning,
+                            "changes": [
+                                {
+                                    "path": change.path,
+                                    "content": change.content,
+                                    "diff": change.diff,
+                                }
+                                for change in plan.changes
+                            ],
+                        }
+                    ),
+                    Stage.PLAN_EDITS.value,
+                )
+            )
+            context = self._context_with_memory(context, memory)
         except Exception as exc:
             reason = f"edit_plan failed: {type(exc).__name__}: {exc}"
             logger.exception("run %s failed while planning edits", self.run_id)
@@ -1054,28 +1749,70 @@ class RunPipeline:
         self._emit_budget(context, orchestrator, tokens_used)
         applied: list[Diff] = []
         checks: list[tuple[str, int]] = []
+        remediating = False
 
         # The loop can only re-enter PLAN_EDITS as many times as the recovery
         # budget allows; the guard is a hard backstop against a runaway planner.
         for _ in range(orchestrator.budget.ERROR_CEILING + 1):
             wrote_code = False
-            self._emit_plan(plan)
+            self._emit_plan(plan, structured_plan)
             edits.plan_edits(plan)  # collapsible thinking event (R3.6)
-
-            if plan.has_changes:
+            # Strategy selection (design "APPLY_EDITS strategy seam"): drive
+            # ReAct only when explicitly enabled, a provider/model is
+            # configured, this is the initial (non-remediation) apply, and the
+            # structured plan has steps; otherwise single-pass or the empty-plan
+            # skip (R3.8). Defaulting to SINGLE_PASS keeps legacy behavior.
+            use_react = (
+                self.apply_strategy is ApplyStrategy.REACT
+                and not remediating
+                and self._provider_configured()
+                and bool(structured_plan.steps)
+            )
+            if use_react or plan.has_changes:
                 stages.append(fsm.plan_complete(has_changes=True))  # APPLY_EDITS
-                outcome = edits.apply_edits(plan)  # edit-file events (R3.7)
-                applied.extend(
-                    Diff(path=c.path, diff=c.diff) for c in outcome.applied
-                )
-                wrote_code = bool(outcome.applied)
-                for change in outcome.applied:
-                    orchestrator.active_file_markers.append(change.path)
-                    orchestrator.budget.count_file_op()  # R4.1
-                self._emit_budget(context, orchestrator, tokens_used)
-                if not outcome.ok:
+                if use_react:
+                    executor: ApplyExecutor = ReActApplyExecutor(
+                        toolset=self.toolset,
+                        orchestrator=orchestrator,
+                        structured_plan=structured_plan,
+                        request=self.request,
+                        context=context,
+                        emit=self._emit,
+                        run_id=self.run_id,
+                        tokens_used=tokens_used,
+                        authorize_write=edits.authorize_write,
+                        run_with_tools=self._run_with_tools,
+                    )
+                else:
+                    executor = SinglePassApplyExecutor(
+                        edits=edits,
+                        orchestrator=orchestrator,
+                        plan=plan,
+                        structured_plan=structured_plan,
+                        emit_plan_update=self._emit_plan_update,
+                        emit_budget=functools.partial(
+                            self._emit_budget, context, orchestrator, tokens_used
+                        ),
+                    )
+                result = executor.apply()
+                applied.extend(result.applied)  # edit-file events already emitted (R3.7)
+                wrote_code = result.wrote_code
+                if result.paused:
+                    if fsm.current is not Stage.PAUSED:
+                        fsm.pause(result.error or "write approval rejected")
+                    stages.append(Stage.PAUSED)
+                    self._close()
+                    return RunResult(
+                        mode=Mode.AGENT,
+                        run_id=self.run_id,
+                        stage=Stage.PAUSED,
+                        stages=tuple(stages),
+                        allocation=allocation,
+                        paused=True,
+                    )
+                if result.failed:
                     # R3.9: apply failed → unrecoverable terminal error close.
-                    fsm.fail(outcome.error or "apply failed")
+                    fsm.fail(result.error or "apply failed")
                     stages.append(Stage.ERROR_CLOSED)
                     self._close()
                     return RunResult(
@@ -1112,9 +1849,25 @@ class RunPipeline:
                         allocation=allocation,
                     )
             checks.append((command, exit_code))
+            memory.messages.append(
+                Message(
+                    Role.TOOL_RESULT,
+                    f"Command: {command}\nExit code: {exit_code}\n{log}",
+                    Stage.RUN_CHECKS.value,
+                )
+            )
+            self._maybe_compress(memory, allocation.context_window)
+            context = self._context_with_memory(context, memory)
+            if isinstance(self.brain, RuntimeAgentBrain):
+                self.brain.update_context(context)
+            verify_result = parse_verify_result(command, log, exit_code)
             self._emit_check_command(command, exit_code, log)
             if test_result is not None:
                 self._emit_test_results(test_result)
+            if not verify_result.passed:
+                self._emit_recovery_attempt(
+                    remediation.recoveries + 1, verify_result.failures
+                )
             rem = remediation.on_checks_complete(
                 exit_code, command=command, log=log, prior_plan=plan
             )
@@ -1179,8 +1932,22 @@ class RunPipeline:
                         hot_swap=hot_swap,
                     )
                 plan = rem.plan
+                memory.messages.append(
+                    Message(
+                        Role.ASSISTANT,
+                        json.dumps(
+                            {
+                                "reasoning": plan.reasoning,
+                                "changes": [change.path for change in plan.changes],
+                            }
+                        ),
+                        Stage.PLAN_EDITS.value,
+                    )
+                )
+                context = self._context_with_memory(context, memory)
                 tokens_used += _estimate_edit_plan_tokens(plan)
                 self._emit_budget(context, orchestrator, tokens_used)
+                remediating = True
                 continue
 
             # R5.7: no differing remediation → paused, deferred to developer.
@@ -1283,12 +2050,30 @@ def execute_run(
     evolution: EvolutionEngine | None = None,
     diary_sink: DiarySink | None = None,
     brain: AgentBrain | None = None,
+    rag_matcher: RagMatcher | None = None,
     wait_for_review_decision: ReviewDecisionWaiter | None = None,
+    wait_for_approval_decision: ReviewDecisionWaiter | None = None,
+    file_selector: FileSelector | None = None,
+    workspace_indexer: WorkspaceIndexer | None = None,
+    index_session_id: str | None = None,
+    hybrid_candidate_source: bool = False,
+    apply_strategy: ApplyStrategy = ApplyStrategy.SINGLE_PASS,
+    run_with_tools: ToolModelFn = generate_with_tools,
 ) -> RunResult:
     """Build a :class:`RunPipeline` for ``request`` and drive it to completion.
 
     This is the single call the gateway endpoint makes to wire and run the
     full backend path for a run.
+
+    ``apply_strategy`` selects the APPLY_EDITS executor (defaults to
+    :attr:`ApplyStrategy.SINGLE_PASS` so existing callers are unchanged); the
+    desktop endpoint opts into :attr:`ApplyStrategy.REACT` for the iterative
+    read/act/observe agent loop. ``rag_matcher`` injects the run's Context Bus
+    matcher (defaults to the no-op :class:`NullRagMatcher` inside the pipeline);
+    the desktop endpoint injects a workspace-scanning matcher so the planner
+    sees real code context. ``run_with_tools`` is the ReAct model boundary
+    (defaults to the real :func:`generate_with_tools`); tests inject a scripted
+    tool model.
     """
     try:
         pipeline = RunPipeline(
@@ -1302,7 +2087,15 @@ def execute_run(
             evolution=evolution,
             diary_sink=diary_sink,
             brain=brain,
+            rag_matcher=rag_matcher,
             wait_for_review_decision=wait_for_review_decision,
+            wait_for_approval_decision=wait_for_approval_decision,
+            file_selector=file_selector,
+            workspace_indexer=workspace_indexer,
+            index_session_id=index_session_id,
+            hybrid_candidate_source=hybrid_candidate_source,
+            apply_strategy=apply_strategy,
+            run_with_tools=run_with_tools,
         )
         try:
             return pipeline.run()

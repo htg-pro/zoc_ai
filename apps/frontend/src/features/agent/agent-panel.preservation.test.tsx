@@ -17,7 +17,7 @@
  * Validates: Requirements 1.1, 1.5, 1.6
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { cleanup, render } from "@testing-library/react";
+import { cleanup, fireEvent, render } from "@testing-library/react";
 
 import { useApp } from "@/lib/store";
 
@@ -38,6 +38,7 @@ vi.mock("lucide-react", () => {
     Pause: icon("Pause"),
     Play: icon("Play"),
     Square: icon("Square"),
+    FilePenLine: icon("FilePenLine"),
   };
 });
 
@@ -92,6 +93,8 @@ function baseState(overrides: Partial<AppState> = {}): AppState {
     agentPaused: false,
     pauseAgent: vi.fn(),
     resumeAgent: vi.fn(),
+    workspaceRoot: "/ws",
+    openProjectInstructions: vi.fn(),
     ...overrides,
   };
 }
@@ -177,6 +180,16 @@ describe("AgentPanel preservation — header chrome (idle)", () => {
     expect(getByText("idle")).toBeInTheDocument();
     expect(getByTestId("model-picker-stub")).toBeInTheDocument();
     expect(getByTestId("agent-menu-stub")).toBeInTheDocument();
+  });
+
+  it("opens project instructions from the header", () => {
+    const openProjectInstructions = vi.fn();
+    applyState(baseState({ openProjectInstructions }));
+
+    const { getByRole } = render(<AgentPanel />);
+    fireEvent.click(getByRole("button", { name: "Edit instructions" }));
+
+    expect(openProjectInstructions).toHaveBeenCalledOnce();
   });
 
   it("shows the 'Ask' header word and read-only subtitle in Ask mode", () => {

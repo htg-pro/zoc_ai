@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import type { ReactNode } from "react";
+import type { WorkspaceIndexProgress } from "@zoc-studio/shared-types";
 import {
   AlertCircle,
   Cpu,
@@ -11,7 +12,10 @@ import {
   TriangleAlert,
 } from "lucide-react";
 import { useApp } from "@/lib/store";
+import { toast } from "@/components/ui/toast";
+import { subscribeWorkspaceIndexProgress } from "@/lib/index-progress";
 import { countBySeverity } from "@/lib/problem-matchers";
+import { problemsBadge } from "@/lib/problems-badge";
 import {
   getCursorPosition,
   subscribeCursor,
@@ -49,6 +53,7 @@ export function StatusBar() {
   const selectedModel = useApp((s) => s.selectedModel);
   const llamaCppStatus = useApp((s) => s.llamaCppStatus);
   const indexStatus = useApp((s) => s.indexStatus);
+  const activeSessionId = useApp((s) => s.activeSessionId);
   const liveMode = useApp((s) => s.liveMode);
   const activeFile = useApp((s) => s.activeFile);
   const openFiles = useApp((s) => s.openFiles);
@@ -64,12 +69,54 @@ export function StatusBar() {
   const rightPanelOpen = useApp((s) => s.layout.rightPanelOpen);
 
   const cursor = useCursor();
+  const [indexProgress, setIndexProgress] = useState<WorkspaceIndexProgress | null>(null);
 
   useEffect(() => {
     if (liveMode) void loadIndexStatus();
   }, [liveMode, loadIndexStatus]);
 
+  useEffect(() => {
+    if (!liveMode || !activeSessionId) {
+      setIndexProgress(null);
+      return;
+    }
+    let disposed = false;
+    let unsubscribe: (() => void) | null = null;
+    void subscribeWorkspaceIndexProgress((progress) => {
+      if (disposed || progress.sessionId !== activeSessionId) return;
+      if (progress.type === "index.started" || progress.type === "index.progress") {
+        setIndexProgress(progress);
+        return;
+      }
+      setIndexProgress(null);
+      if (progress.type === "index.completed") {
+        const files = progress.indexedFiles.toLocaleString();
+        const tokens = progress.tokenCount.toLocaleString();
+        toast.success(
+          `Workspace indexed — ${files} files, ${tokens} tokens`,
+        );
+        void loadIndexStatus();
+      }
+    })
+      .then((close) => {
+        if (disposed) close();
+        else unsubscribe = close;
+      })
+      .catch(() => {
+        // The regular status endpoint remains available if websocket setup fails.
+      });
+    return () => {
+      disposed = true;
+      unsubscribe?.();
+    };
+  }, [activeSessionId, liveMode, loadIndexStatus]);
+
   const file = openFiles.find((f) => f.path === activeFile) ?? null;
+  // R4: the diagnostics indicator is a Problems_Badge surface — its count,
+  // color, and visibility derive from the whole diagnostics store (LSP per-URI
+  // entries + command-checker entries). The split error/warning glyphs below
+  // are driven by the same underlying counts.
+  const badge = problemsBadge(diagnostics);
   const { errors, warnings } = countBySeverity(Object.values(diagnostics).flat());
   const agent = agentStateLabel({ streaming, isRunning, agentMode });
   const dirtyCount = openFiles.filter((f) => f.dirty).length;
@@ -78,6 +125,11 @@ export function StatusBar() {
     : 0;
   const runningTasks = Object.values(taskRuns).filter((s) => s === "running").length;
   const modelRunning = !!llamaCppStatus?.running;
+  const indexLabel = indexProgress
+    ? `Indexing workspace... ${indexProgress.processedFiles.toLocaleString()}/${indexProgress.totalFiles.toLocaleString()} files`
+    : indexStatus
+      ? `${indexStatus.chunk_count.toLocaleString()} chunks${indexStatus.watching ? " · live" : ""}`
+      : "Index";
 
   const openProblems = () => {
     setBottomTab("problems");
@@ -123,17 +175,27 @@ export function StatusBar() {
           <span className={cn(errors > 0 && "text-destructive")}>{errors}</span>
           <TriangleAlert className={cn("h-3 w-3", warnings > 0 && "text-warning")} />
           <span className={cn(warnings > 0 && "text-warning")}>{warnings}</span>
+          {badge.visible && (
+            <span
+              data-testid="statusbar-problems-badge"
+              data-color={badge.color}
+              data-count={badge.count}
+              className="sr-only"
+            >
+              {badge.count}
+            </span>
+          )}
           <span className="sr-only">{diagnosticsLabel(errors, warnings)}</span>
         </Item>
 
         {liveMode && (
           <Item onClick={openIndexer} title="Open Indexer">
-            <Database className="h-3 w-3" />
-            <span>
-              {indexStatus
-                ? `${indexStatus.chunk_count.toLocaleString()} chunks${indexStatus.watching ? " · live" : ""}`
-                : "Index"}
-            </span>
+            {indexProgress ? (
+              <Loader2 className="h-3 w-3 animate-spin text-primary" />
+            ) : (
+              <Database className="h-3 w-3" />
+            )}
+            <span>{indexLabel}</span>
           </Item>
         )}
 

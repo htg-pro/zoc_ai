@@ -156,6 +156,7 @@ export interface AgentClient {
   indexStatus(sessionId: string): Promise<IndexStatus>;
   indexQuery(sessionId: string, q: string, k?: number): Promise<IndexQueryResult[]>;
   indexRebuild(sessionId: string): Promise<IndexStatus>;
+  indexFilesChanged(sessionId: string, paths: string[]): Promise<{ accepted: number }>;
   getIndexConfig(sessionId: string): Promise<IndexConfig>;
   updateIndexConfig(sessionId: string, req: UpdateIndexConfigRequest): Promise<IndexConfig>;
   spawnTerminal(cmd: string, opts?: SpawnTerminalOpts): Promise<TerminalSession>;
@@ -471,6 +472,11 @@ function makeClient(port: number): AgentClient {
     indexRebuild: (sessionId) =>
       jsonFetch<IndexStatus>(`${v1}/sessions/${sessionId}/index/reindex`, {
         method: "POST",
+      }),
+    indexFilesChanged: (sessionId, paths) =>
+      jsonFetch<{ accepted: number }>(`${v1}/sessions/${sessionId}/index/fs-changed`, {
+        method: "POST",
+        body: JSON.stringify({ paths }),
       }),
     getIndexConfig: (sessionId) =>
       jsonFetch<IndexConfig>(`${v1}/sessions/${sessionId}/index/config`),

@@ -16,6 +16,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { useApp } from "@/lib/store";
 import { cn } from "@/lib/utils";
+import { LspStatusIndicators } from "./lsp/LspStatusIndicators";
 
 function tabIcon(name: string) {
   const ext = name.split(".").pop();
@@ -105,6 +106,7 @@ export function EditorTabs({
           );
         })}
       </div>
+      {showActions && <LspStatusIndicators />}
       {showActions && openFiles.length > 0 && <TabActions activeFile={activeFile} />}
     </div>
   );

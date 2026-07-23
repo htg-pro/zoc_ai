@@ -1,9 +1,10 @@
-.PHONY: install dev build check lint typecheck fmt test schema scan-secrets clean clean-all doctor version sidecar release zip
+.PHONY: install dev build check lint typecheck fmt test schema schema-check scan-secrets clean clean-all doctor version sidecar release zip
 
 install:
 	pnpm install
 	uv sync --all-packages
 	cargo fetch
+	sh scripts/install-language-servers.sh
 
 doctor:
 	@echo "==> Zoc AI dev environment doctor"
@@ -16,6 +17,11 @@ doctor:
 	@printf "cargo     : "; cargo --version 2>/dev/null || echo "MISSING"
 	@printf "tauri-cli : "; (cargo tauri --version 2>/dev/null || pnpm --filter @zoc-studio/desktop exec tauri --version 2>/dev/null) || echo "MISSING (pnpm --filter @zoc-studio/desktop add -D @tauri-apps/cli)"
 	@printf "pyinstaller (release only): "; uv run python -c "import PyInstaller; print(PyInstaller.__version__)" 2>/dev/null || echo "MISSING (uv pip install pyinstaller — only needed for release)"
+	@echo ""
+	@echo "==> Language servers (Monaco LSP):"
+	@printf "pyright-langserver        : "; pyright-langserver --version 2>/dev/null || echo "MISSING (uv pip install pyright)"
+	@printf "typescript-language-server: "; typescript-language-server --version 2>/dev/null || echo "MISSING (npm install -g typescript-language-server typescript)"
+	@printf "rust-analyzer             : "; rust-analyzer --version 2>/dev/null || echo "MISSING (rustup component add rust-analyzer)"
 	@echo ""
 	@echo "==> Linux runtime deps (Tauri webview):"
 	@dpkg-query -W -f='  %p %v\n' libwebkit2gtk-4.1-0 libgtk-3-0 libssl3 libxdo3 2>/dev/null || echo "  (not on a dpkg system, skip)"
@@ -50,11 +56,14 @@ test:
 schema:
 	uv run python packages/shared-types/scripts/generate_ts.py
 
+schema-check:
+	uv run python packages/shared-types/scripts/generate_ts.py --check
+
 scan-secrets:
 	python3 scripts/scan_secrets.py
 	python3 scripts/scan_secrets.py --history
 
-check: scan-secrets lint typecheck test
+check: schema-check scan-secrets lint typecheck test
 
 # --- release pipeline ----------------------------------------------------
 

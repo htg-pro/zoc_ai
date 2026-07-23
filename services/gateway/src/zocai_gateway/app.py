@@ -33,21 +33,21 @@ import subprocess
 import threading
 import uuid
 from collections.abc import AsyncIterator, Mapping
-from contextlib import asynccontextmanager
-from datetime import datetime, timezone
+from contextlib import asynccontextmanager, suppress
+from datetime import UTC, datetime
 from pathlib import Path
 from time import monotonic
 from typing import Literal
 
-from fastapi import Depends, FastAPI, HTTPException, Query, status
+from fastapi import Depends, FastAPI, HTTPException, Query, WebSocket, WebSocketDisconnect, status
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, ConfigDict, Field
-from sse_starlette.sse import EventSourceResponse
-
 from shared_schema.agent_events import AgentEvent, DoneEvent
 from shared_schema.models import (
     ContextCandidate,
     CreateSessionRequest,
+    IndexQueryResult,
+    IndexStatus,
     ModelBenchmarkHistory,
     ModelBenchmarkRun,
     RunModelBenchmarkRequest,
@@ -56,13 +56,24 @@ from shared_schema.models import (
     TerminalSessionStatus,
     UpdateSessionRequest,
 )
-
+from sse_starlette.sse import EventSourceResponse
 from zocai_evolution import EvolutionEngine
 
-from zocai_gateway.auth import STATE_SETTINGS_KEY, require_admission
+from zocai_gateway.auth import (
+    STATE_SETTINGS_KEY,
+    extract_credential,
+    is_request_admitted,
+    require_admission,
+)
 from zocai_gateway.benchmark import BenchmarkStore, ModelBenchmarker
+from zocai_gateway.context.index_store import IndexPersistence
 from zocai_gateway.context_mentions import search_workspace_files
 from zocai_gateway.emit_gate import DiaryMirror, EmitGate
+from zocai_gateway.event_bus import (
+    FS_CHANGED_TOPIC,
+    GatewayEventBus,
+    WorkspaceFilesChanged,
+)
 from zocai_gateway.fsm import FSM
 from zocai_gateway.memory import reconstruction
 from zocai_gateway.memory.diary_worker import DiaryWorker
@@ -70,8 +81,20 @@ from zocai_gateway.memory.hermes_evolution import HermesEvolution
 from zocai_gateway.memory.matrix import MemoryMatrix
 from zocai_gateway.memory.state_wrapper import StateWrapperStore
 from zocai_gateway.mode_router import AgentRunRequest, ExecutionPath, Mode, ModeRouter
-from zocai_gateway.run_pipeline import AgentBrain, execute_run
+from zocai_gateway.routes.completions import (
+    CompletionCache,
+    CompletionRequest,
+    stream_completion_events,
+)
+from zocai_gateway.routes.lsp import proxy_lsp
+from zocai_gateway.run_pipeline import (
+    AgentBrain,
+    ApplyStrategy,
+    default_workspace_rag_matcher,
+    execute_run,
+)
 from zocai_gateway.settings import GatewaySettings
+from zocai_gateway.workspace_index import WorkspaceIndexer
 
 __all__ = [
     "AgentRunRequest",
@@ -82,8 +105,8 @@ __all__ = [
     "RunAccepted",
     "RunRegistry",
     "SessionRegistry",
-    "create_app",
     "app",
+    "create_app",
 ]
 
 
@@ -160,6 +183,23 @@ class TerminalResizeRequest(BaseModel):
     rows: int = Field(default=32, ge=1, le=200)
 
 
+class IndexQueryRequest(BaseModel):
+    """Hybrid lexical/semantic query against a session workspace index."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    query: str = Field(min_length=1, max_length=2_000)
+    top_k: int = Field(default=8, ge=1, le=50)
+
+
+class WorkspaceFilesChangedRequest(BaseModel):
+    """Filesystem paths forwarded from the desktop ``fs://changed`` event."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    paths: list[str] = Field(min_length=1, max_length=1_000)
+
+
 class _Run:
     """In-memory state for a single registered run.
 
@@ -172,16 +212,17 @@ class _Run:
     """
 
     __slots__ = (
-        "run_id",
-        "path",
-        "queue",
+        "_closed",
+        "_decision_condition",
+        "_decision_cursors",
+        "_lock",
+        "_loop",
+        "_seq",
         "decisions",
         "emit_gate",
-        "_decision_condition",
-        "_loop",
-        "_lock",
-        "_closed",
-        "_seq",
+        "path",
+        "queue",
+        "run_id",
     )
 
     def __init__(
@@ -193,6 +234,11 @@ class _Run:
         self.decisions: list[DecisionRequest] = []
         self.emit_gate = EmitGate(sink=self._enqueue, diary=diary)
         self._decision_condition = threading.Condition()
+        self._decision_cursors: dict[DecisionKind, int] = {
+            "approval": 0,
+            "budget-continuation": 0,
+            "review": 0,
+        }
         try:
             self._loop: asyncio.AbstractEventLoop | None = asyncio.get_running_loop()
         except RuntimeError:
@@ -231,7 +277,7 @@ class _Run:
                 "type": "token",
                 "seq": seq,
                 "runId": self.run_id,
-                "ts": datetime.now(timezone.utc).isoformat(),
+                "ts": datetime.now(UTC).isoformat(),
                 "text": chunk,
                 "done": False,
             }
@@ -249,7 +295,7 @@ class _Run:
                 "type": "error",
                 "seq": seq,
                 "runId": self.run_id,
-                "ts": datetime.now(timezone.utc).isoformat(),
+                "ts": datetime.now(UTC).isoformat(),
                 "message": message,
             }
         )
@@ -292,15 +338,28 @@ class _Run:
     def wait_for_review_decision(
         self, timeout: float | None = None
     ) -> DecisionRequest | None:
-        """Block the worker thread until a review apply/discard decision lands."""
+        """Block until the next unconsumed review decision lands."""
+        return self._wait_for_decision("review", timeout)
+
+    def wait_for_approval_decision(
+        self, timeout: float | None = None
+    ) -> DecisionRequest | None:
+        """Block until the next unconsumed undeclared-write decision lands."""
+        return self._wait_for_decision("approval", timeout)
+
+    def _wait_for_decision(
+        self, kind: DecisionKind, timeout: float | None
+    ) -> DecisionRequest | None:
         deadline = None if timeout is None else monotonic() + timeout
         with self._decision_condition:
-            seen = 0
             while True:
-                for req in self.decisions[seen:]:
-                    if req.kind == "review":
+                start = self._decision_cursors[kind]
+                for index in range(start, len(self.decisions)):
+                    req = self.decisions[index]
+                    if req.kind == kind:
+                        self._decision_cursors[kind] = index + 1
                         return req
-                seen = len(self.decisions)
+                self._decision_cursors[kind] = len(self.decisions)
                 with self._lock:
                     if self._closed:
                         return None
@@ -329,7 +388,7 @@ class _Run:
                     "type": "token",
                     "seq": seq,
                     "runId": self.run_id,
-                    "ts": datetime.now(timezone.utc).isoformat(),
+                    "ts": datetime.now(UTC).isoformat(),
                     "text": "",
                     "done": True,
                 }
@@ -417,7 +476,7 @@ class SessionRegistry:
         if session is None:
             return None
         update: dict[str, object] = {
-            "updated_at": datetime.now(timezone.utc).replace(tzinfo=None)
+            "updated_at": datetime.now(UTC).replace(tzinfo=None)
         }
         if req.title is not None:
             update["title"] = req.title
@@ -488,10 +547,8 @@ class TerminalProcess:
             pid = self._pid
             proc = self._proc
         if pid is not None:
-            try:
+            with suppress(OSError):
                 os.kill(pid, signal.SIGTERM)
-            except OSError:
-                pass
         if proc is not None and proc.poll() is None:
             proc.terminate()
         return self.session
@@ -586,10 +643,8 @@ class TerminalProcess:
                 return
             self._closed = True
             if self._fd is not None:
-                try:
+                with suppress(OSError):
                     os.close(self._fd)
-                except OSError:
-                    pass
         self.session = self.session.model_copy(
             update={
                 "status": TerminalSessionStatus.exited,
@@ -643,7 +698,7 @@ async def _event_stream(
                 item = await asyncio.wait_for(
                     run.queue.get(), timeout=queue_timeout_seconds
                 )
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 message = "SSE stream timed out waiting for gateway events"
                 yield {
                     "event": "error",
@@ -652,7 +707,7 @@ async def _event_stream(
                             "type": "error",
                             "seq": -1,
                             "runId": run.run_id,
-                            "ts": datetime.now(timezone.utc).isoformat(),
+                            "ts": datetime.now(UTC).isoformat(),
                             "message": message,
                         }
                     ),
@@ -679,6 +734,7 @@ def create_app(
     brain: AgentBrain | None = None,
     evolution: EvolutionEngine | None = None,
     benchmarker: ModelBenchmarker | None = None,
+    workspace_indexer: WorkspaceIndexer | None = None,
     drive: bool = True,
 ) -> FastAPI:
     """Create and configure the gateway FastAPI application.
@@ -700,12 +756,14 @@ def create_app(
             initialized under it (R9.1/R9.2), a Diary_Worker mirror and the
             Tier 3 Hermes-Evolution idle loop (R9.7) are started, and runs are
             driven against that workspace.
-        brain: Optional model behavior driving runs; defaults to the
-            deterministic stand-in in :mod:`zocai_gateway.run_pipeline`.
+        brain: Optional model behavior driving runs; when omitted, the live
+            runtime brain is used and MAP_FILES fails closed if no provider is
+            configured.
         evolution: Optional Layer 5 Evolution_Engine; one is created when
             omitted so verified runs record trajectories (R12).
         benchmarker: Optional local-model benchmark service. Tests may inject
             an isolated store and deterministic model callbacks.
+        workspace_indexer: Optional session-scoped workspace index service.
         drive: When ``True`` (default) an accepted run is driven end to end
             through the composed pipeline so its events stream over the bus.
     """
@@ -732,25 +790,43 @@ def create_app(
         state_store = StateWrapperStore(matrix.state_wrapper_path)
         if diary is None:
             diary_worker = DiaryWorker(diary_path)
-            diary_worker.start()
             diary = diary_worker
         hermes = HermesEvolution(matrix)
-        hermes.start()
 
     # Layer 5: a single Evolution_Engine records verified-run trajectories (R12).
     engine = evolution if evolution is not None else EvolutionEngine()
     active_benchmarker = benchmarker or ModelBenchmarker(BenchmarkStore())
+    active_workspace_indexer = workspace_indexer or WorkspaceIndexer(
+        persistence=IndexPersistence()
+    )
+    event_bus = GatewayEventBus()
+    unsubscribe_indexer = event_bus.subscribe(
+        FS_CHANGED_TOPIC, active_workspace_indexer.handle_fs_changed
+    )
+    run_tasks: set[asyncio.Task[None]] = set()
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
-        """Stop the background memory workers on shutdown (R9.3/R9.7 cleanup)."""
+        """Own all background worker and run-task lifecycles."""
         try:
+            if diary_worker is not None:
+                diary_worker.start()
+            if hermes is not None:
+                hermes.start()
             yield
         finally:
-            if hermes is not None:
-                hermes.stop()
-            if diary_worker is not None:
-                diary_worker.stop()
+            for task in tuple(run_tasks):
+                task.cancel()
+            unsubscribe_indexer()
+            try:
+                if run_tasks:
+                    await asyncio.gather(*run_tasks, return_exceptions=True)
+                await active_workspace_indexer.close()
+            finally:
+                if hermes is not None:
+                    hermes.stop()
+                if diary_worker is not None:
+                    diary_worker.stop()
 
     app = FastAPI(
         title="Zoc AI Gateway",
@@ -783,7 +859,13 @@ def create_app(
     app.state.hermes = hermes
     app.state.evolution = engine
     app.state.model_benchmarker = active_benchmarker
+    app.state.workspace_indexer = active_workspace_indexer
+    app.state.event_bus = event_bus
     app.state.state_store = state_store
+    # §3.3: one process-wide completion cache (like the other app.state
+    # registries); the completions route reads/writes it (R14).
+    completion_cache = CompletionCache()
+    app.state.completion_cache = completion_cache
 
     run_root = str(resolved_root) if resolved_root is not None else "."
     diary_sink = diary.append if diary is not None else None
@@ -801,6 +883,79 @@ def create_app(
             "workspace_root": run_root,
             "diary_enabled": diary_path is not None,
         }
+
+    @app.websocket("/v1/workspace/index-progress")
+    async def workspace_index_progress(websocket: WebSocket) -> None:
+        """Publish live workspace indexing progress to status-bar clients."""
+        presented = extract_credential(websocket.headers)
+        if not is_request_admitted(resolved_settings, presented):
+            await websocket.close(code=1008, reason="unauthorized")
+            return
+        await websocket.accept()
+        progress_queue = active_workspace_indexer.broker.subscribe()
+        try:
+            while True:
+                event_task = asyncio.create_task(progress_queue.get())
+                receive_task = asyncio.create_task(websocket.receive())
+                tasks = {event_task, receive_task}
+                done: set[asyncio.Task[object]] = set()
+                try:
+                    completed, _pending = await asyncio.wait(
+                        tasks,
+                        return_when=asyncio.FIRST_COMPLETED,
+                    )
+                    done = set(completed)
+                finally:
+                    pending = tasks - done
+                    for task in pending:
+                        task.cancel()
+                    await asyncio.gather(*pending, return_exceptions=True)
+                if receive_task in done:
+                    message = receive_task.result()
+                    if message.get("type") == "websocket.disconnect":
+                        break
+                if event_task in done:
+                    event = event_task.result()
+                    await websocket.send_json(
+                        event.model_dump(mode="json", by_alias=True)
+                    )
+        except (asyncio.CancelledError, WebSocketDisconnect, RuntimeError):
+            pass
+        finally:
+            active_workspace_indexer.broker.unsubscribe(progress_queue)
+
+    @app.websocket("/v1/lsp/{server_name}/ws")
+    async def lsp_proxy(websocket: WebSocket, server_name: str) -> None:
+        """Proxy a Monaco LSP client to an allowlisted stdio language server (§3.1).
+
+        Loopback-only + allowlisted server names + workspace-pinned ``cwd`` keep
+        the subprocess spawn safe; an unauthorized request or an unknown server
+        name is rejected before the language server is launched.
+        """
+        presented = extract_credential(websocket.headers)
+        if not is_request_admitted(resolved_settings, presented):
+            await websocket.close(code=1008, reason="unauthorized")
+            return
+        await proxy_lsp(
+            websocket,
+            server_name,
+            workspace_root=resolved_root if resolved_root is not None else Path.cwd(),
+        )
+
+    @app.post("/v1/completions", dependencies=[Depends(require_admission)])
+    async def completions(req: CompletionRequest) -> EventSourceResponse:
+        """Stream an inline AI completion as Server-Sent Events (§3.3).
+
+        Reuses the Gateway's loopback bind and shared-token admission — the
+        ``require_admission`` dependency rejects an unadmitted request before
+        this body runs, so the model is unreachable on that path (R15). The
+        ``CompletionRequest`` validation (R11.2) has already run before the
+        handler. The stream fails quiet: any model outcome terminates with a
+        single ``done`` event and no error frame (R16).
+        """
+        return EventSourceResponse(
+            stream_completion_events(req, cache=completion_cache)
+        )
 
     @app.get(
         "/v1/model-benchmarks",
@@ -859,8 +1014,19 @@ def create_app(
         dependencies=[Depends(require_admission)],
     )
     async def create_session(req: CreateSessionRequest) -> Session:
-        """Create an editor-support session in the process-local store."""
-        return sessions.create(req)
+        """Create a session and initialize its semantic index policy."""
+        session = sessions.create(req)
+        try:
+            await active_workspace_indexer.open_workspace(
+                str(session.id), session.workspace_root
+            )
+        except ValueError as exc:
+            sessions.delete(str(session.id))
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=str(exc),
+            ) from exc
+        return session
 
     @app.get(
         "/v1/sessions/{session_id}",
@@ -940,6 +1106,87 @@ def create_app(
                 )
             )
         return candidates
+
+    @app.get(
+        "/v1/sessions/{session_id}/index/status",
+        response_model=IndexStatus,
+        dependencies=[Depends(require_admission)],
+    )
+    async def index_status(session_id: str) -> IndexStatus:
+        session = sessions.get(session_id)
+        if session is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"unknown session: {session_id}",
+            )
+        return active_workspace_indexer.status(session_id, session.workspace_root)
+
+    @app.post(
+        "/v1/sessions/{session_id}/index/reindex",
+        response_model=IndexStatus,
+        dependencies=[Depends(require_admission)],
+    )
+    async def rebuild_index(session_id: str) -> IndexStatus:
+        session = sessions.get(session_id)
+        if session is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"unknown session: {session_id}",
+            )
+        try:
+            return await active_workspace_indexer.rebuild(
+                session_id,
+                session.workspace_root,
+                force=True,
+            )
+        except ValueError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=str(exc),
+            ) from exc
+
+    @app.post(
+        "/v1/sessions/{session_id}/index/query",
+        response_model=list[IndexQueryResult],
+        dependencies=[Depends(require_admission)],
+    )
+    async def query_index(
+        session_id: str,
+        req: IndexQueryRequest,
+    ) -> list[IndexQueryResult]:
+        session = sessions.get(session_id)
+        if session is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"unknown session: {session_id}",
+            )
+        return await active_workspace_indexer.query_async(
+            session_id,
+            session.workspace_root,
+            req.query,
+            req.top_k,
+        )
+
+    @app.post(
+        "/v1/sessions/{session_id}/index/fs-changed",
+        status_code=status.HTTP_202_ACCEPTED,
+        dependencies=[Depends(require_admission)],
+    )
+    async def workspace_files_changed(
+        session_id: str,
+        req: WorkspaceFilesChangedRequest,
+    ) -> dict[str, int]:
+        if sessions.get(session_id) is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"unknown session: {session_id}",
+            )
+        unique_paths = tuple(dict.fromkeys(req.paths))
+        await event_bus.publish(
+            FS_CHANGED_TOPIC,
+            WorkspaceFilesChanged(session_id=session_id, paths=unique_paths),
+        )
+        return {"accepted": len(unique_paths)}
 
     @app.post(
         "/v1/terminal",
@@ -1060,6 +1307,19 @@ def create_app(
             req.model,
             req.base_url,
         )
+        # Live runs (no injected brain) get the real Context Bus matcher and the
+        # iterative ReAct apply loop. The ReAct executor self-gates on a
+        # configured provider + a non-empty structured plan and otherwise falls
+        # back to single-pass, so this is safe when no model is configured.
+        # Injected brains (tests) keep the no-op matcher / single-pass default so
+        # their deterministic runs are unchanged.
+        live_run = brain is None
+        run_rag_matcher = (
+            default_workspace_rag_matcher(run_workspace_root) if live_run else None
+        )
+        run_apply_strategy = (
+            ApplyStrategy.REACT if live_run else ApplyStrategy.SINGLE_PASS
+        )
         if drive:
             async def drive_run() -> None:
                 try:
@@ -1076,11 +1336,16 @@ def create_app(
                             evolution=engine,
                             diary_sink=diary_sink,
                             brain=brain,
+                            rag_matcher=run_rag_matcher,
                             wait_for_review_decision=run.wait_for_review_decision,
+                            wait_for_approval_decision=run.wait_for_approval_decision,
+                            workspace_indexer=active_workspace_indexer,
+                            index_session_id=run.run_id,
+                            apply_strategy=run_apply_strategy,
                         ),
                         timeout=resolved_settings.run_timeout_seconds,
                     )
-                except asyncio.TimeoutError:
+                except TimeoutError:
                     message = (
                         "agent run exceeded "
                         f"{resolved_settings.run_timeout_seconds:g}s timeout"
@@ -1093,7 +1358,9 @@ def create_app(
                     run.enqueue_error(f"agent run failed: {type(exc).__name__}: {exc}")
                     run.close()
 
-            asyncio.create_task(drive_run())
+            task = asyncio.create_task(drive_run())
+            run_tasks.add(task)
+            task.add_done_callback(run_tasks.discard)
         return RunAccepted(run_id=run.run_id, mode=req.mode)
 
     @app.post(
@@ -1109,6 +1376,11 @@ def create_app(
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail=f"unknown run: {req.run_id}",
+            )
+        if req.kind == "approval" and req.decision not in {"approve", "reject"}:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="approval decisions must be 'approve' or 'reject'",
             )
         if req.kind == "review":
             if req.decision not in {"apply", "discard"}:

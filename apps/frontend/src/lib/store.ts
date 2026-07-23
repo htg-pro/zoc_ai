@@ -40,6 +40,7 @@ import {
   fsReplaceApply,
   fsReplacePreview,
   fsSearch,
+  fsStat,
   type FileReplace,
   type ReplaceOptions,
   type ReplaceSummary,
@@ -58,6 +59,11 @@ import {
 } from "./paths";
 import { recordRecentFile } from "./recents";
 import { toast } from "@/components/ui/toast";
+// Type-only imports (erased at build) so the store carries the LSP status
+// slice types without a runtime cycle: `lsp-registry.ts` imports `useApp`, but
+// these `import type`s add no runtime edge back into the LSP modules.
+import type { ServerName } from "@/features/editor/lsp/lsp-registry";
+import type { LanguageServerState } from "@/features/editor/lsp/lsp-connection";
 import {
   parseByKind,
   sourceForKind,
@@ -409,9 +415,20 @@ export interface AppState {
   toggleRight: () => void;
   toggleBottom: () => void;
   openFile: (path: string) => Promise<void>;
+  /** Open the workspace instruction file, creating it when needed. */
+  openProjectInstructions: () => Promise<string | null>;
   closeFile: (path: string) => void;
   setActiveFile: (path: string) => void;
   updateFile: (path: string, content: string) => void;
+  /** Monaco LSP status slice (R5.7): per-server connection state keyed by
+   *  Server_Name. Written synchronously (no debounce) by the LSP connection's
+   *  `onState`/`onServerRemoved` callbacks so the status indicators reflect
+   *  every Language_Server_State change immediately. */
+  serverStates: Map<ServerName, LanguageServerState>;
+  /** Set (or replace) the Language_Server_State for a Server_Name. */
+  setServerState: (server: ServerName, state: LanguageServerState) => void;
+  /** Drop a Server_Name's state entry when its server shuts down (R5.6). */
+  removeServer: (server: ServerName) => void;
   /** Persist the buffer at `path` to disk. Clears its dirty flag on success.
    *  Returns true when the write succeeded (or in browser preview where there
    *  is no disk to write to). */
@@ -1190,6 +1207,7 @@ export const useApp = create<AppState>((set, get) => ({
   contextStatus: null,
   indexStatus: null,
   projectRules: null,
+  serverStates: new Map(),
 
   setWorkspaceRoot: async (root) => {
     set({ workspaceRoot: root });
@@ -1227,9 +1245,8 @@ export const useApp = create<AppState>((set, get) => ({
       return;
     }
     let content: string | null = null;
-    if (isTauri()) {
-      content = await fsReadText(path);
-    }
+    // fsReadText has HTTP fallback for web (non-Tauri) mode.
+    content = await fsReadText(path);
     if (content === null) {
       const f = MOCK_FILE_CONTENT[path];
       if (!f) return;
@@ -1244,6 +1261,47 @@ export const useApp = create<AppState>((set, get) => ({
       activeFile: path,
       mainView: "editor",
     }));
+  },
+  openProjectInstructions: async () => {
+    const root = get().workspaceRoot;
+    if (!root) {
+      toast.message("Open a workspace to edit project instructions");
+      return null;
+    }
+
+    const path = joinPath(joinPath(root, ".zoc"), "instructions.md");
+    if (get().openFiles.some((file) => file.path === path)) {
+      await get().openFile(path);
+      return path;
+    }
+    if (!isTauri()) {
+      toast.message("Project instructions require the desktop app");
+      return null;
+    }
+
+    try {
+      const stat = await fsStat(path);
+      if (stat?.exists) {
+        if (!stat.is_file) {
+          throw new Error(".zoc/instructions.md is not a file");
+        }
+        await get().openFile(path);
+        return path;
+      }
+
+      const created = await fsCreateFile(path);
+      set((state) => ({ fsRefreshNonce: state.fsRefreshNonce + 1 }));
+      await get().openFile(created);
+      toast.success("Created project instructions", {
+        description: ".zoc/instructions.md",
+      });
+      return created;
+    } catch (err) {
+      toast.error("Couldn't open project instructions", {
+        description: (err as Error).message,
+      });
+      return null;
+    }
   },
   closeFile: (path) => {
     set((s) => {
@@ -1263,16 +1321,8 @@ export const useApp = create<AppState>((set, get) => ({
     const file = get().openFiles.find((f) => f.path === path);
     if (!file) return false;
     if (!file.dirty) return true;
-    // Browser preview: there is no disk, so just clear the dirty flag so the
-    // UI reflects a "saved" state.
-    if (!isTauri()) {
-      set((s) => ({
-        openFiles: s.openFiles.map((f) =>
-          f.path === path ? { ...f, dirty: false } : f,
-        ),
-      }));
-      return true;
-    }
+    // fsWriteText has an HTTP fallback for web (non-Tauri) mode, so we always
+    // call it — no early-return needed.
     const ok = await fsWriteText(file.path, file.content);
     if (ok) {
       set((s) => ({
@@ -1310,9 +1360,8 @@ export const useApp = create<AppState>((set, get) => ({
     const file = get().openFiles.find((f) => f.path === path);
     if (!file) return false;
     // Reload the on-disk (or mock) content and drop unsaved edits.
-    let content: string | null = null;
-    if (isTauri()) content = await fsReadText(path);
-    if (content === null) content = MOCK_FILE_CONTENT[path]?.content ?? file.content;
+    // fsReadText has HTTP fallback for web (non-Tauri) mode.
+    const content: string = (await fsReadText(path)) ?? MOCK_FILE_CONTENT[path]?.content ?? file.content;
     set((s) => ({
       openFiles: s.openFiles.map((f) =>
         f.path === path ? { ...f, content: content!, dirty: false } : f,
@@ -3535,6 +3584,22 @@ export const useApp = create<AppState>((set, get) => ({
       }).catch(() => undefined);
     }
   },
+
+  setServerState: (server, state) =>
+    set((s) => {
+      // A fresh Map (reference change) so selectors re-render; written
+      // synchronously with no timer/debounce (R5.7).
+      const next = new Map(s.serverStates);
+      next.set(server, state);
+      return { serverStates: next };
+    }),
+  removeServer: (server) =>
+    set((s) => {
+      if (!s.serverStates.has(server)) return {};
+      const next = new Map(s.serverStates);
+      next.delete(server);
+      return { serverStates: next };
+    }),
 
   setLayoutSizes: (sizes) => {
     const layout = sanitizeLayout({ ...get().layout, ...sizes });

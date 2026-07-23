@@ -11,7 +11,6 @@ from __future__ import annotations
 
 import pytest
 from fastapi.testclient import TestClient
-
 from zocai_gateway.app import create_app
 
 
@@ -26,6 +25,9 @@ def test_routes_are_registered() -> None:
     assert "/v1/agent/run" in paths
     assert "/v1/agent/decision" in paths
     assert "/v1/agent/events" in paths
+    assert "/v1/workspace/index-progress" in paths
+    assert "/v1/sessions/{session_id}/index/status" in paths
+    assert "/v1/sessions/{session_id}/index/reindex" in paths
 
 
 def test_health_still_ok(client: TestClient) -> None:
@@ -132,6 +134,40 @@ def test_context_search_returns_workspace_files(tmp_path) -> None:
     ]
 
 
+def test_workspace_reindex_streams_progress_and_updates_status(tmp_path) -> None:
+    (tmp_path / "main.py").write_text("def searchable():\n    return 1\n", encoding="utf-8")
+    with TestClient(create_app()) as client:
+        session = client.post(
+            "/v1/sessions",
+            json={"title": "workspace", "workspace_root": str(tmp_path)},
+        ).json()
+        with client.websocket_connect("/v1/workspace/index-progress") as websocket:
+            response = client.post(f"/v1/sessions/{session['id']}/index/reindex")
+            frames = []
+            while not frames or frames[-1]["type"] != "index.completed":
+                frames.append(websocket.receive_json())
+
+        assert response.status_code == 200
+        assert [frame["type"] for frame in frames] == [
+            "index.started",
+            "index.progress",
+            "index.completed",
+        ]
+        assert frames[-1]["indexedFiles"] == 1
+        assert frames[-1]["tokenCount"] > 0
+
+        status_response = client.get(f"/v1/sessions/{session['id']}/index/status")
+        assert status_response.status_code == 200
+        assert status_response.json()["file_count"] == 1
+
+        query = client.post(
+            f"/v1/sessions/{session['id']}/index/query",
+            json={"query": "searchable", "top_k": 5},
+        )
+        assert query.status_code == 200
+        assert query.json()[0]["chunk"]["file"] == "main.py"
+
+
 def test_decision_acknowledged_for_known_run(client: TestClient) -> None:
     run_id = client.post(
         "/v1/agent/run", json={"prompt": "build", "mode": "agent"}
@@ -230,3 +266,44 @@ def test_run_has_emit_gate_feeding_its_queue() -> None:
     assert drained[-1] is None
     assert len(run.emit_gate.violations) == 1
     assert run.emit_gate.violations[0].event_type == "garbage"
+
+
+def test_invalid_approval_verdict_is_rejected(client: TestClient) -> None:
+    run_id = client.post(
+        "/v1/agent/run", json={"prompt": "build", "mode": "agent"}
+    ).json()["runId"]
+    response = client.post(
+        "/v1/agent/decision",
+        json={"runId": run_id, "kind": "approval", "decision": "continue"},
+    )
+
+    assert response.status_code == 422
+    assert response.json()["detail"] == (
+        "approval decisions must be 'approve' or 'reject'"
+    )
+
+
+def test_approval_decisions_are_consumed_once() -> None:
+    from zocai_gateway.app import DecisionRequest, RunRegistry
+    from zocai_gateway.mode_router import AgentRunRequest, ModeRouter
+
+    registry = RunRegistry()
+    run = registry.create(
+        ModeRouter().route(AgentRunRequest(prompt="go", mode="agent"))
+    )
+    first = DecisionRequest(
+        runId=run.run_id,
+        kind="approval",
+        decision="approve",
+    )
+    second = DecisionRequest(
+        runId=run.run_id,
+        kind="approval",
+        decision="reject",
+    )
+
+    run.record_decision(first)
+    assert run.wait_for_approval_decision(timeout=0) == first
+    assert run.wait_for_approval_decision(timeout=0) is None
+    run.record_decision(second)
+    assert run.wait_for_approval_decision(timeout=0) == second

@@ -1,10 +1,8 @@
 /**
- * Property 2: Each event type maps to exactly one row component.
+ * Feature: advanced-context-engine, Property 20: Frontend registry totality,
+ * injectivity, and unknown-event discard.
  *
- * Feature: zoc-agent-ecosystem-merge, Property 2: Each event type maps to
- * exactly one row component
- *
- * For any of the Agent trace Event_Contract types:
+ * For every rendered Agent trace Event_Contract type:
  *   (a) `ROW_COMPONENTS` selects exactly one distinct component for that type,
  *   (b) the registry is total over `EventType`, and
  *   (c) rendering a recognized event uses the component mapped to its
@@ -36,6 +34,7 @@ const EVENT_TYPES: AgentEvents.EventType[] = [
   "thinking",
   "plan",
   "plan-update",
+  "map-files",
   "read-files",
   "edit-file",
   "command",
@@ -107,6 +106,17 @@ function arbEventOfType(type: AgentEvents.EventType): fc.Arbitrary<AgentEvents.A
           fc.record({
             id: fc.string({ minLength: 1, maxLength: 16 }),
             status: fc.constantFrom<AgentEvents.PlanItemStatus>("pending", "active", "done"),
+          }),
+        )
+        .map(([b, r]): AgentEvents.AgentEvent => ({ ...b, type, ...r }));
+    case "map-files":
+      return fc
+        .tuple(
+          baseArb,
+          fc.record({
+            readList: fc.array(fc.string({ minLength: 1, maxLength: 40 }), { maxLength: 8 }),
+            writeList: fc.array(fc.string({ minLength: 1, maxLength: 40 }), { maxLength: 8 }),
+            rationale: fc.string({ maxLength: 120 }),
           }),
         )
         .map(([b, r]): AgentEvents.AgentEvent => ({ ...b, type, ...r }));
@@ -193,7 +203,7 @@ function arbEventOfType(type: AgentEvents.EventType): fc.Arbitrary<AgentEvents.A
   }
 }
 
-describe("Feature: zoc-agent-ecosystem-merge, Property 2: Each event type maps to exactly one row component", () => {
+describe("Feature: advanced-context-engine, Property 20: frontend registry totality and injectivity", () => {
   it("registry is total over EventType with one distinct entry per discriminator", () => {
     // (b) totality: the registry's key set equals the Event_Contract
     // discriminators, no more and no fewer.

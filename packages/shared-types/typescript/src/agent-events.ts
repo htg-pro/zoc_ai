@@ -19,6 +19,7 @@ export type EventType =
   | "thinking"
   | "plan"
   | "plan-update"
+  | "map-files"
   | "read-files"
   | "edit-file"
   | "command"
@@ -76,6 +77,13 @@ export interface CommandEvent extends BaseEvent {
   outputTail?: string | null;
 }
 
+export interface ContextCompressedEvent extends BaseEvent {
+  type: "context-compressed";
+  originalTokens: number;
+  compressedTokens: number;
+  compressionRatio: number;
+}
+
 export interface DoneEvent extends BaseEvent {
   type: "done";
   ok: boolean;
@@ -97,6 +105,13 @@ export interface IntentEvent extends BaseEvent {
   modelTier: "local-slm" | "edge" | "cloud";
   contextWindowTokens: number;
   fallbackReason?: string | null;
+}
+
+export interface MapFilesEvent extends BaseEvent {
+  type: "map-files";
+  readList: string[];
+  writeList: string[];
+  rationale: string;
 }
 
 export interface PlanEvent extends BaseEvent {
@@ -125,6 +140,12 @@ export interface ReadFileRef {
 export interface ReadFilesEvent extends BaseEvent {
   type: "read-files";
   files: ReadFileRef[];
+}
+
+export interface RecoveryAttemptEvent extends BaseEvent {
+  type: "recovery-attempt";
+  attempt: number;
+  failures: string[];
 }
 
 export interface ReviewCheck {
@@ -187,12 +208,15 @@ export type AgentEvent =
   | ThinkingEvent
   | PlanEvent
   | PlanUpdateEvent
+  | MapFilesEvent
   | ReadFilesEvent
+  | ContextCompressedEvent
   | EditFileEvent
   | CommandEvent
   | ReviewEvent
   | SummaryEvent
   | ApprovalEvent
+  | RecoveryAttemptEvent
   | BudgetEvent
   | TestResultsEvent
   | DoneEvent;

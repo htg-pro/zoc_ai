@@ -26,16 +26,34 @@ from __future__ import annotations
 
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
+from typing import Generic, TypeVar
 
-from zocai_gateway.context.rag_matcher import RagFragment
+from zocai_gateway.context.rag_matcher import (
+    BM25Index,
+    QueryEmbedder,
+    RagFragment,
+    hybrid_search,
+)
 
 __all__ = [
     "CHARS_PER_TOKEN",
+    "ChunkBudgetResult",
     "TokenEstimator",
     "TokenGateResult",
     "estimate_tokens",
+    "fit_chunks",
     "fit_fragments",
+    "hybrid_search_within_budget",
 ]
+
+# A retrieved chunk can be any object (a string, a fragment, …); the gate only
+# needs a way to read its text to estimate cost. ``ChunkT`` keeps the budget
+# helper generic over whatever ``hybrid_search`` was asked to rank.
+ChunkT = TypeVar("ChunkT")
+
+# Extracts the token-bearing text from a chunk. Defaults to ``str`` so plain
+# string chunks (the common ``hybrid_search`` case) work with no wiring.
+ChunkText = Callable[["ChunkT"], str]
 
 # Average characters per token used by the deterministic estimate. Four
 # characters per token is the widely used rough heuristic for English-like
@@ -137,3 +155,122 @@ def fit_fragments(
         token_count=used,
         window=safe_window,
     )
+
+
+@dataclass(frozen=True, slots=True)
+class ChunkBudgetResult(Generic[ChunkT]):
+    """The outcome of enforcing a token budget on ranked chunks (R8.5).
+
+    :attr:`chunks` are the retained chunks **in the order they were supplied**
+    (i.e. the relevance order produced by
+    :func:`~zocai_gateway.context.rag_matcher.hybrid_search`), forming a prefix
+    of that ranking. :attr:`total_tokens` is the estimated token total of the
+    retained chunks and is always ``<= budget``.
+    """
+
+    chunks: tuple[ChunkT, ...]
+    total_tokens: int
+    budget: int
+
+
+def fit_chunks(
+    chunks: Sequence[ChunkT],
+    budget: int,
+    *,
+    estimate: TokenEstimator = estimate_tokens,
+    text: ChunkText[ChunkT] = str,
+) -> ChunkBudgetResult[ChunkT]:
+    """Enforce a token ``budget`` on the ranked output of ``hybrid_search``.
+
+    ``chunks`` are assumed to already be in descending-relevance order — exactly
+    what :func:`~zocai_gateway.context.rag_matcher.hybrid_search` returns. The
+    gate walks that order accumulating each chunk's estimated token cost, and
+    keeps adding chunks until the running total would exceed ``budget``, at
+    which point it **stops** (R8.5). Because retrieval order is preserved, the
+    kept chunks are always the most relevant prefix that fits.
+
+    :param chunks: Ranked chunks from ``hybrid_search`` (most relevant first).
+    :param budget: Token budget for the context payload. Non-positive budgets
+        admit nothing.
+    :param estimate: Deterministic token estimator. Defaults to
+        :func:`estimate_tokens`.
+    :param text: Reads the token-bearing text from a chunk. Defaults to ``str``
+        so plain string chunks work without configuration.
+    :returns: A :class:`ChunkBudgetResult` with the retained chunks (in
+        retrieval order) and their estimated ``total_tokens``.
+    """
+    safe_budget = max(budget, 0)
+    if budget <= 0 or not chunks:
+        return ChunkBudgetResult(chunks=(), total_tokens=0, budget=safe_budget)
+
+    kept: list[ChunkT] = []
+    used = 0
+
+    for chunk in chunks:
+        cost = max(estimate(text(chunk)), 0)
+        if used + cost > safe_budget:
+            # The budget limit is reached: stop admitting chunks so the kept
+            # payload stays a relevance-ordered prefix that fits the window.
+            break
+        kept.append(chunk)
+        used += cost
+
+    return ChunkBudgetResult(
+        chunks=tuple(kept),
+        total_tokens=used,
+        budget=safe_budget,
+    )
+
+
+def hybrid_search_within_budget(
+    query: str,
+    chunks: Sequence[ChunkT],
+    budget: int,
+    *,
+    bm25_index: BM25Index,
+    embeddings: Sequence[Sequence[float]],
+    embed_query: QueryEmbedder,
+    k: int = 20,
+    rrf_k: int = 60,
+    estimate: TokenEstimator = estimate_tokens,
+    text: ChunkText[ChunkT] = str,
+) -> ChunkBudgetResult[ChunkT]:
+    """Rank ``chunks`` with hybrid search, then enforce a token ``budget`` (R8.5).
+
+    This is the wired context-budget path (Layer 3, Phase D): it runs
+    :func:`~zocai_gateway.context.rag_matcher.hybrid_search` to order ``chunks``
+    most-relevant-first, then feeds that ranking straight into
+    :func:`fit_chunks`, which keeps admitting chunks until the next one would
+    exceed ``budget`` and then stops. The returned :class:`ChunkBudgetResult`
+    carries the retained chunks in retrieval order together with their estimated
+    ``total_tokens`` — i.e. the most relevant prefix that fits the window.
+
+    :param query: The task/query text ranked against ``chunks``.
+    :param chunks: Candidate chunks to rank and budget. Their count must match
+        ``bm25_index.document_count`` (``hybrid_search``'s contract).
+    :param budget: Token budget for the context payload. Non-positive budgets
+        admit nothing.
+    :param bm25_index: Lexical BM25 index built over the same ``chunks``, in the
+        same order.
+    :param embeddings: One embedding vector per chunk, aligned with ``chunks``.
+    :param embed_query: Embeds ``query`` into the ``embeddings`` vector space.
+    :param k: Maximum number of chunks hybrid search returns before budgeting.
+    :param rrf_k: Reciprocal-rank-fusion constant passed to hybrid search.
+    :param estimate: Deterministic token estimator. Defaults to
+        :func:`estimate_tokens`.
+    :param text: Reads the token-bearing text from a chunk. Defaults to ``str``
+        so plain string chunks work without configuration.
+    :returns: A :class:`ChunkBudgetResult` with the retained chunks (in
+        retrieval order) and their estimated ``total_tokens`` (always
+        ``<= budget``).
+    """
+    ranked = hybrid_search(
+        query,
+        chunks,
+        bm25_index=bm25_index,
+        embeddings=embeddings,
+        embed_query=embed_query,
+        k=k,
+        rrf_k=rrf_k,
+    )
+    return fit_chunks(ranked, budget, estimate=estimate, text=text)

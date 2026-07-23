@@ -107,6 +107,9 @@ export function buildRunTraces(events: readonly TraceableEvent[]): RunTrace[] {
       case "review":
         foldReview(trace, event as AgentEvents.ReviewEvent);
         break;
+      case "recovery-attempt":
+        foldRecoveryAttempt(trace, event as AgentEvents.RecoveryAttemptEvent);
+        break;
       case "test-results":
         foldTestResults(trace, event as AgentEvents.TestResultsEvent);
         break;
@@ -284,6 +287,21 @@ function foldTestResults(trace: RunTrace, event: AgentEvents.TestResultsEvent): 
     durationMs: event.durationMs ?? 0,
     timedOut: event.timedOut ?? false,
   };
+}
+
+function foldRecoveryAttempt(
+  trace: RunTrace,
+  event: AgentEvents.RecoveryAttemptEvent,
+): void {
+  trace.stage = "validate";
+  upsertActivity(trace, {
+    id: `recovery:${event.attempt}`,
+    kind: "thinking",
+    label: `Recovery attempt ${event.attempt}`,
+    detail: event.failures.join("\n"),
+    meta: `${event.failures.length} failure${event.failures.length === 1 ? "" : "s"}`,
+    status: "running",
+  });
 }
 
 function foldSummary(trace: RunTrace, event: AgentEvents.SummaryEvent): void {

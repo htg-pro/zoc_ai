@@ -40,23 +40,29 @@ from __future__ import annotations
 import itertools
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from shared_schema.agent_events import (
+    ApprovalEvent,
     CommandEvent,
     EditFileEvent,
     ThinkingEvent,
 )
 
+from zocai_gateway.context.steering_compiler import is_write_preapproved
 from zocai_gateway.fsm import EmitSink
 from zocai_gateway.toolsets import FullToolset, ReadOnlyViolation
 
 __all__ = [
-    "PlannedChange",
-    "EditPlan",
     "ApplyOutcome",
+    "ApprovalWaiter",
     "EditCoordinator",
+    "EditPlan",
+    "PlannedChange",
 ]
+
+
+ApprovalWaiter = Callable[[float | None], object | None]
 
 
 # ── Edit plan data model ─────────────────────────────────────────────────────
@@ -99,22 +105,26 @@ class EditPlan:
 
 @dataclass(frozen=True, slots=True)
 class ApplyOutcome:
-    """The result of an APPLY_EDITS pass.
-
-    :attr:`applied` lists the changes successfully written, in application
-    order; these are **retained** even when a later change fails (R3.9).
-    :attr:`failed` is the change whose application failed (``None`` on full
-    success), and :attr:`error` is the human-readable cause naming it.
-    """
+    """Result of APPLY_EDITS with halt-and-retain approval semantics."""
 
     applied: tuple[PlannedChange, ...]
     failed: PlannedChange | None = None
+    pending_approval: PlannedChange | None = None
+    rejected: bool = False
     error: str | None = None
 
     @property
+    def needs_approval(self) -> bool:
+        return self.pending_approval is not None and not self.rejected
+
+    @property
+    def paused(self) -> bool:
+        return self.pending_approval is not None
+
+    @property
     def ok(self) -> bool:
-        """Whether every planned change was applied without failure."""
-        return self.failed is None
+        """Whether every planned change was applied without failure or pause."""
+        return self.failed is None and self.pending_approval is None
 
 
 # ── The coordinator ──────────────────────────────────────────────────────────
@@ -147,9 +157,13 @@ class EditCoordinator:
     next_seq: Callable[[], int] = field(
         default_factory=lambda: itertools.count().__next__
     )
-    events: list[ThinkingEvent | EditFileEvent | CommandEvent] = field(
+    write_allowlist: frozenset[str] | None = None
+    wait_for_approval: ApprovalWaiter | None = None
+    events: list[ThinkingEvent | EditFileEvent | CommandEvent | ApprovalEvent] = field(
         init=False, default_factory=list
     )
+    _approved_paths: set[str] = field(init=False, default_factory=set)
+    _last_approval_rejected: bool = field(init=False, default=False)
 
     # -- PLAN_EDITS (R3.6) --------------------------------------------------
 
@@ -165,9 +179,9 @@ class EditCoordinator:
             seq=self.next_seq(),
             run_id=self.run_id,
             ts=self._now(),
-            text=_sanitize_thinking(plan.reasoning),
+            text=plan.reasoning,
             collapsible=True,
-            truncated=len(plan.reasoning) > _THINKING_MAX_CHARS,
+            truncated=False,
         )
         self._record(event)
         return event
@@ -193,6 +207,19 @@ class EditCoordinator:
         """
         applied: list[PlannedChange] = []
         for change in plan.changes:
+            if not self.authorize_write(change.path):
+                rejected = self._last_approval_rejected
+                reason = (
+                    f"write rejected for undeclared path {change.path!r}"
+                    if rejected
+                    else f"write approval pending for undeclared path {change.path!r}"
+                )
+                return ApplyOutcome(
+                    applied=tuple(applied),
+                    pending_approval=change,
+                    rejected=rejected,
+                    error=reason,
+                )
             try:
                 self.toolset.write_file(change.path, change.content)
             except (ReadOnlyViolation, OSError, UnicodeDecodeError) as exc:
@@ -206,6 +233,48 @@ class EditCoordinator:
             applied.append(change)
             self._emit_edit_file(change)
         return ApplyOutcome(applied=tuple(applied))
+
+    def authorize_write(self, path: str) -> bool:
+        """Return whether ``path`` may be mutated, waiting once when undeclared."""
+        self._last_approval_rejected = False
+        allowlist = self.write_allowlist
+        workspace_root = self.toolset.workspace_root
+        if allowlist is None:
+            return True
+        if is_write_preapproved(path, allowlist, workspace_root=workspace_root):
+            return True
+        if is_write_preapproved(
+            path, frozenset(self._approved_paths), workspace_root=workspace_root
+        ):
+            return True
+
+        event = ApprovalEvent(
+            seq=self.next_seq(),
+            run_id=self.run_id,
+            ts=self._now(),
+            prompt=f"Approve writing undeclared path: {path}",
+            decision=None,
+        )
+        self._record(event)
+        waiter = self.wait_for_approval
+        if waiter is None:
+            return False
+        decision = waiter(None)
+        verdict = (
+            decision
+            if isinstance(decision, str)
+            else getattr(decision, "decision", None)
+        )
+        if verdict == "approve":
+            normalized = (workspace_root / path).resolve()
+            try:
+                approved = normalized.relative_to(workspace_root).as_posix()
+            except ValueError:
+                return False
+            self._approved_paths.add(approved)
+            return True
+        self._last_approval_rejected = verdict == "reject"
+        return False
 
     def apply_all(self, plans: Iterable[EditPlan]) -> ApplyOutcome:
         """Apply a sequence of plans, stopping at the first failed change.
@@ -222,6 +291,8 @@ class EditCoordinator:
                 return ApplyOutcome(
                     applied=tuple(applied),
                     failed=outcome.failed,
+                    pending_approval=outcome.pending_approval,
+                    rejected=outcome.rejected,
                     error=outcome.error,
                 )
         return ApplyOutcome(applied=tuple(applied))
@@ -257,7 +328,9 @@ class EditCoordinator:
         )
         self._record(event)
 
-    def _record(self, event: ThinkingEvent | EditFileEvent | CommandEvent) -> None:
+    def _record(
+        self, event: ThinkingEvent | EditFileEvent | CommandEvent | ApprovalEvent
+    ) -> None:
         """Record ``event`` and forward it to the sink in production order."""
         self.events.append(event)
         if self.emit is not None:
@@ -266,18 +339,8 @@ class EditCoordinator:
     @staticmethod
     def _now() -> str:
         """An ISO-8601 UTC timestamp for the ``ts`` field."""
-        return datetime.now(timezone.utc).isoformat()
+        return datetime.now(UTC).isoformat()
 
-
-_THINKING_MAX_CHARS = 480
-
-
-def _sanitize_thinking(text: str) -> str:
-    """Keep operational context visible without flooding the trace."""
-    stripped = " ".join(text.strip().split())
-    if len(stripped) <= _THINKING_MAX_CHARS:
-        return stripped
-    return stripped[: _THINKING_MAX_CHARS - 1].rstrip() + "…"
 
 
 def _diff_stats(diff: str) -> tuple[int, int]:

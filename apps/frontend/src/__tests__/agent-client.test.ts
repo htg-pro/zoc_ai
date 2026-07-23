@@ -59,6 +59,7 @@ beforeEach(() => {
       return mockJson([{ chunk: { file: "x", start_line: 0, end_line: 1, text: "y" }, score: 1 }]);
     if (url.endsWith("/v1/sessions/s1/index/reindex"))
       return mockJson({ workspace_root: "/", file_count: 1, chunk_count: 1, watching: true });
+    if (url.endsWith("/v1/sessions/s1/index/fs-changed")) return mockJson({ accepted: 1 }, 202);
     if (url.endsWith("/v1/terminal")) return mockJson({ id: "t1", cmd: "bash" }, 201);
     if (url.endsWith("/v1/terminal/t1/input")) return mockJson({ ok: true });
     if (url.endsWith("/v1/terminal/t1/resize")) return mockJson({ ok: true });
@@ -164,6 +165,17 @@ describe("agent-client", () => {
     const rebuildReq = captured[captured.length - 1];
     expect(rebuildReq.url).toBe("http://127.0.0.1:9999/v1/sessions/s1/index/reindex");
     expect(rebuildReq.init.method).toBe("POST");
+
+    const changed = await c.indexFilesChanged("s1", ["/workspace/src/app.ts"]);
+    expect(changed.accepted).toBe(1);
+    const changedReq = captured[captured.length - 1];
+    expect(changedReq.url).toBe(
+      "http://127.0.0.1:9999/v1/sessions/s1/index/fs-changed",
+    );
+    expect(changedReq.init.method).toBe("POST");
+    expect(JSON.parse(changedReq.init.body as string)).toEqual({
+      paths: ["/workspace/src/app.ts"],
+    });
   });
 
   it("throws on non-2xx with a useful message", async () => {

@@ -1,20 +1,12 @@
 /**
- * Property test — Feature: zoc-agent-ecosystem-merge,
- * Property 3: Unrecognized event types leave the feed unaltered.
+ * Feature: advanced-context-engine, Property 20: Frontend registry totality,
+ * injectivity, and unknown-event discard.
  *
- * **Validates: Requirements 3.5**
+ * The discard facet proves that every payload outside the independently pinned
+ * rendered EventType domain—including the valid-but-non-rendered
+ * `context-compressed` event—leaves previously rendered rows byte-identical.
  *
- * For any payload whose `type` is not one of the eight recognized Event_Contract
- * kinds, two facts must hold:
- *   1. `isRecognizedEvent` (from `rows.tsx`) reports it as unrecognized (false).
- *   2. The rendered feed is identical to the feed before the payload arrived —
- *      i.e. the unrecognized payload is discarded without altering the feed.
- *
- * The property is validated at the dispatch/guard + render level: the pure
- * presentational `AgentRunFeedView` (exported from `AgentRunFeed.tsx`) is
- * rendered with a recognized-only feed, then re-rendered with the same feed
- * plus an unrecognized payload spliced in at an arbitrary position. The two
- * rendered DOM snapshots must be byte-for-byte identical.
+ * Validates: Requirements 11.6, 14.3, 14.4, 17.4, 17.5
  */
 import { afterEach, describe, expect, it } from "vitest";
 import { cleanup, render } from "@testing-library/react";
@@ -28,124 +20,159 @@ afterEach(() => {
   cleanup();
 });
 
-/** The eight recognized Event_Contract discriminators. */
-const RECOGNIZED_TYPES: readonly string[] = [
+const RECOGNIZED_TYPES: readonly AgentEvents.EventType[] = [
   "intent",
   "thinking",
+  "plan",
+  "plan-update",
+  "map-files",
   "read-files",
   "edit-file",
   "command",
+  "review",
   "summary",
   "approval",
   "done",
 ];
 
-/** A frozen clock so the render-budget fallback never fires during the test. */
 const frozenNow = () => 0;
 
-/**
- * Generates the type-specific payload for each recognized row kind (without the
- * shared `seq`/`runId`/`ts` fields, which are assigned deterministically so
- * seqs stay unique and ordering is controlled).
- */
 const recognizedVariantArb = fc.oneof(
   fc.record({
     type: fc.constant("intent" as const),
     text: fc.string(),
-    modelTier: fc.constantFrom("local-slm", "edge", "cloud") as fc.Arbitrary<AgentEvents.ModelTier>,
+    modelTier: fc.constantFrom<AgentEvents.ModelTier>("local-slm", "edge", "cloud"),
     contextWindowTokens: fc.nat(),
   }),
   fc.record({
     type: fc.constant("thinking" as const),
     text: fc.string(),
     collapsible: fc.constant(true as const),
+    truncated: fc.boolean(),
+  }),
+  fc.record({
+    type: fc.constant("plan" as const),
+    items: fc.array(
+      fc.record({
+        id: fc.string({ minLength: 1, maxLength: 12 }),
+        label: fc.string({ maxLength: 40 }),
+        status: fc.constantFrom<AgentEvents.PlanItemStatus>("pending", "active", "done"),
+      }),
+      { maxLength: 4 },
+    ),
+  }),
+  fc.record({
+    type: fc.constant("plan-update" as const),
+    id: fc.string({ minLength: 1, maxLength: 12 }),
+    status: fc.constantFrom<AgentEvents.PlanItemStatus>("pending", "active", "done"),
+  }),
+  fc.record({
+    type: fc.constant("map-files" as const),
+    readList: fc.array(fc.string({ minLength: 1, maxLength: 40 }), { maxLength: 8 }),
+    writeList: fc.array(fc.string({ minLength: 1, maxLength: 40 }), { maxLength: 8 }),
+    rationale: fc.string({ maxLength: 80 }),
   }),
   fc.record({
     type: fc.constant("read-files" as const),
-    files: fc.array(fc.record({ path: fc.string() }), { maxLength: 4 }),
+    files: fc.array(fc.record({ path: fc.string({ minLength: 1, maxLength: 40 }) }), { maxLength: 4 }),
   }),
   fc.record({
     type: fc.constant("edit-file" as const),
-    path: fc.string(),
-    diff: fc.string(),
+    path: fc.string({ minLength: 1, maxLength: 40 }),
+    diff: fc.string({ maxLength: 100 }),
+    adds: fc.nat({ max: 20 }),
+    dels: fc.nat({ max: 20 }),
+    status: fc.constant("done" as const),
   }),
   fc.record({
     type: fc.constant("command" as const),
-    command: fc.string(),
+    command: fc.string({ minLength: 1, maxLength: 40 }),
   }),
   fc.record({
-    type: fc.constant("summary" as const),
-    text: fc.string(),
+    type: fc.constant("review" as const),
+    files: fc.array(
+      fc.record({
+        path: fc.string({ minLength: 1, maxLength: 40 }),
+        diff: fc.string({ maxLength: 100 }),
+        adds: fc.nat({ max: 20 }),
+        dels: fc.nat({ max: 20 }),
+      }),
+      { maxLength: 4 },
+    ),
+    validation: fc.constant({
+      typecheck: { status: "skipped" as const },
+      build: { status: "skipped" as const },
+      tests: { status: "skipped" as const },
+    }),
   }),
-  fc.record({
-    type: fc.constant("approval" as const),
-    prompt: fc.string(),
-  }),
-  fc.record({
-    type: fc.constant("done" as const),
-    ok: fc.boolean(),
-  }),
+  fc.record({ type: fc.constant("summary" as const), text: fc.string() }),
+  fc.record({ type: fc.constant("approval" as const), prompt: fc.string() }),
+  fc.record({ type: fc.constant("done" as const), ok: fc.boolean() }),
 );
 
-/** A `type` string that is NOT one of the eight recognized kinds. */
-const unrecognizedTypeArb = fc
-  .string()
-  .filter((t) => !RECOGNIZED_TYPES.includes(t));
+const unknownTypeArb = fc.oneof(
+  fc.constant("context-compressed"),
+  fc.string().filter((value) => !RECOGNIZED_TYPES.includes(value as AgentEvents.EventType)),
+);
 
-describe("Property 3: Unrecognized event types leave the feed unaltered", () => {
-  it("discards unrecognized payloads and renders an identical feed (Requirements 3.5)", () => {
+function eventFeed(variants: readonly object[]): AgentEvents.AgentEvent[] {
+  return variants.map((variant, index) => ({
+    ...variant,
+    seq: index,
+    runId: `run-${index}`,
+    ts: new Date(0).toISOString(),
+  })) as AgentEvents.AgentEvent[];
+}
+
+describe("Feature: advanced-context-engine, Property 20: unknown event discard", () => {
+  it("preserves mounted rows when an unregistered event arrives", () => {
     fc.assert(
       fc.property(
         fc.array(recognizedVariantArb, { maxLength: 8 }),
-        unrecognizedTypeArb,
+        unknownTypeArb,
         fc.nat(),
-        (variants, unrecognizedType, insertRaw) => {
-          // Recognized feed: assign unique, ascending seqs + the shared fields.
-          const recognized = variants.map((variant, index) => ({
-            ...variant,
-            seq: index,
-            runId: `run-${index}`,
-            ts: new Date(0).toISOString(),
-          })) as unknown as AgentEvents.AgentEvent[];
-
-          // The unrecognized payload — well-formed except for its `type`.
-          const unrecognized = {
-            type: unrecognizedType,
+        (variants, unknownType, insertRaw) => {
+          const recognized = eventFeed(variants);
+          const unknown = {
+            type: unknownType,
             seq: recognized.length + 1000,
-            runId: "run-unrecognized",
+            runId: "run-unknown",
             ts: new Date(0).toISOString(),
           };
+          expect(isRecognizedEvent(unknown)).toBe(false);
 
-          // Fact 1: the guard rejects it.
-          expect(isRecognizedEvent(unrecognized)).toBe(false);
-
-          // Splice the unrecognized payload into an arbitrary position.
           const insertAt = insertRaw % (recognized.length + 1);
-          const withUnrecognized = [
+          const withUnknown = [
             ...recognized.slice(0, insertAt),
-            unrecognized,
+            unknown,
             ...recognized.slice(insertAt),
-          ] as unknown as AgentEvents.AgentEvent[];
+          ] as AgentEvents.AgentEvent[];
 
-          // Feed BEFORE the unrecognized payload arrives.
-          const before = render(
-            <AgentRunFeedView events={recognized} now={frozenNow} />,
-          );
-          const beforeHtml = before.container.innerHTML;
-          before.unmount();
-
-          // Feed AFTER the unrecognized payload arrives.
-          const after = render(
-            <AgentRunFeedView events={withUnrecognized} now={frozenNow} />,
-          );
-          const afterHtml = after.container.innerHTML;
-          after.unmount();
-
-          // Fact 2: the rendered feed is identical — the payload was discarded.
-          expect(afterHtml).toBe(beforeHtml);
+          const view = render(<AgentRunFeedView events={recognized} now={frozenNow} />);
+          const beforeHtml = view.container.innerHTML;
+          view.rerender(<AgentRunFeedView events={withUnknown} now={frozenNow} />);
+          expect(view.container.innerHTML).toBe(beforeHtml);
+          view.unmount();
         },
       ),
-      { numRuns: 100 },
+      { numRuns: 200 },
     );
+  });
+
+  it("treats context-compressed as validated telemetry without a row", () => {
+    const event: AgentEvents.ContextCompressedEvent = {
+      type: "context-compressed",
+      seq: 1,
+      runId: "run",
+      ts: new Date(0).toISOString(),
+      originalTokens: 100,
+      compressedTokens: 40,
+      compressionRatio: 0.4,
+    };
+    expect(isRecognizedEvent(event)).toBe(false);
+    const view = render(<AgentRunFeedView events={[]} now={frozenNow} />);
+    const beforeHtml = view.container.innerHTML;
+    view.rerender(<AgentRunFeedView events={[event]} now={frozenNow} />);
+    expect(view.container.innerHTML).toBe(beforeHtml);
   });
 });

@@ -15,6 +15,7 @@ from pathlib import Path
 import pytest
 
 from zocai_gateway.context.rag_matcher import (
+    BM25Index,
     MAX_FRAGMENTS,
     RELEVANCE_THRESHOLD,
     FragmentSource,
@@ -22,7 +23,11 @@ from zocai_gateway.context.rag_matcher import (
     RagFragment,
     RagMatcher,
     WorkspaceRagMatcher,
+    cosine_sim,
     default_scorer,
+    hybrid_rank,
+    hybrid_search,
+    rrf,
 )
 from zocai_gateway.model_interface import ModelTier
 
@@ -41,6 +46,51 @@ def test_default_scorer_is_unit_ranged() -> None:
     assert default_scorer("", "anything") == 0.0
     assert default_scorer("auth", "") == 0.0
     assert default_scorer("auth login", "login here") == pytest.approx(0.5)
+
+
+def test_bm25_prefers_more_relevant_document() -> None:
+    index = BM25Index(["auth token auth session", "auth helper", "unrelated"])
+    scores = index.get_scores(["auth", "token"])
+
+    assert scores[0] > scores[1] > scores[2]
+
+
+def test_cosine_similarity_handles_zero_vectors() -> None:
+    scores = cosine_sim([1.0, 0.0], [[1.0, 0.0], [0.0, 1.0], [0.0, 0.0]])
+
+    assert scores == pytest.approx([1.0, 0.0, 0.0])
+
+
+def test_rrf_rewards_documents_found_by_both_rankers() -> None:
+    combined = rrf([10.0, 5.0, 0.0], [0.0, 5.0, 10.0], k=60)
+
+    assert combined[1] > combined[0]
+    assert combined[1] > combined[2]
+
+
+def test_hybrid_rank_fuses_bm25_and_semantic_order() -> None:
+    index = BM25Index(["auth token auth", "auth helper", "unrelated"])
+    embeddings = [[0.0, 1.0], [1.0, 0.0], [0.8, 0.2]]
+
+    ranked = hybrid_rank(
+        "auth token",
+        bm25_index=index,
+        embeddings=embeddings,
+        embed_query=lambda _query: [1.0, 0.0],
+    )
+
+    assert ranked[0][0] == 1
+    assert {index for index, _score in ranked} == {0, 1, 2}
+
+    chunks = ["lexical", "fused", "semantic"]
+    assert hybrid_search(
+        "auth token",
+        chunks,
+        bm25_index=index,
+        embeddings=embeddings,
+        embed_query=lambda _query: [1.0, 0.0],
+        k=2,
+    ) == ["fused", "lexical"]
 
 
 # -- scan threshold and cap (R8.1) -----------------------------------------
@@ -128,6 +178,35 @@ def test_scan_reads_folder_files(tmp_path: Path) -> None:
 
     assert [f.path for f in results] == [str(tmp_path / "match.py")]
     assert results[0].source is FragmentSource.FOLDER
+
+
+def test_scan_prunes_heavy_directories(tmp_path: Path) -> None:
+    """node_modules/.git/etc. are never descended into during a workspace scan."""
+    (tmp_path / "match.py").write_text("auth token session", encoding="utf-8")
+    for heavy in ("node_modules", ".git", "target", "__pycache__", ".venv"):
+        d = tmp_path / heavy
+        d.mkdir()
+        # A file that WOULD score highly if the scan descended into it.
+        (d / "planted.py").write_text("auth token session", encoding="utf-8")
+
+    matcher = WorkspaceRagMatcher()
+    results = matcher.scan("auth token session", folders=[tmp_path])
+
+    # Only the top-level source file is returned; the planted files inside the
+    # pruned directories are invisible to the scan.
+    assert [f.path for f in results] == [str(tmp_path / "match.py")]
+
+
+def test_scan_skips_oversized_files(tmp_path: Path) -> None:
+    """Files larger than the scan cap (likely generated/minified) are skipped."""
+    (tmp_path / "small.py").write_text("auth token session", encoding="utf-8")
+    huge = "auth token session\n" + ("x" * (600 * 1024))
+    (tmp_path / "bundle.min.js").write_text(huge, encoding="utf-8")
+
+    matcher = WorkspaceRagMatcher()
+    results = matcher.scan("auth token session", folders=[tmp_path])
+
+    assert [f.path for f in results] == [str(tmp_path / "small.py")]
 
 
 def test_scan_skips_unreadable_files(tmp_path: Path) -> None:

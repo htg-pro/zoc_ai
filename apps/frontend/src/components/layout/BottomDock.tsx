@@ -7,7 +7,7 @@ import { OutputPanel } from "@/features/problems/OutputPanel";
 import { TasksPanel } from "@/features/tasks/TasksPanel";
 import { CheckpointsPanel } from "@/features/agent/CheckpointsPanel";
 import { useApp, type BottomTab } from "@/lib/store";
-import { countBySeverity } from "@/lib/problem-matchers";
+import { problemsBadge } from "@/lib/problems-badge";
 import { cn } from "@/lib/utils";
 
 const TABS: { key: BottomTab; label: string; icon: typeof TerminalIcon }[] = [
@@ -28,11 +28,12 @@ export function BottomDock() {
   const paused = useApp((s) => s.agentPaused);
   const pauseAgent = useApp((s) => s.pauseAgent);
   const resumeAgent = useApp((s) => s.resumeAgent);
-  const problemCount = useApp((s) => {
-    const all = Object.values(s.diagnostics).flat();
-    const { errors, warnings } = countBySeverity(all);
-    return errors + warnings;
-  });
+  // R4: the Problems tab pill is a pure function of the whole diagnostics store
+  // (LSP per-URI entries + command-checker entries). Select the stable store
+  // reference and derive the badge outside the selector so it recomputes only
+  // when the diagnostics change (not on every render).
+  const diagnostics = useApp((s) => s.diagnostics);
+  const badge = problemsBadge(diagnostics);
 
   return (
     <div className="flex h-full min-h-0 min-w-0 flex-col bg-background">
@@ -55,9 +56,18 @@ export function BottomDock() {
               >
                 <Icon className="h-3.5 w-3.5" />
                 {t.label}
-                {t.key === "problems" && problemCount > 0 && (
-                  <span className="ml-0.5 rounded-full bg-muted px-1 font-mono text-[9px] text-muted-foreground">
-                    {problemCount}
+                {t.key === "problems" && badge.visible && (
+                  <span
+                    data-testid="problems-badge"
+                    data-color={badge.color}
+                    className={cn(
+                      "ml-0.5 rounded-full px-1 font-mono text-[9px]",
+                      badge.color === "error"
+                        ? "bg-destructive/20 text-destructive"
+                        : "bg-warning/20 text-warning",
+                    )}
+                  >
+                    {badge.count}
                   </span>
                 )}
               </button>

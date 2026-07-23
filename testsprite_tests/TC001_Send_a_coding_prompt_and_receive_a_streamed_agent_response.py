@@ -3,13 +3,6 @@ import re
 from playwright import async_api
 from playwright.async_api import expect
 
-async def backend_available(page):
-    try:
-        response = await page.request.get("http://127.0.0.1:8765/health", timeout=1000)
-        return response.ok
-    except Exception:
-        return False
-
 async def run_test():
     pw = None
     browser = None
@@ -41,35 +34,59 @@ async def run_test():
 
         # Interact with the page elements to simulate user flow
         # -> navigate
-        await page.goto("http://localhost:1420")
+        await page.goto("http://localhost:1420/")
         try:
             await page.wait_for_load_state("domcontentloaded", timeout=5000)
         except Exception:
             pass
         
-        # -> Type a coding prompt into the 'Message the agent…' composer and click the 'Send' button to start the agent run.
-        # Message the agent… text area
-        elem = page.get_by_placeholder('Message the agent…', exact=True)
-        await elem.wait_for(state="visible", timeout=10000)
-        await elem.fill("Write a Python function fib(n) that returns a list of the first n Fibonacci numbers using an iterative approach, include brief inline comments, and explain the time and space complexity.")
-        
-        # -> Type a coding prompt into the 'Message the agent…' composer and click the 'Send' button to start the agent run.
-        # Send button
-        elem = page.get_by_role('button', name='Send', exact=True)
+        # -> Click the 'Reload' button on the error page to attempt to reload the Zoc AI workspace.
+        # Reload button
+        elem = page.locator('[id="reload-button"]')
         await elem.click(timeout=10000)
         
-        # --> Assertions to verify final state
+        # -> Open the llama.cpp GPU server health endpoint (http://127.0.0.1:8080/health) in a new tab and check the response.
+        # Open URL in new tab
+        page = await context.new_page()
+        await page.goto("http://127.0.0.1:8080/health")
+        try:
+            await page.wait_for_load_state("domcontentloaded", timeout=5000)
+        except Exception:
+            pass
         
-        # --> Verify the user message appears in the conversation timeline
-        # Assert: Expected the user message 'Write a Python function fib(n) that returns a list of the first n Fibonacci numbers using an iterative approach, include brief inline comments, and explain the time and space complexity.' to appear in the conversation timeline.
-        region = page.get_by_test_id("agent-run-region")
-        prompt = "Write a Python function fib(n) that returns a list of the first n Fibonacci numbers using an iterative approach, include brief inline comments, and explain the time and space complexity."
-        await expect(region).to_contain_text(prompt, timeout=15000), "Expected the user message to appear in the conversation timeline."
-
-        if await backend_available(page):
-            await expect(region).to_contain_text(re.compile(r"(intent|thinking|summary|done|completed)", re.I), timeout=30000), "Expected live gateway run activity or completion to appear."
-        else:
-            await expect(region).to_contain_text(re.compile(r"(Mock response|agent sidecar not reachable)", re.I), timeout=15000), "Expected offline fallback response when backend is unavailable."
+        # -> Click the 'Reload' button on the 127.0.0.1 health page to retry the llama.cpp GPU server health check.
+        # Reload button
+        elem = page.locator('[id="reload-button"]')
+        await elem.click(timeout=10000)
+        
+        # -> Click the 'Reload' button on the llama.cpp health page to retry the health check and observe whether a healthy JSON response appears.
+        # Reload button
+        elem = page.locator('[id="reload-button"]')
+        await elem.click(timeout=10000)
+        
+        # -> Click the 'Reload' button on the health page to retry the llama.cpp GPU server health check
+        # Reload button
+        elem = page.locator('[id="reload-button"]')
+        await elem.click(timeout=10000)
+        
+        # -> Open http://127.0.0.1:45271/health to check the FastAPI agent sidecar health response.
+        # Open URL in new tab
+        page = await context.new_page()
+        await page.goto("http://127.0.0.1:45271/health")
+        try:
+            await page.wait_for_load_state("domcontentloaded", timeout=5000)
+        except Exception:
+            pass
+        
+        # --> Assertions to verify final state
+        # Assert: Verify the user message appears in the conversation timeline
+        assert False, "Expected: Verify the user message appears in the conversation timeline (could not be verified on the page)"
+        # Assert: Verify a streamed assistant response appears and the run completes
+        assert False, "Expected: Verify a streamed assistant response appears and the run completes (could not be verified on the page)"
+        
+        # --> Test blocked by environment/access constraints during agent run
+        # Reason: TEST BLOCKED The test could not be run — the UI and backend services required to run the chat are unreachable. Observations: - The frontend at http://localhost:1420 shows ERR_EMPTY_RESPONSE and failed to load (Reload button visible). - The llama.cpp GPU server health endpoint at http://127.0.0.1:8080/health returned ERR_EMPTY_RESPONSE. - The FastAPI agent sidecar at http://127.0.0.1:45271/healt...
+        raise AssertionError("Test blocked during agent run: " + "TEST BLOCKED The test could not be run \u2014 the UI and backend services required to run the chat are unreachable. Observations: - The frontend at http://localhost:1420 shows ERR_EMPTY_RESPONSE and failed to load (Reload button visible). - The llama.cpp GPU server health endpoint at http://127.0.0.1:8080/health returned ERR_EMPTY_RESPONSE. - The FastAPI agent sidecar at http://127.0.0.1:45271/healt..." + " — the exported script cannot reproduce a PASS in this environment.")
         await asyncio.sleep(5)
 
     finally:
@@ -81,3 +98,4 @@ async def run_test():
             await pw.stop()
 
 asyncio.run(run_test())
+    
