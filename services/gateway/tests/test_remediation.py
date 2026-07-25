@@ -17,9 +17,8 @@ from __future__ import annotations
 
 import itertools
 
-from shared_schema.agent_events import AgentEventModel, ApprovalEvent
 from shared_schema.agent_events import AgentEvent as AgentEventUnion
-
+from shared_schema.agent_events import AgentEventModel, ApprovalEvent
 from zocai_gateway.edits import EditPlan, PlannedChange
 from zocai_gateway.fsm import FSM
 from zocai_gateway.memory.state_wrapper import LOG_MAX_CHARS, FailureRecord
@@ -55,7 +54,7 @@ def make_loop(
 
 
 def test_zero_exit_transitions_to_summary() -> None:
-    loop, recorded, diary = make_loop()
+    loop, _recorded, diary = make_loop()
     outcome = loop.on_checks_complete(0)
     assert outcome.stage is Stage.SUMMARY
     assert loop.fsm.current is Stage.SUMMARY

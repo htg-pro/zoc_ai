@@ -27,7 +27,6 @@ from collections.abc import Iterable, Mapping
 
 from hypothesis import given, settings
 from hypothesis import strategies as st
-
 from zocai_migration import (
     DEFAULT_SHARED_BUILD_CONFIG,
     DEFAULT_STAGES,

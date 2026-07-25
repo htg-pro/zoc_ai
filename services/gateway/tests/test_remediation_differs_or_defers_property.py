@@ -42,9 +42,7 @@ import itertools
 
 from hypothesis import given, settings
 from hypothesis import strategies as st
-
 from shared_schema.agent_events import ApprovalEvent
-
 from zocai_gateway.edits import EditPlan, PlannedChange
 from zocai_gateway.fsm import FSM
 from zocai_gateway.memory.state_wrapper import FailureRecord
@@ -94,7 +92,7 @@ def _scenario(draw: st.DrawFn) -> tuple[EditPlan, EditPlan | None, FailureRecord
         # candidate both differs and references the failure (the accept branch).
         candidate = EditPlan(
             reasoning=f"fix failing {command}",
-            changes=prior.changes + (PlannedChange(path="z.py", content=draw(_short_text)),),
+            changes=(*prior.changes, PlannedChange(path="z.py", content=draw(_short_text))),
         )
     elif shape == "differs_no_refs":
         # Structurally different but mentions nothing from the failure.

@@ -38,7 +38,6 @@ from shared_schema.agent_events import (
     AgentEventModel,
     ThinkingEvent,
 )
-
 from zocai_gateway.edits import EditCoordinator, EditPlan
 from zocai_gateway.toolsets import FullToolset
 

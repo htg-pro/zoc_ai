@@ -205,6 +205,49 @@ describe("app store", () => {
     expect(useApp.getState().pendingPatches.find((p) => p.id === id)).toBeUndefined();
   });
 
+  it("applies all pending desktop patches in one atomic transaction", async () => {
+    vi.spyOn(bridge, "isTauri").mockReturnValue(true);
+    const applyTransaction = vi.spyOn(bridge, "applyTransaction").mockResolvedValue({
+      written: 2,
+      deleted: 0,
+      checkpoint: "abc123",
+      checkpoint_error: null,
+    });
+    const getClient = vi.spyOn(agentClient, "getAgentClient");
+    useApp.setState({
+      liveMode: true,
+      activeSessionId: "session-1",
+      reviewRunId: "run-1",
+      workspaceRoot: "/ws",
+      pendingPatches: [
+        {
+          id: "patch-a",
+          file_path: "src/a.ts",
+          unified_diff: "--- a/src/a.ts\n+++ b/src/a.ts\n@@ -1 +1 @@\n-a\n+A\n",
+          summary: "a",
+        },
+        {
+          id: "patch-b",
+          file_path: "src/b.ts",
+          unified_diff: "--- a/src/b.ts\n+++ b/src/b.ts\n@@ -1 +1 @@\n-b\n+B\n",
+          summary: "b",
+        },
+      ],
+    });
+
+    await expect(useApp.getState().applyCurrentRun()).resolves.toBe(true);
+
+    expect(applyTransaction).toHaveBeenCalledTimes(1);
+    expect(applyTransaction).toHaveBeenCalledWith("/ws", [
+      { kind: "patch", path: "src/a.ts", unified_diff: expect.any(String) },
+      { kind: "patch", path: "src/b.ts", unified_diff: expect.any(String) },
+    ]);
+    expect(getClient).not.toHaveBeenCalled();
+    expect(useApp.getState().pendingPatches).toEqual([]);
+    expect(useApp.getState().reviewRunId).toBeNull();
+    vi.restoreAllMocks();
+  });
+
   it("appends a user message and a simulated assistant reply", async () => {
     const start = useApp.getState().chat.length;
     useApp.getState().sendUserMessage("hello agent");
@@ -1002,6 +1045,40 @@ describe("app store", () => {
       expect(useApp.getState().taskRuns["npm:build"]).toBeUndefined();
     } finally {
       setTrust("trusted");
+      vi.restoreAllMocks();
+    }
+  });
+
+  it("does not execute a task when policy requires an unavailable prompt", async () => {
+    vi.spyOn(bridge, "isTauri").mockReturnValue(true);
+    const runTaskCommand = vi.spyOn(bridge, "runTaskCommand").mockResolvedValue({
+      stdout: "",
+      stderr: "",
+      code: 0,
+    });
+    useApp.setState({
+      workspaceRoot: "/ws",
+      tasks: [
+        {
+          id: "npm:test",
+          label: "npm: test",
+          source: "npm",
+          command: "npm",
+          args: ["test"],
+          group: "test",
+          problemMatcher: null,
+        },
+      ],
+      taskRuns: {},
+    });
+    setTrust("trusted");
+    setRunMode("ask");
+
+    try {
+      await useApp.getState().runTask("npm:test");
+      expect(runTaskCommand).not.toHaveBeenCalled();
+      expect(useApp.getState().taskRuns["npm:test"]).toBeUndefined();
+    } finally {
       vi.restoreAllMocks();
     }
   });

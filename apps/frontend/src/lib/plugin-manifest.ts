@@ -60,6 +60,8 @@ export interface PluginManifest {
   name: string;
   version: string;
   description: string;
+  /** Relative JavaScript entry inside an installed artifact. */
+  main?: string;
   activationEvents: string[];
   contributes: PluginContributes;
 }
@@ -206,12 +208,14 @@ export function parsePluginManifest(input: string | object): ManifestParseResult
     return { manifest: null, errors };
   }
 
+  const main = str(raw.main)?.trim();
   return {
     manifest: {
       id,
       name,
       version,
       description: str(raw.description) ?? "",
+      main: main || undefined,
       activationEvents: strArray(raw.activationEvents),
       contributes,
     },

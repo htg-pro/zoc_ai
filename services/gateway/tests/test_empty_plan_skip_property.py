@@ -36,9 +36,8 @@ from pathlib import Path
 
 from hypothesis import given, settings
 from hypothesis import strategies as st
-from shared_schema.agent_events import EditFileEvent
 from shared_schema.agent_events import AgentEvent as AgentEventUnion
-
+from shared_schema.agent_events import EditFileEvent
 from zocai_gateway.edits import EditCoordinator, EditPlan, PlannedChange
 from zocai_gateway.fsm import FSM
 from zocai_gateway.stages import Stage

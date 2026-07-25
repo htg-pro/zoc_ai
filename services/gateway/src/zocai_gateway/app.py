@@ -67,6 +67,8 @@ from zocai_gateway.auth import (
 )
 from zocai_gateway.benchmark import BenchmarkStore, ModelBenchmarker
 from zocai_gateway.context.index_store import IndexPersistence
+from zocai_gateway.context.mcp_host.host import MCPHost
+from zocai_gateway.context.mcp_host.registry import McpToolRegistry
 from zocai_gateway.context_mentions import search_workspace_files
 from zocai_gateway.emit_gate import DiaryMirror, EmitGate
 from zocai_gateway.event_bus import (
@@ -81,12 +83,15 @@ from zocai_gateway.memory.hermes_evolution import HermesEvolution
 from zocai_gateway.memory.matrix import MemoryMatrix
 from zocai_gateway.memory.state_wrapper import StateWrapperStore
 from zocai_gateway.mode_router import AgentRunRequest, ExecutionPath, Mode, ModeRouter
+from zocai_gateway.permissions import build_permission_gate, config_from_mapping
 from zocai_gateway.routes.completions import (
     CompletionCache,
     CompletionRequest,
     stream_completion_events,
 )
+from zocai_gateway.routes.inline import InlineEditRequest, stream_inline_edit_events
 from zocai_gateway.routes.lsp import proxy_lsp
+from zocai_gateway.routes.mcp import create_mcp_router
 from zocai_gateway.run_pipeline import (
     AgentBrain,
     ApplyStrategy,
@@ -225,9 +230,7 @@ class _Run:
         "run_id",
     )
 
-    def __init__(
-        self, run_id: str, path: ExecutionPath, diary: DiaryMirror | None = None
-    ) -> None:
+    def __init__(self, run_id: str, path: ExecutionPath, diary: DiaryMirror | None = None) -> None:
         self.run_id = run_id
         self.path = path
         self.queue: asyncio.Queue[dict[str, object] | None] = asyncio.Queue()
@@ -335,15 +338,11 @@ class _Run:
             self.decisions.append(req)
             self._decision_condition.notify_all()
 
-    def wait_for_review_decision(
-        self, timeout: float | None = None
-    ) -> DecisionRequest | None:
+    def wait_for_review_decision(self, timeout: float | None = None) -> DecisionRequest | None:
         """Block until the next unconsumed review decision lands."""
         return self._wait_for_decision("review", timeout)
 
-    def wait_for_approval_decision(
-        self, timeout: float | None = None
-    ) -> DecisionRequest | None:
+    def wait_for_approval_decision(self, timeout: float | None = None) -> DecisionRequest | None:
         """Block until the next unconsumed undeclared-write decision lands."""
         return self._wait_for_decision("approval", timeout)
 
@@ -475,9 +474,7 @@ class SessionRegistry:
         session = self._sessions.get(session_id)
         if session is None:
             return None
-        update: dict[str, object] = {
-            "updated_at": datetime.now(UTC).replace(tzinfo=None)
-        }
+        update: dict[str, object] = {"updated_at": datetime.now(UTC).replace(tzinfo=None)}
         if req.title is not None:
             update["title"] = req.title
         if req.provider is not None:
@@ -605,9 +602,7 @@ class TerminalProcess:
                     break
                 if not chunk:
                     break
-                self._events.put(
-                    {"type": "data", "chunk": chunk.decode(errors="replace")}
-                )
+                self._events.put({"type": "data", "chunk": chunk.decode(errors="replace")})
         finally:
             pid = self._pid
             if pid is not None:
@@ -631,9 +626,7 @@ class TerminalProcess:
                 chunk = proc.stdout.read(4096)
                 if not chunk:
                     break
-                self._events.put(
-                    {"type": "data", "chunk": chunk.decode(errors="replace")}
-                )
+                self._events.put({"type": "data", "chunk": chunk.decode(errors="replace")})
         finally:
             self._finish(proc.wait())
 
@@ -695,9 +688,7 @@ async def _event_stream(
     try:
         while True:
             try:
-                item = await asyncio.wait_for(
-                    run.queue.get(), timeout=queue_timeout_seconds
-                )
+                item = await asyncio.wait_for(run.queue.get(), timeout=queue_timeout_seconds)
             except TimeoutError:
                 message = "SSE stream timed out waiting for gateway events"
                 yield {
@@ -736,6 +727,8 @@ def create_app(
     benchmarker: ModelBenchmarker | None = None,
     workspace_indexer: WorkspaceIndexer | None = None,
     drive: bool = True,
+    start_mcp: bool = False,
+    mcp_user_config_path: Path | str | None = None,
 ) -> FastAPI:
     """Create and configure the gateway FastAPI application.
 
@@ -766,6 +759,10 @@ def create_app(
         workspace_indexer: Optional session-scoped workspace index service.
         drive: When ``True`` (default) an accepted run is driven end to end
             through the composed pipeline so its events stream over the bus.
+        start_mcp: Start enabled stdio MCP definitions during application
+            lifespan. The production launcher enables this; tests default off.
+        mcp_user_config_path: Optional user-scoped ``mcp.json`` document merged
+            below the workspace definition and above bundled defaults.
     """
     router = ModeRouter()
 
@@ -796,14 +793,26 @@ def create_app(
     # Layer 5: a single Evolution_Engine records verified-run trajectories (R12).
     engine = evolution if evolution is not None else EvolutionEngine()
     active_benchmarker = benchmarker or ModelBenchmarker(BenchmarkStore())
-    active_workspace_indexer = workspace_indexer or WorkspaceIndexer(
-        persistence=IndexPersistence()
-    )
+    active_workspace_indexer = workspace_indexer or WorkspaceIndexer(persistence=IndexPersistence())
     event_bus = GatewayEventBus()
     unsubscribe_indexer = event_bus.subscribe(
         FS_CHANGED_TOPIC, active_workspace_indexer.handle_fs_changed
     )
     run_tasks: set[asyncio.Task[None]] = set()
+
+    # Part 4 (§4.1): the generic MCP host. ``configure()`` seeds server states
+    # from MCP_Config without spawning; enabled stdio servers are started only
+    # when ``start_mcp`` is set (the desktop runtime), so tests never spawn.
+    mcp_workspace_config = (
+        resolved_root / ".zoc" / "mcp.json" if resolved_root is not None else None
+    )
+    mcp_host = MCPHost(
+        workspace_root=str(resolved_root) if resolved_root is not None else ".",
+        user_config_path=mcp_user_config_path,
+        workspace_config_path=mcp_workspace_config,
+        registry=McpToolRegistry(),
+    )
+    mcp_host.configure()
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
@@ -813,6 +822,8 @@ def create_app(
                 diary_worker.start()
             if hermes is not None:
                 hermes.start()
+            if start_mcp:
+                await mcp_host.load()
             yield
         finally:
             for task in tuple(run_tasks):
@@ -822,6 +833,7 @@ def create_app(
                 if run_tasks:
                     await asyncio.gather(*run_tasks, return_exceptions=True)
                 await active_workspace_indexer.close()
+                await mcp_host.aclose()
             finally:
                 if hermes is not None:
                     hermes.stop()
@@ -866,6 +878,11 @@ def create_app(
     # registries); the completions route reads/writes it (R14).
     completion_cache = CompletionCache()
     app.state.completion_cache = completion_cache
+
+    # Part 4: publish the MCP host and mount its admitted control routes on the
+    # existing listener (no new interface, R10.5).
+    app.state.mcp_host = mcp_host
+    app.include_router(create_mcp_router(mcp_host))
 
     run_root = str(resolved_root) if resolved_root is not None else "."
     diary_sink = diary.append if diary is not None else None
@@ -916,9 +933,7 @@ def create_app(
                         break
                 if event_task in done:
                     event = event_task.result()
-                    await websocket.send_json(
-                        event.model_dump(mode="json", by_alias=True)
-                    )
+                    await websocket.send_json(event.model_dump(mode="json", by_alias=True))
         except (asyncio.CancelledError, WebSocketDisconnect, RuntimeError):
             pass
         finally:
@@ -953,9 +968,12 @@ def create_app(
         handler. The stream fails quiet: any model outcome terminates with a
         single ``done`` event and no error frame (R16).
         """
-        return EventSourceResponse(
-            stream_completion_events(req, cache=completion_cache)
-        )
+        return EventSourceResponse(stream_completion_events(req, cache=completion_cache))
+
+    @app.post("/v1/agent/inline-edit", dependencies=[Depends(require_admission)])
+    async def inline_edit(req: InlineEditRequest) -> EventSourceResponse:
+        """Stream a Cmd+K inline edit as SSE (§8.2); admission-gated, fails quiet."""
+        return EventSourceResponse(stream_inline_edit_events(req))
 
     @app.get(
         "/v1/model-benchmarks",
@@ -1017,9 +1035,7 @@ def create_app(
         """Create a session and initialize its semantic index policy."""
         session = sessions.create(req)
         try:
-            await active_workspace_indexer.open_workspace(
-                str(session.id), session.workspace_root
-            )
+            await active_workspace_indexer.open_workspace(str(session.id), session.workspace_root)
         except ValueError as exc:
             sessions.delete(str(session.id))
             raise HTTPException(
@@ -1298,7 +1314,14 @@ def create_app(
                 status_code=status.HTTP_409_CONFLICT,
                 detail=str(exc),
             ) from exc
-        run_workspace_root = req.workspace_root or run_root
+        # A desktop sidecar is launched with an authoritative workspace root.
+        # Never let a compromised renderer redirect tools to another directory;
+        # request roots remain available only for root-less test/web instances.
+        run_workspace_root = (
+            str(resolved_root.resolve())
+            if resolved_root is not None
+            else (req.workspace_root or run_root)
+        )
         logger.info(
             "agent run accepted run_id=%s mode=%s provider=%s model=%s base_url=%s",
             run.run_id,
@@ -1314,14 +1337,15 @@ def create_app(
         # Injected brains (tests) keep the no-op matcher / single-pass default so
         # their deterministic runs are unchanged.
         live_run = brain is None
-        run_rag_matcher = (
-            default_workspace_rag_matcher(run_workspace_root) if live_run else None
-        )
-        run_apply_strategy = (
-            ApplyStrategy.REACT if live_run else ApplyStrategy.SINGLE_PASS
-        )
+        run_rag_matcher = default_workspace_rag_matcher(run_workspace_root) if live_run else None
+        run_apply_strategy = ApplyStrategy.REACT if live_run else ApplyStrategy.SINGLE_PASS
         if drive:
+
             async def drive_run() -> None:
+                mcp_loop = asyncio.get_running_loop()
+                run_permission = build_permission_gate(
+                    config_from_mapping(req.permission), run_workspace_root
+                )
                 try:
                     await asyncio.wait_for(
                         asyncio.to_thread(
@@ -1342,13 +1366,15 @@ def create_app(
                             workspace_indexer=active_workspace_indexer,
                             index_session_id=run.run_id,
                             apply_strategy=run_apply_strategy,
+                            mcp_host=mcp_host,
+                            mcp_loop=mcp_loop,
+                            check_permission=run_permission,
                         ),
                         timeout=resolved_settings.run_timeout_seconds,
                     )
                 except TimeoutError:
                     message = (
-                        "agent run exceeded "
-                        f"{resolved_settings.run_timeout_seconds:g}s timeout"
+                        f"agent run exceeded {resolved_settings.run_timeout_seconds:g}s timeout"
                     )
                     logger.warning("run %s timed out", run.run_id)
                     run.enqueue_error(message)

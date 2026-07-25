@@ -35,6 +35,7 @@ import os
 import threading
 import time
 from collections.abc import Callable, Mapping, Sequence
+from contextlib import suppress
 from dataclasses import dataclass, field
 from pathlib import Path
 from types import TracebackType
@@ -405,11 +406,9 @@ class HermesEvolution:
         immediately rather than waiting out the poll interval.
         """
         while not self._stop_event.is_set():
-            try:
+            # Disk hiccups must not kill the loop; the next poll retries.
+            with suppress(OSError):
                 self.run_once()
-            except OSError:
-                # Disk hiccups must not kill the loop; the next poll retries.
-                pass
             self._stop_event.wait(self._poll_interval)
 
     def __enter__(self) -> HermesEvolution:

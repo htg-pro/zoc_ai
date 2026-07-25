@@ -27,7 +27,6 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import pytest
-
 from zocai_gateway.context.mcp_gateway import (
     WEB_SEARCH_TOOL,
     MCPGateway,
@@ -40,7 +39,6 @@ from zocai_gateway.context.shell_fs import (
     ShellSpawner,
 )
 from zocai_gateway.mode_router import Mode
-
 
 # --------------------------------------------------------------------------- #
 # A stub web-search worker + a knowledge-cutoff trigger, modelling the

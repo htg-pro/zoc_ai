@@ -12,8 +12,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 
-from shared_schema.agent_events import DoneEvent, IntentEvent, ThinkingEvent
-
+from shared_schema.agent_events import DoneEvent, ThinkingEvent
 from zocai_gateway.emit_gate import EmitGate
 
 

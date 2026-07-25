@@ -123,6 +123,34 @@ describe("inline-completions cancellation/stale discard (Property 9)", () => {
       { numRuns: 200 },
     );
   });
+  it("aborts an in-flight request immediately when another keystroke arrives", () => {
+    vi.useFakeTimers();
+    try {
+      const calls: Captured[] = [];
+      const stream = vi.fn(
+        (_body: CompletionRequestBody, onToken: (c: string) => void, signal: AbortSignal) => {
+          calls.push({ onToken, signal });
+          return new Promise<void>(() => {});
+        },
+      );
+      const c = createInlineCompletionController({ streamCompletion: stream });
+
+      c.request(win("a", ""), { automatic: false });
+      calls[0].onToken("stale");
+      expect(c.currentText()).toBe("stale");
+
+      c.request(win("ab", ""), { automatic: true });
+      expect(calls[0].signal.aborted).toBe(true);
+      expect(c.currentText()).toBe("");
+      expect(stream).toHaveBeenCalledTimes(1);
+
+      vi.advanceTimersByTime(DEFAULT_DEBOUNCE_MS);
+      expect(stream).toHaveBeenCalledTimes(2);
+      c.dispose();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });
 
 describe("inline-completions ghost accumulation (Property 10)", () => {

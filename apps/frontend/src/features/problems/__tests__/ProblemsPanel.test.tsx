@@ -40,6 +40,34 @@ describe("ProblemsPanel coexistence (R2.6)", () => {
     expect(screen.getByText(/pyright/)).toBeInTheDocument();
     expect(screen.getByText(/typescript/)).toBeInTheDocument();
   });
+
+  it("groups each file by severity in error-to-hint order", () => {
+    useApp.setState({
+      workspaceRoot: "/ws",
+      openFile: vi.fn(async () => {}),
+      diagnostics: {
+        mixed: [
+          { source: "lint", file: "/ws/src/app.ts", line: 1, column: 1, severity: "hint", message: "hint item" },
+          { source: "lint", file: "/ws/src/app.ts", line: 2, column: 1, severity: "warning", message: "warning item" },
+          { source: "lint", file: "/ws/src/app.ts", line: 3, column: 1, severity: "info", message: "info item" },
+          { source: "lint", file: "/ws/src/app.ts", line: 4, column: 1, severity: "error", message: "error item" },
+        ],
+      },
+    });
+    const { container } = render(<ProblemsPanel />);
+
+    const groups = [...container.querySelectorAll<HTMLElement>("[data-severity-group]")];
+    expect(groups.map((group) => group.dataset.severityGroup)).toEqual([
+      "error",
+      "warning",
+      "info",
+      "hint",
+    ]);
+    expect(screen.getByRole("group", { name: "Errors (1)" })).toHaveTextContent("error item");
+    expect(screen.getByRole("group", { name: "Warnings (1)" })).toHaveTextContent("warning item");
+    expect(screen.getByRole("group", { name: "Information (1)" })).toHaveTextContent("info item");
+    expect(screen.getByRole("group", { name: "Hints (1)" })).toHaveTextContent("hint item");
+  });
 });
 
 describe("ProblemsPanel navigation (R3.1–R3.4)", () => {

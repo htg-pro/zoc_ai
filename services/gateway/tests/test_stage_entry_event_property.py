@@ -51,7 +51,6 @@ from shared_schema.agent_events import (
     SummaryEvent,
     ThinkingEvent,
 )
-
 from zocai_gateway.fsm import FSM
 from zocai_gateway.stages import Stage
 
@@ -136,7 +135,7 @@ def test_every_entered_stage_emits_one_conforming_naming_event(
     assert len(recorded) == len(entered)
     assert [e.seq for e in recorded] == list(range(len(entered)))
 
-    for event, stage in zip(recorded, entered):
+    for event, stage in zip(recorded, entered, strict=False):
         # Conforms to the shared Event_Contract (R3.3 "conforming to the
         # Event_Contract"): the emit gate's validation entrypoint accepts it.
         AgentEventModel.model_validate(event.model_dump(by_alias=True))

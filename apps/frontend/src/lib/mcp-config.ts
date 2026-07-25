@@ -140,3 +140,49 @@ export function loadMcpServers(
 export function isToolAutoApproved(server: McpServer, toolName: string): boolean {
   return server.autoApprove.includes(toolName);
 }
+
+
+/** Serialize a normalized server back to its raw `mcpServers` entry form. */
+export function serializeMcpServer(server: McpServer): Record<string, unknown> {
+  const raw: Record<string, unknown> = {};
+  if (server.transport === "stdio") {
+    raw.command = server.command ?? "";
+    if (server.args.length > 0) raw.args = server.args;
+  } else {
+    raw.url = server.url ?? "";
+    raw.type = server.transport;
+  }
+  if (Object.keys(server.env).length > 0) raw.env = server.env;
+  if (server.autoApprove.length > 0) raw.autoApprove = server.autoApprove;
+  if (server.disabled) raw.disabled = true;
+  return raw;
+}
+
+/**
+ * Upsert a single server into the workspace config text, replacing only that
+ * entry and preserving every other workspace entry. Editing a user-scoped
+ * definition therefore writes a complete workspace override with the same id
+ * without touching user config (only the workspace text is produced here).
+ */
+export function upsertWorkspaceServer(
+  workspaceText: string | null,
+  server: McpServer,
+): string {
+  let doc: Record<string, unknown> = {};
+  if (workspaceText) {
+    try {
+      const parsed: unknown = JSON.parse(stripJsonComments(workspaceText));
+      if (parsed && typeof parsed === "object") doc = parsed as Record<string, unknown>;
+    } catch {
+      doc = {};
+    }
+  }
+  const existing = doc.mcpServers;
+  const servers: Record<string, unknown> =
+    existing && typeof existing === "object"
+      ? { ...(existing as Record<string, unknown>) }
+      : {};
+  servers[server.id] = serializeMcpServer(server);
+  doc.mcpServers = servers;
+  return JSON.stringify(doc, null, 2);
+}

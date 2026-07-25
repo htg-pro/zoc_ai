@@ -26,7 +26,6 @@ from __future__ import annotations
 
 from hypothesis import given, settings
 from hypothesis import strategies as st
-
 from zocai_gateway.memory import LOG_MAX_CHARS, FailureRecord
 
 # Logs spanning the interesting regime around the cap: well below, around the

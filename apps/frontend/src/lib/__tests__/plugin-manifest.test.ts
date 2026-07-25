@@ -87,3 +87,15 @@ describe("parsePluginManifest", () => {
     expect(parsePluginManifest("[]").errors.length).toBeGreaterThan(0);
   });
 });
+
+
+it("preserves an optional main entrypoint", () => {
+  const parsed = parsePluginManifest({
+    id: "entry.plugin",
+    name: "Entry",
+    version: "1.0.0",
+    main: "dist/index.js",
+    contributes: {},
+  });
+  expect(parsed.manifest?.main).toBe("dist/index.js");
+});

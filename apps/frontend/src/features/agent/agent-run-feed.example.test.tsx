@@ -118,7 +118,7 @@ describe("done completion keeps the subscription (R3.6)", () => {
     await waitFor(() => {
       expect(container.querySelector('[data-event-type="done"]')).not.toBeNull();
     });
-    expect(screen.getByText("Done")).toBeInTheDocument();
+    expect(screen.getByText("Completed")).toBeInTheDocument();
 
     // A LATE event for the same run still arrives and is appended — the feed
     // keeps monitoring after `done` (R3.6).

@@ -19,15 +19,14 @@ import itertools
 from pathlib import Path
 
 from shared_schema.agent_events import (
+    AgentEvent as AgentEventUnion,
+)
+from shared_schema.agent_events import (
     AgentEventModel,
     CommandEvent,
     EditFileEvent,
     ThinkingEvent,
 )
-from shared_schema.agent_events import (
-    AgentEvent as AgentEventUnion,
-)
-
 from zocai_gateway.edits import EditCoordinator, EditPlan, PlannedChange
 from zocai_gateway.toolsets import FullToolset
 

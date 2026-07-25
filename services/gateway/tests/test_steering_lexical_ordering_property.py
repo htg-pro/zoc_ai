@@ -25,7 +25,6 @@ from pathlib import Path
 
 from hypothesis import given, settings
 from hypothesis import strategies as st
-
 from zocai_gateway.context.steering_compiler import compile_steering
 
 # Safe, case-sensitive-distinct file-name characters. Restricting the alphabet

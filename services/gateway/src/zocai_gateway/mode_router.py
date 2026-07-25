@@ -46,22 +46,22 @@ from zocai_gateway.toolsets import (
 )
 
 __all__ = [
-    "Mode",
-    "ContextFileReference",
-    "AgentRunRequest",
-    "ExecutionPath",
-    "AskPath",
-    "AgentPath",
-    "ModeRouter",
-    "AskContext",
-    "AskResponse",
-    "SwitchToAgentMessage",
-    "AskError",
-    "AskResult",
-    "AskGenerator",
     "SWITCH_TO_AGENT_MESSAGE",
-    "is_edit_request",
+    "AgentPath",
+    "AgentRunRequest",
+    "AskContext",
+    "AskError",
+    "AskGenerator",
+    "AskPath",
+    "AskResponse",
+    "AskResult",
+    "ContextFileReference",
+    "ExecutionPath",
+    "Mode",
+    "ModeRouter",
+    "SwitchToAgentMessage",
     "build_ask_context",
+    "is_edit_request",
 ]
 
 
@@ -116,6 +116,8 @@ class AgentRunRequest(BaseModel):
     top_k: int | None = Field(default=None, alias="topK")
     repeat_penalty: float | None = Field(default=None, alias="repeatPenalty")
     max_tokens: int | None = Field(default=None, alias="maxTokens")
+    #: Frontend PermissionConfig (camelCase) used to gate agent tools (Part 7.1).
+    permission: dict[str, object] | None = None
 
 
 # ── Ask-path execution (R2.3–R2.6) ──────────────────────────────────────────

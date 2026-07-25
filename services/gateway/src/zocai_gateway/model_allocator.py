@@ -45,14 +45,14 @@ from zocai_gateway.model_interface import (
 )
 
 __all__ = [
+    "FALLBACK_REASON_UNAVAILABLE",
     "Allocation",
+    "AllocationAborted",
     "AllocationError",
     "AllocationErrorKind",
-    "AllocationAborted",
-    "TierInitError",
     "ContextAllocationError",
     "ModelAllocator",
-    "FALLBACK_REASON_UNAVAILABLE",
+    "TierInitError",
 ]
 
 # The single structured reason recorded when the R1.6 fallback fires because

@@ -13,11 +13,10 @@ from collections.abc import Sequence
 from pathlib import Path
 
 import pytest
-
 from zocai_gateway.context.rag_matcher import (
-    BM25Index,
     MAX_FRAGMENTS,
     RELEVANCE_THRESHOLD,
+    BM25Index,
     FragmentSource,
     OpenBuffer,
     RagFragment,

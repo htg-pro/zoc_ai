@@ -509,12 +509,9 @@ _TOOL_PROTOCOL_INSTRUCTIONS = (
 )
 
 
-def _tool_protocol_system_prompt(
-    system_prompt: str | None, tools: Sequence[ToolSpec]
-) -> str:
+def _tool_protocol_system_prompt(system_prompt: str | None, tools: Sequence[ToolSpec]) -> str:
     tool_lines = [
-        f"- {tool.name}: {tool.description} "
-        f"(arguments schema: {json.dumps(dict(tool.parameters))})"
+        f"- {tool.name}: {tool.description} (arguments schema: {json.dumps(dict(tool.parameters))})"
         for tool in tools
     ]
     parts = [
@@ -619,7 +616,9 @@ def _safe_json_object(raw: object) -> dict[str, Any]:
     return {}
 
 
-def _map_openai_finish(raw: object, has_tool_calls: bool) -> Literal["stop", "tool_calls", "length", "error"]:
+def _map_openai_finish(
+    raw: object, has_tool_calls: bool
+) -> Literal["stop", "tool_calls", "length", "error"]:
     if raw in ("stop", "tool_calls", "length"):
         return raw
     if has_tool_calls:
@@ -627,7 +626,9 @@ def _map_openai_finish(raw: object, has_tool_calls: bool) -> Literal["stop", "to
     return "stop"
 
 
-def _map_anthropic_stop(raw: object, has_tool_calls: bool) -> Literal["stop", "tool_calls", "length", "error"]:
+def _map_anthropic_stop(
+    raw: object, has_tool_calls: bool
+) -> Literal["stop", "tool_calls", "length", "error"]:
     if raw == "tool_use":
         return "tool_calls"
     if raw == "max_tokens":
@@ -930,12 +931,15 @@ def _stream_json_lines(
 ) -> Iterator[dict[str, Any]]:
     httpx = _import_httpx()
     try:
-        with httpx.Client(timeout=_http_timeout(timeout)) as client, client.stream(
-            "POST",
-            url,
-            headers=dict(headers),
-            json=dict(payload),
-        ) as response:
+        with (
+            httpx.Client(timeout=_http_timeout(timeout)) as client,
+            client.stream(
+                "POST",
+                url,
+                headers=dict(headers),
+                json=dict(payload),
+            ) as response,
+        ):
             if response.status_code >= 400:
                 detail = response.read().decode(errors="replace").strip()
                 detail = detail.replace("\n", " ")[:500]
@@ -946,6 +950,8 @@ def _stream_json_lines(
                     break
                 if frame is None:
                     continue
+                if not isinstance(frame, dict):
+                    raise ModelRuntimeError("provider returned an invalid stream sentinel")
                 yield frame
     except httpx.HTTPError as exc:
         raise ModelRuntimeError(str(exc)) from exc

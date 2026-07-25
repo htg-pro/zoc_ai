@@ -18,7 +18,6 @@ import sys
 from pathlib import Path
 
 import pytest
-
 from zocai_gateway.context.shell_fs import (
     FSReadAdapter,
     ShellExecutionNotPermitted,
@@ -26,7 +25,6 @@ from zocai_gateway.context.shell_fs import (
 )
 from zocai_gateway.mode_router import Mode
 from zocai_gateway.toolsets import ReadOnlyViolation
-
 
 # ── FS read adapter: reads available in both modes (R8.6) ────────────────────
 

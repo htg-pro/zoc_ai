@@ -22,11 +22,10 @@ from shared_schema.agent_events import (
     SummaryEvent,
     ThinkingEvent,
 )
-
 from zocai_gateway.fsm import (
+    FSM,
     LEGAL,
     AmbiguousTransitionError,
-    FSM,
     IllegalTransitionError,
     default_stage_event_factory,
 )
@@ -64,7 +63,7 @@ def test_fsm_starts_at_initial_stage() -> None:
 
 
 def test_initial_stage_emits_a_conforming_stage_event() -> None:
-    fsm, recorded = make_fsm()
+    _fsm, recorded = make_fsm()
     assert len(recorded) == 1
     # Every emitted event validates against the Event_Contract (R3.3).
     AgentEventModel.model_validate(recorded[0].model_dump(by_alias=True))

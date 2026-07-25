@@ -41,7 +41,6 @@ from collections.abc import Sequence
 
 from hypothesis import given, settings
 from hypothesis import strategies as st
-
 from zocai_gateway.context.mcp_gateway import (
     MAX_WEB_DOCUMENTS,
     WEB_SEARCH_TOOL,

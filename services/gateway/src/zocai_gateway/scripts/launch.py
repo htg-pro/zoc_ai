@@ -30,6 +30,7 @@ carry the workspace root, so it is resolved here.
 from __future__ import annotations
 
 import asyncio
+import importlib
 import os
 import socket
 import sys
@@ -45,7 +46,9 @@ __all__ = [
     "WORKSPACE_ENV_VAR",
     "bind_loopback_or_configured",
     "main",
+    "resolve_user_mcp_config_path",
     "resolve_workspace_root",
+    "run_bundled_mcp_server",
 ]
 
 #: Stdout prefix the Tauri supervisor matches to capture the sidecar port. Must
@@ -55,6 +58,9 @@ READY_PREFIX = "ZOC_STUDIO_AGENT_PORT="
 #: Optional environment variable naming the workspace the Gateway's memory
 #: matrix / diary workers run against. Unset ⇒ ``create_app(workspace_root=None)``.
 WORKSPACE_ENV_VAR = "ZOC_STUDIO_WORKSPACE"
+USER_MCP_CONFIG_ENV_VAR = "ZOC_STUDIO_MCP_USER_CONFIG"
+MCP_SERVER_FLAG = "--mcp-server"
+_BUNDLED_MCP_SERVERS = frozenset({"web_search", "docs", "git_history"})
 
 HELP_TEXT = """zoc-studio-agent (Zoc AI Gateway sidecar)
 
@@ -67,6 +73,7 @@ Configuration is read from environment variables:
   ZOC_STUDIO_GATEWAY_PORT   bind port (default 0 = OS-assigned free port)
   ZOC_STUDIO_GATEWAY_TOKEN  shared-secret credential (required for non-loopback)
   ZOC_STUDIO_WORKSPACE      optional workspace root for the memory matrix
+  ZOC_STUDIO_MCP_USER_CONFIG optional user-scoped mcp.json (default ~/.zoc/mcp.json)
 """
 
 
@@ -79,6 +86,13 @@ def resolve_workspace_root(env: Mapping[str, str] | None = None) -> Path | None:
     source = os.environ if env is None else env
     raw = source.get(WORKSPACE_ENV_VAR)
     return Path(raw) if raw else None
+
+
+def resolve_user_mcp_config_path(env: Mapping[str, str] | None = None) -> Path:
+    """Return the user-scoped MCP document consumed by the runtime host."""
+    source = os.environ if env is None else env
+    override = source.get(USER_MCP_CONFIG_ENV_VAR)
+    return Path(override).expanduser() if override else Path.home() / ".zoc" / "mcp.json"
 
 
 def bind_loopback_or_configured(settings: GatewaySettings) -> socket.socket:
@@ -97,6 +111,25 @@ def bind_loopback_or_configured(settings: GatewaySettings) -> socket.socket:
     return sock
 
 
+def run_bundled_mcp_server(name: str) -> int:
+    """Run one bundled stdio MCP server inside the frozen sidecar executable.
+
+    PyInstaller's ``sys.executable`` is the one-file sidecar, not a general
+    Python interpreter, so child definitions use ``--mcp-server <name>`` in a
+    frozen build. Only shipped module names are accepted.
+    """
+    if name not in _BUNDLED_MCP_SERVERS:
+        print(f"unknown bundled MCP server: {name}", file=sys.stderr)
+        return 2
+    module = importlib.import_module(f"mcp_servers.{name}")
+    entrypoint = getattr(module, "main", None)
+    if not callable(entrypoint):
+        print(f"bundled MCP server has no main(): {name}", file=sys.stderr)
+        return 2
+    entrypoint()
+    return 0
+
+
 def main() -> int:
     """Launch the Gateway sidecar; return a process exit code.
 
@@ -104,7 +137,13 @@ def main() -> int:
     bundle smoke test (``zoc-studio-agent --help``) stays fast and side-effect
     free.
     """
-    if any(arg in {"-h", "--help"} for arg in sys.argv[1:]):
+    args = sys.argv[1:]
+    if args and args[0] == MCP_SERVER_FLAG:
+        if len(args) != 2:
+            print("usage: zoc-studio-agent --mcp-server <web_search|docs|git_history>", file=sys.stderr)
+            return 2
+        return run_bundled_mcp_server(args[1])
+    if any(arg in {"-h", "--help"} for arg in args):
         print(HELP_TEXT, end="")
         return 0
 
@@ -126,7 +165,12 @@ async def _serve(
 ) -> int:
     from zocai_gateway.app import create_app
 
-    app = create_app(settings=settings, workspace_root=workspace_root)
+    app = create_app(
+        settings=settings,
+        workspace_root=workspace_root,
+        start_mcp=True,
+        mcp_user_config_path=resolve_user_mcp_config_path(),
+    )
     config = uvicorn.Config(app, host=settings.host, port=port, log_level="info")
     server = uvicorn.Server(config)
     serve_task = asyncio.create_task(server.serve(sockets=[sock]))

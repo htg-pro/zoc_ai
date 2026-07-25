@@ -36,9 +36,7 @@ import tomllib
 from pathlib import Path
 
 import pytest
-
 from zocai_gateway.memory.matrix import MemoryMatrix
-
 
 # ---------------------------------------------------------------------------
 # Workspace discovery

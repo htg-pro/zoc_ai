@@ -23,12 +23,18 @@ interface Instance {
   backendId: string | null;
   observer: ResizeObserver | null;
   mockBuf: string;
+  output: string;
 }
 
 type ExitCb = (id: string, code: number | null) => void;
 type OpenLinkCb = (path: string, line?: number) => void;
 
 const instances = new Map<string, Instance>();
+const pendingCreations = new Map<string, Promise<void>>();
+const terminalOutputListeners = new Map<string, Set<() => void>>();
+const MAX_CAPTURED_OUTPUT = 64 * 1024;
+const ANSI_OSC_RE = new RegExp("\\x1B\\][^\\x07]*(?:\\x07|\\x1B\\\\)", "g");
+const ANSI_CSI_RE = new RegExp("\\x1B\\[[0-?]*[ -/]*[@-~]", "g");
 let onExit: ExitCb = () => undefined;
 let onOpenLink: OpenLinkCb = () => undefined;
 
@@ -41,8 +47,47 @@ export function hasTerminal(id: string): boolean {
   return instances.has(id);
 }
 
+function appendCapturedOutput(instance: Instance, data: string): void {
+  const plain = data.replace(ANSI_OSC_RE, "").replace(ANSI_CSI_RE, "").replace(/\u0000/g, "");
+  if (!plain) return;
+  instance.output = (instance.output + plain).slice(-MAX_CAPTURED_OUTPUT);
+  for (const listener of terminalOutputListeners.get(instance.id) ?? []) listener();
+}
+
+/** Bounded plain-text output used by terminal annotation affordances. */
+export function getTerminalOutput(id: string): string {
+  return instances.get(id)?.output ?? "";
+}
+
+export function subscribeTerminalOutput(id: string, listener: () => void): () => void {
+  const listeners = terminalOutputListeners.get(id) ?? new Set<() => void>();
+  listeners.add(listener);
+  terminalOutputListeners.set(id, listeners);
+  return () => {
+    listeners.delete(listener);
+    if (listeners.size === 0) terminalOutputListeners.delete(id);
+  };
+}
+
 /** Create the xterm + PTY for `id` if it doesn't exist yet (idempotent). */
 export async function createTerminal(
+  id: string,
+  profile: TerminalProfile,
+  cwd?: string | null,
+): Promise<void> {
+  if (instances.has(id)) return;
+  const pending = pendingCreations.get(id);
+  if (pending) return pending;
+  const creation = createTerminalInstance(id, profile, cwd);
+  pendingCreations.set(id, creation);
+  try {
+    await creation;
+  } finally {
+    if (pendingCreations.get(id) === creation) pendingCreations.delete(id);
+  }
+}
+
+async function createTerminalInstance(
   id: string,
   profile: TerminalProfile,
   cwd?: string | null,
@@ -74,6 +119,7 @@ export async function createTerminal(
     backendId: null,
     observer: null,
     mockBuf: "",
+    output: "",
   };
   instances.set(id, inst);
 
@@ -96,9 +142,11 @@ export async function createTerminal(
       if (inst.backendId) void client.writeTerminal(inst.backendId, data).catch(() => undefined);
     });
   } catch (err) {
+    const message = (err as Error).message;
     term.writeln("\x1b[38;5;141m$ \x1b[0m# agent sidecar offline — mock terminal");
-    term.writeln(`\x1b[2m${(err as Error).message}\x1b[0m`);
+    term.writeln(`\x1b[2m${message}\x1b[0m`);
     term.write("\x1b[38;5;141m$ \x1b[0m");
+    appendCapturedOutput(inst, `# agent sidecar offline — mock terminal\n${message}\n`);
     wireMock(inst);
   }
 }
@@ -111,12 +159,18 @@ async function streamInto(
 ): Promise<void> {
   try {
     for await (const ev of client.terminalStream(backendId, signal) as AsyncIterable<TerminalStreamEvent>) {
-      if (ev.type === "data") inst.term.write(ev.chunk);
-      else if (ev.type === "exit") {
+      if (ev.type === "data") {
+        inst.term.write(ev.chunk);
+        appendCapturedOutput(inst, ev.chunk);
+      } else if (ev.type === "exit") {
+        const line = `\r\n[process exited with code ${ev.code ?? "?"}]\r\n`;
         inst.term.write(`\r\n\x1b[2m[process exited with code ${ev.code ?? "?"}]\x1b[0m\r\n`);
+        appendCapturedOutput(inst, line);
         onExit(inst.id, ev.code ?? null);
       } else if (ev.type === "error") {
+        const line = `\r\n[error: ${ev.message}]\r\n`;
         inst.term.write(`\r\n\x1b[31m[error: ${ev.message}]\x1b[0m\r\n`);
+        appendCapturedOutput(inst, line);
       }
     }
   } catch {
@@ -233,6 +287,15 @@ export function clearTerminal(id: string): void {
   instances.get(id)?.term.clear();
 }
 
+/** Write raw text to a terminal's xterm view (used to stream agent
+ *  `run_command` output into the live pane). No-op if the instance is gone. */
+export function writeToTerminal(id: string, data: string): void {
+  const instance = instances.get(id);
+  if (!instance) return;
+  instance.term.write(data);
+  appendCapturedOutput(instance, data);
+}
+
 /** Kill the backend PTY for `id` but keep the xterm (so scrollback stays). */
 export async function killTerminal(id: string): Promise<void> {
   const inst = instances.get(id);
@@ -247,9 +310,12 @@ export async function killTerminal(id: string): Promise<void> {
 
 /** Fully dispose: kill the backend, abort the stream, destroy the xterm. */
 export async function disposeTerminal(id: string): Promise<void> {
+  const pending = pendingCreations.get(id);
+  if (pending) await pending.catch(() => undefined);
   const inst = instances.get(id);
   if (!inst) return;
   instances.delete(id);
+  terminalOutputListeners.delete(id);
   inst.abort?.abort();
   inst.observer?.disconnect();
   if (inst.backendId) {

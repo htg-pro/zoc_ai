@@ -122,6 +122,7 @@ pub fn run() {
             checks::run_check,
             checks::run_task,
             patch::apply_patch,
+            patch::apply_transaction,
             workspace::desktop_config_get,
             workspace::desktop_config_set,
             workspace::set_workspace_root,

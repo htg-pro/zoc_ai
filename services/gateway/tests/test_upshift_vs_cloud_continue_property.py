@@ -35,7 +35,6 @@ from pathlib import Path
 
 from hypothesis import given, settings
 from hypothesis import strategies as st
-
 from zocai_gateway.hot_swap import (
     HotSwapCoordinator,
     HotSwapOutcomeKind,

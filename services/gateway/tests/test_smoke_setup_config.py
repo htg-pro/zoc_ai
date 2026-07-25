@@ -34,7 +34,6 @@ from pathlib import Path
 
 from zocai_gateway.memory.matrix import MemoryMatrix
 
-
 # ---------------------------------------------------------------------------
 # Workspace discovery
 # ---------------------------------------------------------------------------

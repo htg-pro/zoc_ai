@@ -18,6 +18,14 @@ const SEVERITY_ICON: Record<Severity, { Icon: typeof AlertTriangle; className: s
   hint: { Icon: Info, className: "text-muted-foreground" },
 };
 
+const SEVERITY_ORDER: readonly Severity[] = ["error", "warning", "info", "hint"];
+const SEVERITY_LABEL: Record<Severity, string> = {
+  error: "Errors",
+  warning: "Warnings",
+  info: "Information",
+  hint: "Hints",
+};
+
 const CHECKS: { kind: CheckKind; label: string; cwd?: string }[] = [
   { kind: "tsc", label: "tsc", cwd: "apps/frontend" },
   { kind: "eslint", label: "eslint", cwd: "apps/frontend" },
@@ -145,24 +153,49 @@ export function ProblemsPanel() {
                       {items.length}
                     </Badge>
                   </div>
-                  {items.map((d, i) => {
-                    const { Icon, className } = SEVERITY_ICON[d.severity];
+                  {SEVERITY_ORDER.map((severity) => {
+                    const severityItems = items.filter((d) => d.severity === severity);
+                    if (severityItems.length === 0) return null;
+                    const { Icon: SeverityIcon, className: severityClassName } =
+                      SEVERITY_ICON[severity];
+                    const label = SEVERITY_LABEL[severity];
                     return (
-                      <button
-                        key={`${d.line}:${d.column}:${i}`}
-                        type="button"
-                        onClick={() => openAt(d.file, d.line, d.column)}
-                        className="flex w-full items-start gap-2 px-3 py-1 pl-5 text-left hover:bg-accent/40"
+                      <div
+                        key={severity}
+                        role="group"
+                        aria-label={`${label} (${severityItems.length})`}
+                        data-severity-group={severity}
                       >
-                        <Icon className={cn("mt-0.5 h-3.5 w-3.5 shrink-0", className)} />
-                        <span className="min-w-0 flex-1">
-                          <span className="block truncate text-xs text-foreground">{d.message}</span>
-                          <span className="font-mono text-[10px] text-muted-foreground">
-                            {d.source}
-                            {d.code ? `(${d.code})` : ""} · {d.line}:{d.column}
-                          </span>
-                        </span>
-                      </button>
+                        <div className="flex items-center gap-1.5 px-3 py-0.5 pl-5 text-[10px] font-medium uppercase tracking-wide text-muted-foreground/80">
+                          <SeverityIcon
+                            className={cn("h-3 w-3 shrink-0", severityClassName)}
+                            aria-hidden
+                          />
+                          <span>{label}</span>
+                          <span aria-hidden>·</span>
+                          <span>{severityItems.length}</span>
+                        </div>
+                        {severityItems.map((d, i) => {
+                          const { Icon, className } = SEVERITY_ICON[d.severity];
+                          return (
+                            <button
+                              key={`${d.source}:${d.code ?? ""}:${d.line}:${d.column}:${i}`}
+                              type="button"
+                              onClick={() => openAt(d.file, d.line, d.column)}
+                              className="flex w-full items-start gap-2 px-3 py-1 pl-7 text-left hover:bg-accent/40"
+                            >
+                              <Icon className={cn("mt-0.5 h-3.5 w-3.5 shrink-0", className)} />
+                              <span className="min-w-0 flex-1">
+                                <span className="block truncate text-xs text-foreground">{d.message}</span>
+                                <span className="font-mono text-[10px] text-muted-foreground">
+                                  {d.source}
+                                  {d.code ? `(${d.code})` : ""} · {d.line}:{d.column}
+                                </span>
+                              </span>
+                            </button>
+                          );
+                        })}
+                      </div>
                     );
                   })}
                 </div>

@@ -43,7 +43,6 @@ from shared_schema.agent_events import (
     CommandEvent,
     DoneEvent,
 )
-
 from zocai_gateway.fsm import FSM
 from zocai_gateway.stages import Stage
 

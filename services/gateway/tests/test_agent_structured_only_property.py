@@ -43,7 +43,6 @@ from collections.abc import Mapping
 
 from hypothesis import given, settings
 from hypothesis import strategies as st
-
 from zocai_gateway.channel import AgentChannel
 from zocai_gateway.emit_gate import EmitGate
 

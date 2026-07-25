@@ -32,7 +32,6 @@ from __future__ import annotations
 import pytest
 from hypothesis import given, settings
 from hypothesis import strategies as st
-
 from zocai_gateway.hardware_probe import HardwareProfile
 from zocai_gateway.model_allocator import (
     Allocation,
@@ -41,9 +40,9 @@ from zocai_gateway.model_allocator import (
     AllocationErrorKind,
     ContextAllocationError,
     ModelAllocator,
+    TierBringUp,
     TierInitError,
 )
-from zocai_gateway.model_allocator import TierBringUp
 from zocai_gateway.model_interface import ModelInterface, ModelTier
 
 # Maps the injected failure to the exception it raises and the error ``kind``
@@ -57,7 +56,7 @@ _FAILURE_CASES: dict[str, tuple[type[Exception], AllocationErrorKind]] = {
 def _failing_bring_up(exc_type: type[Exception], message: str) -> TierBringUp:
     """A ``bring_up`` step that always fails bringing up the requested tier."""
 
-    def bring_up(tier: ModelTier) -> ModelInterface:  # noqa: ARG001 - signature contract
+    def bring_up(tier: ModelTier) -> ModelInterface:
         if message:
             raise exc_type(ModelTier.LOCAL_SLM, message)
         raise exc_type(ModelTier.LOCAL_SLM)

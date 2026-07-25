@@ -21,14 +21,34 @@ switch-to-Agent handling are wired in task 4.2.
 from __future__ import annotations
 
 import subprocess
+from collections.abc import Mapping
 from pathlib import Path
+from typing import TYPE_CHECKING, Protocol
+
+if TYPE_CHECKING:  # additive MCP seam types (no runtime import cycle)
+    from zocai_gateway.context.mcp_host.models import McpToolRecord, ToolCallOutcome
 
 __all__ = [
     "FullToolset",
+    "McpCallSeam",
     "ReadOnlyToolset",
     "ReadOnlyViolation",
     "Toolset",
 ]
+
+
+class McpCallSeam(Protocol):
+    """The run-bound bridge from :class:`FullToolset` to the generic MCP host.
+
+    Constructed per run in the pipeline with the run's ``(emit, await_decision)``
+    channel; ``proxy`` delegates to ``MCPHost.proxy_tool_call`` (R5.5).
+    """
+
+    def list_tools(self) -> list[McpToolRecord]: ...
+
+    async def proxy(
+        self, namespaced_name: str, arguments: Mapping[str, object]
+    ) -> ToolCallOutcome: ...
 
 
 class ReadOnlyViolation(Exception):
@@ -93,6 +113,34 @@ class FullToolset(Toolset):
     capability (R3.5, R8.9). Every operation is confined to
     ``workspace_root``.
     """
+
+    def __init__(self, workspace_root: Path | str = ".", *, mcp: McpCallSeam | None = None) -> None:
+        super().__init__(workspace_root)
+        self._mcp = mcp
+
+    def mcp_tools(self) -> list[McpToolRecord]:
+        """Aggregated MCP tools exposed to the model, or ``[]`` when no host is
+        attached (additive; native tools are unaffected, R5.1, R5.2, R5.4)."""
+        return self._mcp.list_tools() if self._mcp is not None else []
+
+    async def call_mcp_tool(
+        self, namespaced_name: str, arguments: Mapping[str, object]
+    ) -> ToolCallOutcome:
+        """Invoke an aggregated MCP tool through the run-bound seam (R5.5).
+
+        Returns a typed :class:`ToolCallError` (``unavailable``) when no MCP host
+        is configured, so the call still never raises into the run.
+        """
+        if self._mcp is None:
+            from zocai_gateway.context.mcp_host.models import ToolCallError, ToolCallErrorKind
+
+            return ToolCallError(
+                server_id=None,
+                tool=namespaced_name,
+                kind=ToolCallErrorKind.UNAVAILABLE,
+                reason="no MCP host configured",
+            )
+        return await self._mcp.proxy(namespaced_name, arguments)
 
     def write_file(self, rel_path: Path | str, content: str) -> None:
         """Write ``content`` to a workspace file (R3.5)."""

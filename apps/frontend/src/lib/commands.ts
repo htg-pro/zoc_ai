@@ -28,6 +28,7 @@ export type CommandCategory =
   | "View"
   | "File"
   | "Editor"
+  | "Plugin"
   | "Agent"
   | "Terminal"
   | "Tasks"

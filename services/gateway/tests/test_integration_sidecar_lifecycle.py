@@ -24,9 +24,9 @@ Rust side; they are not reproducible in-process and are out of scope here.
 from __future__ import annotations
 
 import socket
+from types import SimpleNamespace
 
 from fastapi.testclient import TestClient
-
 from zocai_gateway.app import create_app
 from zocai_gateway.scripts import launch
 from zocai_gateway.settings import GatewaySettings
@@ -164,3 +164,26 @@ def test_single_app_factory_and_launch_entrypoint() -> None:
     assert callable(create_app)
     assert callable(launch.main)
     assert callable(launch.bind_loopback_or_configured)
+
+
+def test_frozen_sidecar_dispatches_only_bundled_mcp_servers(monkeypatch) -> None:
+    called: list[str] = []
+
+    def fake_import(name: str) -> SimpleNamespace:
+        called.append(name)
+        return SimpleNamespace(main=lambda: called.append("main"))
+
+    monkeypatch.setattr(launch.importlib, "import_module", fake_import)
+    assert launch.run_bundled_mcp_server("docs") == 0
+    assert called == ["mcp_servers.docs", "main"]
+
+    called.clear()
+    assert launch.run_bundled_mcp_server("arbitrary.module") == 2
+    assert called == []
+
+
+def test_user_mcp_config_path_honors_environment_override() -> None:
+    path = launch.resolve_user_mcp_config_path(
+        {launch.USER_MCP_CONFIG_ENV_VAR: "/tmp/zoc-user-mcp.json"}
+    )
+    assert str(path) == "/tmp/zoc-user-mcp.json"

@@ -89,7 +89,7 @@ class GatewaySettings(BaseModel):
     sse_queue_timeout_seconds: float = Field(default=300.0, gt=0)
 
     @classmethod
-    def from_env(cls, env: Mapping[str, str] | None = None) -> "GatewaySettings":
+    def from_env(cls, env: Mapping[str, str] | None = None) -> GatewaySettings:
         """Build settings from environment variables (falling back to defaults).
 
         Reads :data:`HOST_ENV_VAR`, :data:`PORT_ENV_VAR`, and

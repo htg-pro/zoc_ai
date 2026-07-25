@@ -5,6 +5,7 @@ import {
   getPluginLogs,
   getPlugins,
   installPlugin,
+  registerPluginCommand,
   reportPluginError,
   setPluginEnabled,
   uninstallPlugin,
@@ -37,6 +38,8 @@ const PLUGIN = {
   },
 };
 
+const CODE = "zoc.commands.register('hello.say', () => undefined);";
+
 describe("plugin host", () => {
   beforeEach(() => {
     vi.stubGlobal("localStorage", fakeStorage());
@@ -47,32 +50,45 @@ describe("plugin host", () => {
     __resetPluginHostForTests();
   });
 
-  it("installs a plugin and contributes a command + a view", () => {
-    const errors = installPlugin(PLUGIN, "folder");
+  it("publishes only worker-registered commands while manifest views remain available", () => {
+    const errors = installPlugin(PLUGIN, "folder", CODE);
     expect(errors).toEqual([]);
     expect(getPlugins()).toHaveLength(1);
-    // Command appears in the palette and is runnable.
-    expect(getCommand("hello.say")).toBeDefined();
+    expect(getCommand("hello.say")).toBeUndefined();
+    expect(registerPluginCommand("hello", "hello.say")).toBe(true);
+    expect(getCommand("hello.say")).toMatchObject({ category: "Plugin", icon: "Puzzle" });
     expect(getCommands().some((c) => c.id === "hello.say")).toBe(true);
-    // View is exposed with its owning plugin.
     expect(activeContributedViews()).toEqual([
       expect.objectContaining({ id: "hello.view", name: "Hello", pluginId: "hello" }),
     ]);
   });
 
-  it("disabling a plugin removes its contributed commands + views", () => {
+  it("rejects registrations without worker code or without a manifest declaration", () => {
     installPlugin(PLUGIN);
+    expect(registerPluginCommand("hello", "hello.say")).toBe(false);
+    expect(getCommand("hello.say")).toBeUndefined();
+
+    installPlugin(PLUGIN, "folder", CODE);
+    expect(registerPluginCommand("hello", "other.command")).toBe(false);
+    expect(getCommand("other.command")).toBeUndefined();
+  });
+
+  it("disabling revokes worker commands and re-enable requires re-registration", () => {
+    installPlugin(PLUGIN, "folder", CODE);
+    registerPluginCommand("hello", "hello.say");
     expect(getCommand("hello.say")).toBeDefined();
     setPluginEnabled("hello", false);
     expect(getCommand("hello.say")).toBeUndefined();
     expect(activeContributedViews()).toEqual([]);
-    // Re-enabling restores them.
     setPluginEnabled("hello", true);
+    expect(getCommand("hello.say")).toBeUndefined();
+    expect(registerPluginCommand("hello", "hello.say")).toBe(true);
     expect(getCommand("hello.say")).toBeDefined();
   });
 
   it("isolates a bad manifest: logs an error, leaves others intact", () => {
-    installPlugin(PLUGIN);
+    installPlugin(PLUGIN, "folder", CODE);
+    registerPluginCommand("hello", "hello.say");
     const errors = installPlugin({ name: "broken" }); // no id/version
     expect(errors.length).toBeGreaterThan(0);
     expect(getPlugins()).toHaveLength(1); // the good one survives
@@ -81,7 +97,9 @@ describe("plugin host", () => {
   });
 
   it("reportPluginError disables contributions but keeps the plugin visible", () => {
-    installPlugin(PLUGIN);
+    installPlugin(PLUGIN, "folder", CODE);
+    registerPluginCommand("hello", "hello.say");
+    expect(getCommand("hello.say")).toBeDefined();
     reportPluginError("hello", "activation threw");
     const p = getPlugins().find((x) => x.manifest.id === "hello");
     expect(p?.errored).toBe(true);

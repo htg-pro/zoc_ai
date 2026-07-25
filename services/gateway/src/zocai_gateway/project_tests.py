@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 import re
@@ -219,10 +220,8 @@ def _run_in_pty(root: Path, command: str, timeout_seconds: float) -> tuple[int, 
             if status is not None and not ready:
                 break
     finally:
-        try:
+        with contextlib.suppress(OSError):
             os.close(fd)
-        except OSError:
-            pass
     if status is None:
         try:
             _, status = os.waitpid(pid, 0)
@@ -244,10 +243,8 @@ def _terminate_pty(pid: int) -> None:
         except OSError:
             return
     time.sleep(0.1)
-    try:
+    with contextlib.suppress(OSError):
         os.killpg(pid, signal.SIGKILL)
-    except OSError:
-        pass
 
 
 def _status_exit_code(status: int) -> int:

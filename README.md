@@ -3,7 +3,7 @@
 Local-first agentic coding desktop app — llama.cpp-powered, shipped as a
 Tauri v2 binary with a bundled FastAPI sidecar.
 
-**Version:** see [`VERSION`](./VERSION) (current: `2.0.0`).
+**Version:** see [`VERSION`](./VERSION) (current: `0.0.2`).
 
 ## Architecture
 
@@ -136,28 +136,23 @@ on the host you build from:
 To produce all installers you must run `make release` on each host (or a CI
 matrix). Cross-compiling Tauri bundles between OSes is not supported.
 
-### CI release matrix
+### CI release publishing
 
-[`.github/workflows/release.yml`](./.github/workflows/release.yml) runs the
-release pipeline on `ubuntu-latest`, `macos-latest`, and `windows-latest` in
-parallel. Each job installs Node + pnpm, Python (with PyInstaller via uv),
-Rust, the Tauri CLI, and the platform's Tauri system deps, then runs
-`bash scripts/release.sh`. The per-OS contents of `dist/installers/` are
-uploaded as workflow artifacts (`installers-linux`, `installers-macos`,
-`installers-windows`).
-
-A follow-up `package` job downloads every per-OS `dist/` tree, merges them
-into a single `dist/installers/`, and runs `bash scripts/make_zip.sh` (plus
-`scripts/verify_zip.py`) to publish the combined `zoc-studio-v<version>.zip`.
+[`.github/workflows/release.yml`](./.github/workflows/release.yml) verifies and
+publishes the Linux artifacts committed under `dist/installers/`. It checks
+that the tag matches `VERSION`, requires the `.deb`, `.rpm`, `.tar.gz`, and
+`SHA256SUMS` files, verifies every checksum, and then creates or updates the
+GitHub Release using the repository-scoped `GITHUB_TOKEN`.
 
 Triggers:
 
-- `workflow_dispatch` — build all three OSes, artifacts only.
-- Pull requests that touch the release plumbing — smoke the matrix without
-  publishing.
-- Tag push matching `v*` — the `release` job creates a GitHub Release for
-  that tag and attaches every per-OS installer plus the combined zip
-  (macOS `.app` bundles are zipped before upload).
+- Tag push matching `v*` — publish the committed packages for that tag.
+- `workflow_dispatch` — manually publish an existing tag/version.
+
+Build packages locally with `make release`, generate `SHA256SUMS`, and commit
+the artifacts before pushing the release tag. macOS and Windows installers
+still require native builds on their respective hosts; this Linux publishing
+workflow does not cross-compile them.
 
 ### Code signing & notarization
 

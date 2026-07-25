@@ -105,7 +105,7 @@ STAGE_BUILDS: tuple[StageBuild, ...] = (
 
 def _run_build(stage: StageBuild) -> subprocess.CompletedProcess[str]:
     """Run a real stage build at the workspace root, capturing all output."""
-    return subprocess.run(  # noqa: S603 - argv form, no shell, workspace-confined cwd
+    return subprocess.run(
         list(stage.argv),
         cwd=WORKSPACE_ROOT,
         capture_output=True,

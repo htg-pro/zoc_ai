@@ -58,6 +58,7 @@ class BaseEvent(BaseModel):
 
 # ── Structured event payloads ───────────────────────────────────────────────
 
+
 class IntentEvent(BaseEvent):
     type: Literal["intent"] = "intent"
     text: str
@@ -151,6 +152,7 @@ class CommandEvent(BaseEvent):
     type: Literal["command"] = "command"
     command: str
     command_id: str | None = Field(default=None, alias="commandId")
+    mcp_server_id: str | None = Field(default=None, alias="mcpServerId")  # R12.2 (MCP host)
     status: Literal["queued", "running", "pass", "fail", "skipped"] | None = None
     exit_code: int | None = Field(default=None, alias="exitCode")
     error_tag: str | None = Field(default=None, alias="errorTag")
@@ -226,6 +228,21 @@ class BudgetEvent(BaseEvent):
     recoveries: int = Field(ge=0)
 
 
+PermissionEffect = Literal["allow", "deny", "prompt"]
+PermissionKind = Literal["agent_tool", "terminal", "task", "git", "mcp", "plugin", "fs"]
+
+
+class PermissionEvent(BaseEvent):
+    """One run-scoped permission-engine decision for the Security audit log."""
+
+    type: Literal["permission"] = "permission"
+    kind: PermissionKind
+    name: str
+    target: str | None = None
+    effect: PermissionEffect
+    reason: str
+
+
 class TestResultsEvent(BaseEvent):
     """Result of the project test command run after Agent edits."""
 
@@ -263,6 +280,7 @@ AgentEvent = Annotated[
     | ReviewEvent
     | SummaryEvent
     | ApprovalEvent
+    | PermissionEvent
     | RecoveryAttemptEvent
     | BudgetEvent
     | TestResultsEvent
@@ -295,6 +313,9 @@ __all__ = [
     "IntentEvent",
     "MapFilesEvent",
     "ModelTier",
+    "PermissionEffect",
+    "PermissionEvent",
+    "PermissionKind",
     "PlanEvent",
     "PlanItem",
     "PlanItemStatus",

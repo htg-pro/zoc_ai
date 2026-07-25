@@ -2,9 +2,7 @@ from __future__ import annotations
 
 import pytest
 from pydantic import ValidationError
-
 from shared_schema.agent_events import AgentEventModel
-
 
 TS = "2024-01-01T00:00:00Z"
 

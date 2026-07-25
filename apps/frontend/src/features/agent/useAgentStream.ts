@@ -144,6 +144,7 @@ export const GATEWAY_SSE_EVENT_TYPES = [
   "command",
   "summary",
   "approval",
+  "permission",
   "recovery-attempt",
   "budget",
   "done",

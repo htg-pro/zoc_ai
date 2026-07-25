@@ -14,7 +14,6 @@ The exhaustive property-based checks for tier selection live in later tasks.
 from __future__ import annotations
 
 import pytest
-
 import zocai_gateway.hardware_probe as hp
 from zocai_gateway.hardware_probe import HardwareProfile, probe
 

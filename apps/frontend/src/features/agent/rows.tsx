@@ -370,7 +370,19 @@ export function CommandRow({ event }: RowProps<AgentEvents.CommandEvent>): JSX.E
       label="Run"
       labelColor="text-[var(--zoc-info)]"
       meta={
-        <span className="font-mono text-[11px] text-[#A1A1AA] truncate">{event.command}</span>
+        event.mcpServerId != null ? (
+          <span className="flex items-center gap-1.5 min-w-0">
+            <span
+              data-mcp-badge={event.mcpServerId}
+              className="shrink-0 rounded-md border border-[var(--zoc-ember)]/35 bg-[var(--zoc-ember)]/10 px-1.5 py-0.5 text-[10px] font-medium text-[var(--zoc-ember)]"
+            >
+              MCP · {event.mcpServerId}
+            </span>
+            <span className="font-mono text-[11px] text-[#A1A1AA] truncate">{event.command}</span>
+          </span>
+        ) : (
+          <span className="font-mono text-[11px] text-[#A1A1AA] truncate">{event.command}</span>
+        )
       }
       collapsible={hasResult}
       defaultOpen={!exitOk && hasResult}

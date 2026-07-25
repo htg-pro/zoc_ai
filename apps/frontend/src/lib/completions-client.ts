@@ -10,6 +10,7 @@
  */
 
 import { resolveAgentPort } from "./agent-port";
+import { resolveActiveModelRequestContext } from "./active-model-context";
 
 export interface CompletionRequestBody {
   prefix: string;
@@ -58,10 +59,14 @@ export async function streamCompletion(
   signal: AbortSignal,
 ): Promise<void> {
   let port: number;
+  let modelContext: Awaited<ReturnType<typeof resolveActiveModelRequestContext>>;
   try {
-    port = await resolveAgentPort();
+    [port, modelContext] = await Promise.all([
+      resolveAgentPort(),
+      resolveActiveModelRequestContext(),
+    ]);
   } catch {
-    return; // no sidecar → quiet (R16.3)
+    return; // no sidecar/model context → quiet (R16.3)
   }
   if (signal.aborted) return;
 
@@ -70,7 +75,7 @@ export async function streamCompletion(
     res = await fetch(`http://127.0.0.1:${port}/v1/completions`, {
       method: "POST",
       headers: { "Content-Type": "application/json", Accept: "text/event-stream" },
-      body: JSON.stringify(body),
+      body: JSON.stringify({ ...body, ...modelContext }),
       signal,
     });
   } catch {

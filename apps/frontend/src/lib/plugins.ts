@@ -7,10 +7,9 @@
  * contributions (commands/views) from the enabled set. Contributed commands are
  * registered into the command palette via `setContributedCommands`.
  *
- * What's intentionally deferred to the desktop runtime: executing plugin code
- * in a real sandbox, reading a folder / extracting a zip from disk, and Open
- * VSX compatibility. This module owns the manifest model, lifecycle, logs, and
- * contribution wiring — all pure/JS-testable.
+ * contribution wiring — all pure/JS-testable. Executable contribution code is
+ * owned by the worker runtime; manifest commands are published only while that
+ * worker has registered a matching handler.
  */
 import { setContributedCommands, type Command } from "./commands";
 import {
@@ -26,9 +25,13 @@ export interface InstalledPlugin {
   manifest: PluginManifest;
   enabled: boolean;
   source: PluginSource;
+  /** Monotonic in-memory generation used to reload updated workers. */
+  revision: number;
   /** Set when the plugin couldn't be activated (kept for visibility). */
   errored: boolean;
   error?: string;
+  /** Contribution code executed in the sandbox worker (Part 5.1). */
+  code?: string;
 }
 
 export interface PluginLogEntry {
@@ -44,6 +47,9 @@ const MAX_LOGS = 200;
 let plugins: InstalledPlugin[] = [];
 let logs: PluginLogEntry[] = [];
 let loaded = false;
+let commandInvoker: ((pluginId: string, commandId: string) => void) | null = null;
+/** Runtime registrations are intentionally session-only and disappear with the worker. */
+const registeredCommands = new Map<string, Set<string>>();
 
 // ── persistence ───────────────────────────────────────────────────────────
 function storage(): Storage | null {
@@ -58,6 +64,7 @@ interface StoredPlugin {
   manifest: unknown;
   enabled: boolean;
   source: PluginSource;
+  code?: string;
 }
 
 function persist(): void {
@@ -68,6 +75,7 @@ function persist(): void {
       manifest: p.manifest,
       enabled: p.enabled,
       source: p.source,
+      code: p.code,
     }));
     s.setItem(STORAGE_KEY, JSON.stringify(data));
   } catch {
@@ -88,7 +96,14 @@ function hydrate(): void {
     for (const entry of data) {
       const { manifest, errors } = parsePluginManifest(entry.manifest as object);
       if (manifest) {
-        plugins.push({ manifest, enabled: entry.enabled !== false, source: entry.source, errored: false });
+        plugins.push({
+          manifest,
+          enabled: entry.enabled !== false,
+          source: entry.source,
+          revision: 1,
+          errored: false,
+          code: entry.code,
+        });
       } else {
         log("error", null, `Skipped a stored plugin: ${errors.join(" ")}`);
       }
@@ -133,6 +148,7 @@ export function getPlugin(id: string): InstalledPlugin | undefined {
 export function installPlugin(
   manifestInput: string | object,
   source: PluginSource = "folder",
+  code?: string,
 ): string[] {
   hydrate();
   const { manifest, errors } = parsePluginManifest(manifestInput);
@@ -142,9 +158,18 @@ export function installPlugin(
     return errors;
   }
   const existingIndex = plugins.findIndex((p) => p.manifest.id === manifest.id);
-  const record: InstalledPlugin = { manifest, enabled: true, source, errored: false };
+  const existing = existingIndex >= 0 ? plugins[existingIndex] : undefined;
+  registeredCommands.delete(manifest.id);
+  const record: InstalledPlugin = {
+    manifest,
+    enabled: true,
+    source,
+    revision: (existing?.revision ?? 0) + 1,
+    errored: false,
+    code: code ?? (source === "zip" ? undefined : existing?.code),
+  };
   if (existingIndex >= 0) {
-    record.enabled = plugins[existingIndex].enabled;
+    record.enabled = existing!.enabled;
     plugins[existingIndex] = record;
     log("info", manifest.id, `Updated to v${manifest.version}.`);
   } else {
@@ -161,6 +186,7 @@ export function uninstallPlugin(id: string): void {
   const before = plugins.length;
   plugins = plugins.filter((p) => p.manifest.id !== id);
   if (plugins.length !== before) {
+    registeredCommands.delete(id);
     log("info", id, "Uninstalled.");
     persist();
     syncContributions();
@@ -172,6 +198,7 @@ export function setPluginEnabled(id: string, enabled: boolean): void {
   const p = plugins.find((x) => x.manifest.id === id);
   if (!p || p.enabled === enabled) return;
   p.enabled = enabled;
+  if (!enabled) registeredCommands.delete(id);
   log("info", id, enabled ? "Enabled." : "Disabled.");
   persist();
   syncContributions();
@@ -184,7 +211,39 @@ export function reportPluginError(id: string, message: string): void {
   if (!p) return;
   p.errored = true;
   p.error = message;
+  registeredCommands.delete(id);
   log("error", id, message);
+  syncContributions();
+}
+
+/** Wire the runtime that executes a contributed command's handler (Part 5.1).
+ *  Pass `null` to detach (e.g. on teardown). */
+export function setPluginCommandInvoker(
+  invoker: ((pluginId: string, commandId: string) => void) | null,
+): void {
+  commandInvoker = invoker;
+}
+
+/** Publish a worker handler only when it belongs to an enabled coded plugin and is declared. */
+export function registerPluginCommand(pluginId: string, commandId: string): boolean {
+  hydrate();
+  const plugin = plugins.find((candidate) => candidate.manifest.id === pluginId);
+  const declared = plugin?.manifest.contributes.commands.some((command) => command.id === commandId);
+  if (!plugin?.enabled || plugin.errored || !plugin.code || !declared) {
+    log("error", pluginId, `Rejected undeclared or inactive command registration: ${commandId}`);
+    emit();
+    return false;
+  }
+  const commands = registeredCommands.get(pluginId) ?? new Set<string>();
+  commands.add(commandId);
+  registeredCommands.set(pluginId, commands);
+  syncContributions();
+  return true;
+}
+
+/** Remove every command backed by a worker that is stopping or has failed. */
+export function clearPluginCommandRegistrations(pluginId: string): void {
+  if (!registeredCommands.delete(pluginId)) return;
   syncContributions();
 }
 
@@ -196,23 +255,34 @@ function activePlugins(): InstalledPlugin[] {
 
 export function activeContributedCommands(): Command[] {
   return activePlugins().flatMap((p) =>
-    p.manifest.contributes.commands.map<Command>((c) => ({
+    p.manifest.contributes.commands
+      .filter((command) => registeredCommands.get(p.manifest.id)?.has(command.id))
+      .map<Command>((c) => ({
       id: c.id,
       title: c.title,
-      category: "View",
+      category: "Plugin",
+      icon: "Puzzle",
       aliases: [p.manifest.name],
       run: () => {
+        if (!registeredCommands.get(p.manifest.id)?.has(c.id) || !commandInvoker) {
+          log("error", p.manifest.id, `Command unavailable because its worker is not running: ${c.id}`);
+          syncContributions();
+          return;
+        }
         // Workspace Trust gate (Phase 13): a restricted workspace blocks
         // plugin actions. The decision is recorded in the audit log.
         const decision = checkAction({ kind: "plugin", name: c.id });
-        if (decision.effect === "deny") {
-          log("error", p.manifest.id, `Command blocked: ${c.id} — ${decision.reason}`);
+        if (decision.effect !== "allow") {
+          log(
+            "error",
+            p.manifest.id,
+            `Command blocked (${decision.effect}): ${c.id} — ${decision.reason}`,
+          );
           emit();
           return;
         }
-        // Plugin code execution is deferred to the runtime sandbox; for now an
-        // invocation is recorded in the host log so the contribution is real
-        // and observable end-to-end.
+        // Route only to the live worker that registered this declared handler.
+        commandInvoker(p.manifest.id, c.id);
         log("info", p.manifest.id, `Command invoked: ${c.id}`);
         emit();
       },
@@ -257,5 +327,7 @@ export function __resetPluginHostForTests(): void {
   plugins = [];
   logs = [];
   loaded = false;
+  commandInvoker = null;
+  registeredCommands.clear();
   setContributedCommands([]);
 }

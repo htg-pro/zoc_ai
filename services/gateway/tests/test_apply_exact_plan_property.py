@@ -36,10 +36,8 @@ from pathlib import Path
 
 from hypothesis import HealthCheck, given, settings
 from hypothesis import strategies as st
-
 from shared_schema.agent_events import AgentEvent as AgentEventUnion
 from shared_schema.agent_events import AgentEventModel, EditFileEvent
-
 from zocai_gateway.edits import EditCoordinator, EditPlan, PlannedChange
 from zocai_gateway.toolsets import FullToolset
 

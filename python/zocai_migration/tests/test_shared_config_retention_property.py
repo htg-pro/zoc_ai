@@ -29,7 +29,6 @@ from collections.abc import Iterable
 
 from hypothesis import HealthCheck, given, settings
 from hypothesis import strategies as st
-
 from zocai_migration import (
     DEFAULT_SHARED_BUILD_CONFIG,
     FailureIndication,

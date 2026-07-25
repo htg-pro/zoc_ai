@@ -27,7 +27,6 @@ import subprocess
 from pathlib import Path
 
 import pytest
-
 from zocai_migration import (
     GitVersionControl,
     MigrationController,

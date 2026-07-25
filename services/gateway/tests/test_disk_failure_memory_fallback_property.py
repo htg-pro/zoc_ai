@@ -40,7 +40,6 @@ from typing import Any
 
 from hypothesis import HealthCheck, given, settings
 from hypothesis import strategies as st
-
 from zocai_gateway.memory import DiaryWorker
 from zocai_gateway.memory.diary_worker import DiaryEntry
 

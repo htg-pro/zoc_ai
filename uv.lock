@@ -1668,7 +1668,7 @@ wheels = [
 
 [[package]]
 name = "zoc-studio-shared-schema"
-version = "2.0.0"
+version = "0.0.2"
 source = { editable = "packages/shared-types/python" }
 dependencies = [
     { name = "pydantic" },
@@ -1679,12 +1679,12 @@ requires-dist = [{ name = "pydantic", specifier = ">=2.9" }]
 
 [[package]]
 name = "zoc-studio-workspace"
-version = "2.0.0"
+version = "0.0.2"
 source = { virtual = "." }
 
 [[package]]
 name = "zocai-evolution"
-version = "0.1.0"
+version = "0.0.2"
 source = { editable = "python/zocai_evolution" }
 dependencies = [
     { name = "pydantic" },
@@ -1710,7 +1710,7 @@ provides-extras = ["dev"]
 
 [[package]]
 name = "zocai-gateway"
-version = "2.0.0"
+version = "0.0.2"
 source = { editable = "services/gateway" }
 dependencies = [
     { name = "fastapi" },

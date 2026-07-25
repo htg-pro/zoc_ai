@@ -2,17 +2,25 @@ import { useEffect, useState } from "react";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { Shell } from "@/components/layout/Shell";
 import { OnboardingWizard } from "@/features/onboarding/OnboardingWizard";
+import { AgentStreamProvider } from "@/features/agent/AgentStreamContext";
 import { getAgentClient } from "@/lib/agent-client";
 import { useApp } from "@/lib/store";
 import { getPlugins } from "@/lib/plugins";
+import { createDefaultPluginSandbox, initPluginRuntime } from "@/lib/plugin-runtime";
 import { desktopConfigGet, isTauri, setWorkspaceRoot } from "@/lib/tauri-bridge";
 import { track } from "@/lib/telemetry";
+import { setTrustWorkspace } from "@/lib/trust";
 
 export function App() {
   const [needsOnboarding, setNeedsOnboarding] = useState(false);
   const loadSessions = useApp((s) => s.loadSessions);
   const initLlamaCppStatus = useApp((s) => s.initLlamaCppStatus);
   const applyEffectiveSettings = useApp((s) => s.applyEffectiveSettings);
+  const workspaceRoot = useApp((s) => s.workspaceRoot);
+
+  useEffect(() => {
+    setTrustWorkspace(workspaceRoot);
+  }, [workspaceRoot]);
 
   useEffect(() => {
     // Seed runtime state from persisted user/workspace settings (Phase 10),
@@ -21,6 +29,9 @@ export function App() {
     // Hydrate installed plugins so enabled ones contribute commands/views
     // into the palette from the first frame (Phase 12).
     getPlugins();
+    // Part 5.1: run each enabled plugin in an isolated worker sandbox and route
+    // contributed-command invocation into it (disposed on unmount).
+    return initPluginRuntime(createDefaultPluginSandbox());
   }, [applyEffectiveSettings]);
 
   useEffect(() => {
@@ -51,7 +62,9 @@ export function App() {
 
   return (
     <TooltipProvider delayDuration={150}>
-      <Shell />
+      <AgentStreamProvider>
+        <Shell />
+      </AgentStreamProvider>
       {needsOnboarding && <OnboardingWizard onComplete={() => setNeedsOnboarding(false)} />}
     </TooltipProvider>
   );

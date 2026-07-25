@@ -45,7 +45,7 @@ from __future__ import annotations
 import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from enum import Enum
 
 from shared_schema.agent_events import AgentEvent, CommandEvent
@@ -65,13 +65,13 @@ __all__ = [
     "HOT_SWAP_DEADLINE_SECONDS",
     "NEXT_TIER",
     "Clock",
+    "FSMFactory",
+    "HotSwapCoordinator",
+    "HotSwapOutcomeKind",
+    "HotSwapResult",
     "ModelLoader",
     "ModelUnloader",
-    "FSMFactory",
-    "HotSwapOutcomeKind",
     "PromptWindow",
-    "HotSwapResult",
-    "HotSwapCoordinator",
     "next_higher_tier",
 ]
 
@@ -237,7 +237,7 @@ class HotSwapCoordinator:
         target = next_higher_tier(active_tier)
         # ``target`` is non-None for every non-Cloud tier; the guard above
         # already handled Cloud.
-        assert target is not None  # noqa: S101 - invariant of NEXT_TIER vs the Cloud guard
+        assert target is not None
 
         # R11.2: unload the active model, then load the replacement within 30 s.
         if self.unloader is not None and active_model is not None:
@@ -311,7 +311,7 @@ class HotSwapCoordinator:
         event = CommandEvent(
             seq=self._take_seq(),
             run_id=self.run_id,
-            ts=datetime.now(timezone.utc).isoformat(),
+            ts=datetime.now(UTC).isoformat(),
             command=f"<hot-swap:load:{tier.value}>",
             error_tag=f"hot-swap-load-failed:{tier.value}",
         )

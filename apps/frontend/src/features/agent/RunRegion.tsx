@@ -9,7 +9,6 @@
 import { Fragment, useEffect, useRef, useState } from "react";
 import { Zap } from "lucide-react";
 import type { Message } from "@zoc-studio/shared-types";
-import type { AgentEvents } from "@zoc-studio/shared-types";
 
 import { useApp } from "@/lib/store";
 import { EmptyState } from "./EmptyState";
@@ -17,6 +16,8 @@ import { MessageItem } from "./MessageItem";
 import { ToolCallCard } from "./ToolCallCard";
 import { DiffCard } from "./DiffCard";
 import useAgentStream from "./useAgentStream";
+import { useAgentStreamContext } from "./agent-stream-context";
+import { useAgentRunLifecycle } from "./useAgentRunLifecycle";
 import type { AgentEvent, TokenEvent, StreamErrorEvent } from "./useAgentStream";
 import { buildRunTraces } from "./agent-trace";
 import { RunTraceCard } from "./RunTraceCard";
@@ -29,19 +30,18 @@ function isStreamErrorEvent(event: AgentEvent): event is StreamErrorEvent {
   return event.type === "error";
 }
 
-function isBudgetEvent(event: AgentEvent): event is AgentEvents.BudgetEvent {
-  return event.type === "budget";
-}
-
 export function RunRegion(): JSX.Element {
   const chat               = useApp((s) => s.chat);
   const agentMode          = useApp((s) => s.agentMode);
   const activeRunMode      = useApp((s) => s.activeRunMode);
   const runId              = useApp((s) => s.runId);
-  const finishGatewayRun   = useApp((s) => s.finishGatewayRun);
-  const updateRunBudget    = useApp((s) => s.updateRunBudget);
-  const commitAskStreamMessage = useApp((s) => s.commitAskStreamMessage);
-  const { events }         = useAgentStream({ runId, enabled: !!runId });
+  const sharedStream        = useAgentStreamContext();
+  const fallbackStream      = useAgentStream({
+    runId,
+    enabled: Boolean(runId) && sharedStream === null,
+  });
+  const events              = sharedStream?.events ?? fallbackStream.events;
+  useAgentRunLifecycle(events, sharedStream === null);
 
   const scrollRef          = useRef<HTMLDivElement>(null);
   const lastRunIdRef        = useRef<string | null>(null);
@@ -64,39 +64,6 @@ export function RunRegion(): JSX.Element {
     const el = scrollRef.current;
     if (el) el.scrollTop = el.scrollHeight;
   }, [chat, events, retainedAgentEvents]);
-
-  useEffect(() => {
-    if (!runId) return;
-    const latestBudget = [...events]
-      .reverse()
-      .find(
-        (event): event is AgentEvents.BudgetEvent =>
-          isBudgetEvent(event) && event.runId === runId,
-      );
-    if (latestBudget) updateRunBudget(latestBudget);
-  }, [events, runId, updateRunBudget]);
-
-  useEffect(() => {
-    if (!runId) return;
-    const terminal = events.find(
-      (event) =>
-        (event.type === "done" && event.runId === runId) ||
-        (isTokenEvent(event) && event.runId === runId && event.done === true) ||
-        (isStreamErrorEvent(event) && event.runId === runId),
-    );
-    if (terminal) {
-      const effectiveMode = activeRunMode ?? agentMode;
-      if (effectiveMode === "ask") {
-        const askTokens = events.filter(
-          (event): event is TokenEvent =>
-            isTokenEvent(event) && event.runId === runId && !!event.text,
-        );
-        const askText = askTokens.map((event) => event.text).join("");
-        commitAskStreamMessage(runId, askText, askTokens[0]?.ts);
-      }
-      finishGatewayRun(runId);
-    }
-  }, [activeRunMode, agentMode, commitAskStreamMessage, events, finishGatewayRun, runId]);
 
   const visibleEvents = runId ? events : retainedAgentEvents;
   const runTraces     = buildRunTraces(visibleEvents);

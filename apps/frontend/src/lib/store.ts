@@ -1,4 +1,12 @@
 import { create } from "zustand";
+import {
+  closePane,
+  focusAdjacent,
+  leaves,
+  splitPane,
+  type PaneNode,
+  type TerminalPane,
+} from "./terminal-layout";
 import type {
   AgentEvents,
   AgentEvent,
@@ -109,6 +117,7 @@ import {
 } from "./mock-data";
 import {
   applyPatch as tauriApplyPatch,
+  applyTransaction as tauriApplyTransaction,
   desktopConfigGet,
   fsListDir,
   fsReadText,
@@ -556,6 +565,13 @@ export interface AppState {
   /** Mark a terminal exited with its code (called by the terminal manager). */
   setTerminalExited: (id: string, code: number | null) => void;
   toggleTerminalSplit: () => void;
+  /** Multi-pane terminal layout (Part 6.1): a binary tree of panes + the focused leaf. */
+  terminalLayout: PaneNode | null;
+  focusedPaneId: string | null;
+  ensureTerminalPane: (sessionId: string) => void;
+  splitActivePane: (direction: "row" | "column", sessionId: string) => void;
+  closeTerminalPane: (paneId: string) => void;
+  focusTerminalPane: (delta: number) => void;
   loadSessions: () => Promise<void>;
   selectSession: (id: string) => Promise<void>;
   createSession: (title: string, workspaceRoot: string) => Promise<Session | null>;
@@ -1321,9 +1337,11 @@ export const useApp = create<AppState>((set, get) => ({
     const file = get().openFiles.find((f) => f.path === path);
     if (!file) return false;
     if (!file.dirty) return true;
-    // fsWriteText has an HTTP fallback for web (non-Tauri) mode, so we always
-    // call it — no early-return needed.
-    const ok = await fsWriteText(file.path, file.content);
+    // A disconnected browser preview owns only its in-memory mock buffers, so
+    // acknowledge the save locally. Connected web sessions still use the
+    // Gateway HTTP filesystem fallback, while desktop sessions invoke Tauri.
+    const previewOnly = !isTauri() && !get().liveMode;
+    const ok = previewOnly || (await fsWriteText(file.path, file.content));
     if (ok) {
       set((s) => ({
         openFiles: s.openFiles.map((f) =>
@@ -1905,9 +1923,11 @@ export const useApp = create<AppState>((set, get) => ({
       { kind: "task", name: `${task.command} ${task.args.join(" ")}`.trim(), destructive: false },
       get().workspaceRoot,
     );
-    if (decision.effect === "deny") {
+    if (decision.effect !== "allow") {
       get().appendLog("warning", `Task blocked: ${task.label} — ${decision.reason}`);
-      toast.error("Task blocked", { description: decision.reason });
+      toast.error(decision.effect === "deny" ? "Task blocked" : "Task approval required", {
+        description: decision.reason,
+      });
       return;
     }
     set((s) => ({ taskRuns: { ...s.taskRuns, [id]: "running" } }));
@@ -2021,12 +2041,32 @@ export const useApp = create<AppState>((set, get) => ({
   },
   closeTerminal: (id) =>
     set((s) => {
-      const next = s.terminals.filter((t) => t.id !== id);
+      const nextTerminals = s.terminals.filter((terminal) => terminal.id !== id);
+      let paneState = { layout: s.terminalLayout, focusedPaneId: s.focusedPaneId };
+      for (const pane of leaves(paneState.layout).filter((leaf) => leaf.sessionId === id)) {
+        paneState = closePane(paneState, pane.id);
+      }
+      const focusedSession = leaves(paneState.layout).find(
+        (pane) => pane.id === paneState.focusedPaneId,
+      )?.sessionId;
       const active =
-        s.activeTerminalId === id ? next[next.length - 1]?.id ?? null : s.activeTerminalId;
-      return { terminals: next, activeTerminalId: active };
+        focusedSession ??
+        (s.activeTerminalId === id
+          ? nextTerminals[nextTerminals.length - 1]?.id ?? null
+          : s.activeTerminalId);
+      return {
+        terminals: nextTerminals,
+        activeTerminalId: active,
+        terminalLayout: paneState.layout,
+        focusedPaneId: paneState.focusedPaneId,
+      };
     }),
-  setActiveTerminal: (id) => set({ activeTerminalId: id }),
+  setActiveTerminal: (id) =>
+    set((s) => ({
+      activeTerminalId: id,
+      focusedPaneId:
+        leaves(s.terminalLayout).find((pane) => pane.sessionId === id)?.id ?? s.focusedPaneId,
+    })),
   renameTerminal: (id, title) =>
     set((s) => ({
       terminals: s.terminals.map((t) => (t.id === id ? { ...t, title: title.trim() || t.title } : t)),
@@ -2038,6 +2078,67 @@ export const useApp = create<AppState>((set, get) => ({
       ),
     })),
   toggleTerminalSplit: () => set((s) => ({ terminalSplit: !s.terminalSplit })),
+  terminalLayout: null,
+  focusedPaneId: null,
+  ensureTerminalPane: (sessionId) =>
+    set((s) => {
+      if (s.terminalLayout !== null) return {};
+      const pane: TerminalPane = { kind: "pane", id: `pane-${sessionId}`, sessionId };
+      return { terminalLayout: pane, focusedPaneId: pane.id, activeTerminalId: sessionId };
+    }),
+  splitActivePane: (direction, sessionId) =>
+    set((s) => {
+      const pane: TerminalPane = {
+        kind: "pane",
+        id: `pane-${sessionId}-${Date.now().toString(36)}`,
+        sessionId,
+      };
+      const next = splitPane(
+        { layout: s.terminalLayout, focusedPaneId: s.focusedPaneId },
+        direction,
+        pane,
+      );
+      return {
+        terminalLayout: next.layout,
+        focusedPaneId: next.focusedPaneId,
+        activeTerminalId: next.layout === s.terminalLayout ? s.activeTerminalId : sessionId,
+      };
+    }),
+  closeTerminalPane: (paneId) =>
+    set((s) => {
+      const closing = leaves(s.terminalLayout).find((pane) => pane.id === paneId);
+      const next = closePane({ layout: s.terminalLayout, focusedPaneId: s.focusedPaneId }, paneId);
+      if (!closing || next.layout === s.terminalLayout) return {};
+      const sessionStillVisible = leaves(next.layout).some(
+        (pane) => pane.sessionId === closing.sessionId,
+      );
+      const terminals = sessionStillVisible
+        ? s.terminals
+        : s.terminals.filter((terminal) => terminal.id !== closing.sessionId);
+      const activeTerminalId =
+        leaves(next.layout).find((pane) => pane.id === next.focusedPaneId)?.sessionId ??
+        terminals[terminals.length - 1]?.id ??
+        null;
+      return {
+        terminals,
+        activeTerminalId,
+        terminalLayout: next.layout,
+        focusedPaneId: next.focusedPaneId,
+      };
+    }),
+  focusTerminalPane: (delta) =>
+    set((s) => {
+      const next = focusAdjacent(
+        { layout: s.terminalLayout, focusedPaneId: s.focusedPaneId },
+        delta,
+      );
+      return {
+        focusedPaneId: next.focusedPaneId,
+        activeTerminalId:
+          leaves(next.layout).find((pane) => pane.id === next.focusedPaneId)?.sessionId ??
+          s.activeTerminalId,
+      };
+    }),
 
   loadSessions: async () => {
     // Hydrate workspace root from persisted desktop config first so any
@@ -3318,6 +3419,59 @@ export const useApp = create<AppState>((set, get) => ({
     const runId = get().reviewRunId;
     const sessionId = get().activeSessionId;
     if (!runId || !sessionId || !get().liveMode) return false;
+
+    const pendingPatches = get().pendingPatches;
+    if (isTauri() && pendingPatches.length > 0) {
+      const root =
+        get().workspaceRoot ??
+        get().sessions.find((session) => session.id === sessionId)?.workspace_root ??
+        null;
+      if (!root) return false;
+      try {
+        const transaction = await tauriApplyTransaction(
+          root,
+          pendingPatches.map((patch) => ({
+            kind: "patch" as const,
+            path: patch.file_path,
+            unified_diff: patch.unified_diff,
+          })),
+        );
+        if (!transaction) return false;
+        await track("agent.run.applied", {
+          runId,
+          files: transaction.written + transaction.deleted,
+          failed: 0,
+          checkpoint: transaction.checkpoint,
+          checkpointError: transaction.checkpoint_error,
+        });
+        if (transaction.checkpoint_error) {
+          get().appendLog(
+            "warning",
+            `Changes applied atomically, but checkpoint creation failed: ${transaction.checkpoint_error}`,
+          );
+          toast.warning("Changes applied, but the Git checkpoint failed", {
+            description: transaction.checkpoint_error,
+          });
+        }
+        set((state) => {
+          const nextApplied = new Set(state.appliedPatchIds);
+          for (const patch of pendingPatches) nextApplied.add(patch.id);
+          persistAppliedPatchIds(nextApplied);
+          return {
+            reviewRunId: null,
+            pendingPatches: [],
+            appliedPatchIds: nextApplied,
+            acceptedHunks: {},
+            reviewValidation: null,
+          };
+        });
+        return true;
+      } catch (err) {
+        appendErrorChat(set, "applyCurrentRun", err as Error);
+        return false;
+      }
+    }
+
     try {
       const client = await getAgentClient();
       const result = await client.applyRun(sessionId, runId);

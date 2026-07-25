@@ -37,13 +37,14 @@ cycle: a newer entry can never reach disk ahead of an older buffered one.
 
 from __future__ import annotations
 
+import contextlib
 import json
 import queue
 import threading
 from collections import deque
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from types import TracebackType
 
@@ -357,20 +358,16 @@ class DiaryWorker:
         hook = self._on_fallback
         if hook is None:
             return
-        try:
+        with contextlib.suppress(Exception):
             hook(exc)
-        except Exception:  # noqa: BLE001 - hooks must not break the worker
-            pass
 
     def _run_recovery_hook(self) -> None:
         """Run the recovery hook, swallowing hook errors (R10.1 stays operational)."""
         hook = self._on_recovery
         if hook is None:
             return
-        try:
+        with contextlib.suppress(Exception):
             hook()
-        except Exception:  # noqa: BLE001 - hooks must not break the worker
-            pass
 
     def _write(self, entry: DiaryEntry) -> None:
         """Append a single entry's JSON line to the Session_Diary."""
@@ -390,7 +387,7 @@ class DiaryWorker:
 
 def _utc_now_iso() -> str:
     """Current UTC time as an ISO-8601 string (default entry timestamp)."""
-    return datetime.now(timezone.utc).isoformat()
+    return datetime.now(UTC).isoformat()
 
 
 # Bound at module load so the hot path avoids repeated attribute lookups and so

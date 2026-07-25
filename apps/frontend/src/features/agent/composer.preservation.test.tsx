@@ -35,8 +35,8 @@ vi.mock("lucide-react", () => {
     return Icon;
   };
   return {
+    ArrowUp: makeIcon("ArrowUp"),
     Paperclip: makeIcon("Paperclip"),
-    Send: makeIcon("Send"),
     ShieldCheck: makeIcon("ShieldCheck"),
     Square: makeIcon("Square"),
   };
@@ -124,42 +124,40 @@ describe("Composer preservation — chrome structure and tokens", () => {
     expect(composerRoot(container)).toMatchSnapshot();
   });
 
-  it("preserves the outer container border/background tokens and padding", () => {
+  it("preserves the outer container and input-card tokens", () => {
     applyState(baseState());
     const { container } = render(<Composer />);
     const root = composerRoot(container);
     expect(root.className).toContain("border-t");
-    expect(root.className).toContain("border-[#1E1E23]");
-    expect(root.className).toContain("bg-[#101014]");
+    expect(root.className).toContain("border-[#1A1A1F]");
+    expect(root.className).toContain("bg-[#0C0C10]");
     expect(root.className).toContain("p-3");
-    // Inner input card preserved tokens + radius.
-    const card = root.querySelector(".rounded-\\[10px\\]") as HTMLElement;
+    const card = root.querySelector(".rounded-xl") as HTMLElement;
     expect(card).toBeInTheDocument();
-    expect(card.className).toContain("bg-[#131318]");
+    expect(card.className).toContain("bg-[#111116]");
     expect(card.className).toContain("border-[#26262B]");
   });
 
-  it("retains the full set of controls in Agent mode (input, toggle, autonomy pill, send)", () => {
+  it("retains the full set of controls in Agent mode", () => {
     applyState(baseState({ agentMode: "agent" }));
     const { getByText, getByLabelText, container } = render(<Composer />);
     expect(container.querySelector("textarea")).toBeInTheDocument();
     expect(getByText("Ask")).toBeInTheDocument();
     expect(getByText("Agent")).toBeInTheDocument();
-    // Autonomy/priority pill present in Agent mode.
     expect(getByLabelText("Autonomy level: Medium")).toBeInTheDocument();
-    // Send button present (idle / not streaming).
     expect(getByLabelText("Send")).toBeInTheDocument();
   });
 
-  it("preserves the send button gradient and the textarea text token", () => {
-    applyState(baseState({ agentMode: "agent" }));
+  it("preserves the enabled send and textarea tokens", () => {
+    applyState(baseState({ agentMode: "agent", input: "run this" }));
     const { getByLabelText, container } = render(<Composer />);
     const send = getByLabelText("Send") as HTMLElement;
-    expect(send.className).toContain("from-[#7C3AED]");
-    expect(send.className).toContain("to-[#9B6AF1]");
+    expect(send.className).toContain("bg-[#7C3AED]");
+    expect(send.className).toContain("border-[#9B6AF1]/30");
+    expect(send.className).toContain("text-white");
     const textarea = container.querySelector("textarea") as HTMLElement;
-    expect(textarea.className).toContain("text-[#FAFAFA]");
-    expect(textarea.className).toContain("placeholder:text-[#52525B]");
+    expect(textarea.className).toContain("text-[#EDEDF0]");
+    expect(textarea.className).toContain("placeholder:text-[#3F3F46]");
   });
 });
 
@@ -206,10 +204,9 @@ describe("Composer preservation — Ask/Agent toggle indicator (R1.4)", () => {
     const { getByText, getByLabelText } = render(<Composer />);
     const askBtn = getByText("Ask");
     const agentBtn = getByText("Agent");
-    // Active Ask carries the info token; inactive Agent carries the muted token.
-    expect(askBtn.className).toContain("bg-[var(--zoc-info)]");
-    expect(agentBtn.className).not.toContain("bg-[var(--zoc-ember)]");
-    // Ask mode shows the read-only indicator, not the autonomy pill.
+    expect(askBtn.className).toContain("bg-[#1A3A5C]");
+    expect(askBtn.className).toContain("text-[#60a5fa]");
+    expect(agentBtn.className).not.toContain("bg-[#2A1F4E]");
     expect(getByLabelText("Read-only mode")).toBeInTheDocument();
   });
 
@@ -218,8 +215,9 @@ describe("Composer preservation — Ask/Agent toggle indicator (R1.4)", () => {
     const { getByText, getByLabelText } = render(<Composer />);
     const askBtn = getByText("Ask");
     const agentBtn = getByText("Agent");
-    expect(agentBtn.className).toContain("bg-[var(--zoc-ember)]");
-    expect(askBtn.className).not.toContain("bg-[var(--zoc-info)]");
+    expect(agentBtn.className).toContain("bg-[#2A1F4E]");
+    expect(agentBtn.className).toContain("text-[#9B6AF1]");
+    expect(askBtn.className).not.toContain("bg-[#1A3A5C]");
     expect(getByLabelText("Autonomy level: Medium")).toBeInTheDocument();
   });
 

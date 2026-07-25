@@ -99,9 +99,11 @@ export function isExternalPath(target: string | undefined, workspaceRoot: string
   if (!target) return false;
   const isAbsolute = target.startsWith("/") || /^[A-Za-z]:[/\\]/.test(target);
   if (!workspaceRoot) return isAbsolute; // no root known → treat absolute paths as external
-  const norm = (p: string) => p.replace(/[/\\]+$/, "");
-  if (!isAbsolute) return target.includes("..") && target.split(/[/\\]/).includes("..");
-  return !norm(target).startsWith(norm(workspaceRoot));
+  const norm = (p: string) => p.replace(/[/\\]+/g, "/").replace(/\/$/, "").toLowerCase();
+  if (!isAbsolute) return target.split(/[/\\]/).includes("..");
+  const candidate = norm(target);
+  const root = norm(workspaceRoot);
+  return candidate !== root && !candidate.startsWith(`${root}/`);
 }
 
 /** Does an allowlist contain `name` (exact, or as a whitespace-delimited prefix)? */

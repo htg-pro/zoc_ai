@@ -15,6 +15,8 @@ use std::sync::Arc;
 use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
 
+use crate::sidecar::AgentSupervisor;
+
 /// Shared, mutable handle to the active workspace root. Filesystem and
 /// patch commands take this as `tauri::State` and reject any operation
 /// whose target path escapes the canonicalized root.
@@ -37,15 +39,12 @@ impl WorkspaceState {
 /// resulting path stays inside it. Accepts both absolute and relative
 /// inputs. For paths that don't exist yet (e.g. a file we're about to
 /// create), the parent directory must exist and be inside the root.
-pub fn ensure_within_workspace(
-    state: &WorkspaceState,
-    target: &Path,
-) -> Result<PathBuf, String> {
+pub fn ensure_within_workspace(state: &WorkspaceState, target: &Path) -> Result<PathBuf, String> {
     let root = state
         .get()
         .ok_or_else(|| "no workspace root configured".to_string())?;
-    let root_canon = std::fs::canonicalize(&root)
-        .map_err(|e| format!("workspace root invalid: {e}"))?;
+    let root_canon =
+        std::fs::canonicalize(&root).map_err(|e| format!("workspace root invalid: {e}"))?;
 
     let joined = if target.is_absolute() {
         target.to_path_buf()
@@ -56,17 +55,34 @@ pub fn ensure_within_workspace(
     let resolved = if joined.exists() {
         std::fs::canonicalize(&joined).map_err(|e| e.to_string())?
     } else {
-        // Canonicalize the parent + reattach the filename so we can validate
-        // write/create paths whose final component doesn't exist yet.
-        let parent = joined
-            .parent()
-            .ok_or_else(|| format!("bad path: {}", joined.display()))?;
-        let parent_canon = std::fs::canonicalize(parent)
-            .map_err(|e| format!("parent of {}: {e}", joined.display()))?;
-        let name = joined
-            .file_name()
-            .ok_or_else(|| format!("bad path: {}", joined.display()))?;
-        parent_canon.join(name)
+        // Canonicalize the nearest existing ancestor, then reattach every
+        // missing component. This permits transaction writes to create nested
+        // parents without weakening confinement or accepting `..` escapes.
+        let mut ancestor = joined.as_path();
+        while !ancestor.exists() {
+            ancestor = ancestor
+                .parent()
+                .ok_or_else(|| format!("bad path: {}", joined.display()))?;
+        }
+        let ancestor_canon = std::fs::canonicalize(ancestor)
+            .map_err(|e| format!("ancestor of {}: {e}", joined.display()))?;
+        let suffix = joined
+            .strip_prefix(ancestor)
+            .map_err(|e| format!("bad path {}: {e}", joined.display()))?;
+        if suffix.components().any(|component| {
+            matches!(
+                component,
+                std::path::Component::ParentDir
+                    | std::path::Component::RootDir
+                    | std::path::Component::Prefix(_)
+            )
+        }) {
+            return Err(format!(
+                "path {} contains unsafe traversal",
+                joined.display()
+            ));
+        }
+        ancestor_canon.join(suffix)
     };
 
     if !resolved.starts_with(&root_canon) {
@@ -83,9 +99,28 @@ pub fn ensure_within_workspace(
     // the workspace root itself being a symlink (we already followed it
     // above), but no link inside it.
     let mut walk = root_canon.clone();
-    if let Ok(rel) = resolved.strip_prefix(&root_canon) {
-        for comp in rel.iter() {
-            walk.push(comp);
+    let relative = if target.is_absolute() {
+        target
+            .strip_prefix(&root)
+            .or_else(|_| joined.strip_prefix(&root_canon))
+            .or_else(|_| resolved.strip_prefix(&root_canon))
+    } else {
+        joined
+            .strip_prefix(&root_canon)
+            .or_else(|_| resolved.strip_prefix(&root_canon))
+    };
+    if let Ok(rel) = relative {
+        for comp in rel.components() {
+            match comp {
+                std::path::Component::CurDir => continue,
+                std::path::Component::Normal(name) => walk.push(name),
+                _ => {
+                    return Err(format!(
+                        "path {} contains unsafe traversal",
+                        joined.display()
+                    ));
+                }
+            }
             match std::fs::symlink_metadata(&walk) {
                 Ok(meta) if meta.file_type().is_symlink() => {
                     return Err(format!(
@@ -138,18 +173,25 @@ pub fn desktop_config_get(state: tauri::State<'_, Arc<WorkspaceState>>) -> Deskt
 #[tauri::command]
 pub fn desktop_config_set(
     state: tauri::State<'_, Arc<WorkspaceState>>,
+    supervisor: tauri::State<'_, Arc<AgentSupervisor>>,
     config: DesktopConfig,
 ) -> Result<DesktopConfig, String> {
     let path = config_path();
     let text = serde_json::to_string_pretty(&config).map_err(|e| e.to_string())?;
     std::fs::write(&path, text).map_err(|e| e.to_string())?;
-    state.set(config.workspace_root.as_ref().map(PathBuf::from));
+    let previous = state.get();
+    let next = config.workspace_root.as_ref().map(PathBuf::from);
+    state.set(next.clone());
+    if previous != next {
+        supervisor.restart();
+    }
     Ok(config)
 }
 
 #[tauri::command]
 pub fn set_workspace_root(
     state: tauri::State<'_, Arc<WorkspaceState>>,
+    supervisor: tauri::State<'_, Arc<AgentSupervisor>>,
     root: Option<String>,
 ) -> Result<(), String> {
     if let Some(ref r) = root {
@@ -158,7 +200,12 @@ pub fn set_workspace_root(
             return Err(format!("workspace not found: {r}"));
         }
     }
-    state.set(root.map(PathBuf::from));
+    let previous = state.get();
+    let next = root.map(PathBuf::from);
+    state.set(next.clone());
+    if previous != next {
+        supervisor.restart();
+    }
     Ok(())
 }
 
@@ -190,10 +237,7 @@ fn detect_legacy_dirs() -> Vec<PathBuf> {
 pub fn legacy_detect() -> LegacyDetection {
     let dirs = detect_legacy_dirs();
     let path = dirs.first().cloned();
-    let session_count = path
-        .as_ref()
-        .map(|p| count_legacy_sessions(p))
-        .unwrap_or(0);
+    let session_count = path.as_ref().map(|p| count_legacy_sessions(p)).unwrap_or(0);
     LegacyDetection {
         present: path.is_some(),
         path: path.map(|p| p.to_string_lossy().into_owned()),
@@ -225,7 +269,10 @@ pub fn legacy_import(
 ) -> Result<LegacyImportResult, String> {
     let detection = legacy_detect();
     if !detection.present {
-        return Ok(LegacyImportResult { imported_sessions: 0, imported_settings: false });
+        return Ok(LegacyImportResult {
+            imported_sessions: 0,
+            imported_settings: false,
+        });
     }
     let mut cfg = load_config();
     let mut imported_settings = false;
@@ -283,4 +330,64 @@ pub fn telemetry_log(event: TelemetryEvent) -> Result<(), String> {
     use std::io::Write;
     writeln!(f, "{line}").map_err(|e| e.to_string())?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    fn temp_workspace(label: &str) -> PathBuf {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!("zoc-workspace-{label}-{nanos}"));
+        std::fs::create_dir_all(&root).unwrap();
+        root
+    }
+
+    #[test]
+    fn allows_nested_missing_paths_inside_workspace() {
+        let root = temp_workspace("nested");
+        let state = WorkspaceState::default();
+        state.set(Some(root.clone()));
+
+        let resolved = ensure_within_workspace(&state, Path::new("new/deep/file.txt")).unwrap();
+        assert_eq!(resolved, root.join("new/deep/file.txt"));
+        assert!(!root.join("new").exists());
+        std::fs::remove_dir_all(root).ok();
+    }
+
+    #[test]
+    fn rejects_sibling_prefix_and_parent_traversal() {
+        let root = temp_workspace("boundary");
+        let sibling = root.with_file_name(format!(
+            "{}-sibling",
+            root.file_name().unwrap().to_string_lossy()
+        ));
+        std::fs::create_dir_all(&sibling).unwrap();
+        let state = WorkspaceState::default();
+        state.set(Some(root.clone()));
+
+        assert!(ensure_within_workspace(&state, &sibling.join("file.txt")).is_err());
+        assert!(ensure_within_workspace(&state, Path::new("../escape.txt")).is_err());
+        std::fs::remove_dir_all(root).ok();
+        std::fs::remove_dir_all(sibling).ok();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn rejects_internal_symlink_components() {
+        use std::os::unix::fs::symlink;
+
+        let root = temp_workspace("symlink");
+        std::fs::create_dir_all(root.join("real")).unwrap();
+        symlink(root.join("real"), root.join("link")).unwrap();
+        let state = WorkspaceState::default();
+        state.set(Some(root.clone()));
+
+        assert!(ensure_within_workspace(&state, Path::new("link/file.txt")).is_err());
+        std::fs::remove_dir_all(root).ok();
+    }
 }

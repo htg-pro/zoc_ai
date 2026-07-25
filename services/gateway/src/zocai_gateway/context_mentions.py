@@ -116,10 +116,7 @@ def _context_file_map(root: Path, refs: Iterable[object]) -> dict[str, Path]:
 
 
 def _ref_value(ref: object, key: str) -> str | None:
-    if isinstance(ref, Mapping):
-        value = ref.get(key)
-    else:
-        value = getattr(ref, key, None)
+    value = ref.get(key) if isinstance(ref, Mapping) else getattr(ref, key, None)
     return value if isinstance(value, str) else None
 
 

@@ -33,6 +33,20 @@ export type ModelTier =
   | "edge"
   | "cloud";
 
+export type PermissionEffect =
+  | "allow"
+  | "deny"
+  | "prompt";
+
+export type PermissionKind =
+  | "agent_tool"
+  | "terminal"
+  | "task"
+  | "git"
+  | "mcp"
+  | "plugin"
+  | "fs";
+
 export type PlanItemStatus =
   | "pending"
   | "active"
@@ -70,6 +84,7 @@ export interface CommandEvent extends BaseEvent {
   type: "command";
   command: string;
   commandId?: string | null;
+  mcpServerId?: string | null;
   status?: "queued" | "running" | "pass" | "fail" | "skipped" | null;
   exitCode?: number | null;
   errorTag?: string | null;
@@ -112,6 +127,15 @@ export interface MapFilesEvent extends BaseEvent {
   readList: string[];
   writeList: string[];
   rationale: string;
+}
+
+export interface PermissionEvent extends BaseEvent {
+  type: "permission";
+  kind: "agent_tool" | "terminal" | "task" | "git" | "mcp" | "plugin" | "fs";
+  name: string;
+  target?: string | null;
+  effect: "allow" | "deny" | "prompt";
+  reason: string;
 }
 
 export interface PlanEvent extends BaseEvent {
@@ -216,6 +240,7 @@ export type AgentEvent =
   | ReviewEvent
   | SummaryEvent
   | ApprovalEvent
+  | PermissionEvent
   | RecoveryAttemptEvent
   | BudgetEvent
   | TestResultsEvent

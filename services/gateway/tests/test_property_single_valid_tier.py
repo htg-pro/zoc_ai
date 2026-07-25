@@ -31,7 +31,6 @@ from __future__ import annotations
 
 from hypothesis import given, settings
 from hypothesis import strategies as st
-
 from zocai_gateway.hardware_probe import HardwareProfile
 from zocai_gateway.model_allocator import Allocation, ModelAllocator
 from zocai_gateway.model_interface import ModelTier

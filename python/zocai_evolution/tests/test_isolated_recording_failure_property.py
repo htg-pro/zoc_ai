@@ -38,7 +38,6 @@ from __future__ import annotations
 
 from hypothesis import given, settings
 from hypothesis import strategies as st
-
 from zocai_evolution import (
     TRAJECTORY_THRESHOLD,
     CheckOutcome,

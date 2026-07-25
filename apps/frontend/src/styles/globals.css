@@ -253,6 +253,16 @@
 .agent-edit-glyph {
   background: radial-gradient(circle at center, #9b6af1 0 40%, transparent 45%);
 }
+/* Green flash applied to each sequential AgentEditAnimator step (Part 8.1). */
+@keyframes agent-edit-flash-fade {
+  0% { background: rgba(52, 211, 153, 0.42); }
+  35% { background: rgba(52, 211, 153, 0.28); }
+  100% { background: rgba(52, 211, 153, 0); }
+}
+.agent-edit-flash {
+  border-radius: 2px;
+  animation: agent-edit-flash-fade 1.5s ease-out forwards;
+}
 .zoc-breakpoint-glyph {
   background: radial-gradient(circle at center, #e51400 0 42%, transparent 47%);
   cursor: pointer;

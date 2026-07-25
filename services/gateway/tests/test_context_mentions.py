@@ -6,9 +6,9 @@ from zocai_gateway.context_mentions import (
     expand_prompt_file_mentions,
     search_workspace_files,
 )
+from zocai_gateway.emit_gate import EmitGate
 from zocai_gateway.mode_router import AgentRunRequest, Mode
 from zocai_gateway.run_pipeline import RunPipeline
-from zocai_gateway.emit_gate import EmitGate
 
 
 def test_selected_context_file_expands_exact_path_for_duplicate_basenames(tmp_path: Path) -> None:

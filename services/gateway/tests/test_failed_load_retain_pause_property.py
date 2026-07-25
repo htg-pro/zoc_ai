@@ -46,9 +46,7 @@ from pathlib import Path
 
 from hypothesis import given, settings
 from hypothesis import strategies as st
-
 from shared_schema.agent_events import AgentEvent
-
 from zocai_gateway.hot_swap import (
     HOT_SWAP_DEADLINE_SECONDS,
     HotSwapCoordinator,

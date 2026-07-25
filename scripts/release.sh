@@ -83,6 +83,11 @@ if ! (command -v cargo-tauri >/dev/null 2>&1 \
 EOF
   exit 1
 fi
+# Remove native bundles from earlier versions before Tauri runs; otherwise the
+# collector below would copy stale installers into the current release.
+echo "==> Removing stale native bundle outputs"
+rm -rf target/release/bundle
+
 # We just built the frontend, hotpath, and sidecar above, so tell Tauri's
 # beforeBuildCommand (scripts/prepare_tauri_build.sh) to skip — otherwise it
 # would redo the slow sidecar bundle a second time.
@@ -142,12 +147,9 @@ if [ "$(uname -s)" = "Linux" ] && [ -f target/release/zoc-studio ]; then
   chmod +x "${PKG_DIR}/bin/zoc-studio" \
     "${PKG_DIR}/bin/zoc-studio-agent${HP_SUFFIX}" \
     "${PKG_DIR}/bin/zoc-studio-hotpath${HP_SUFFIX}" 2>/dev/null || true
-  # Keep the PyInstaller sidecar payload directory for diagnostics and for
-  # parity with the Tauri externalBin staging layout.
-  if [ -d apps/desktop/binaries ]; then
-    mkdir -p "${PKG_DIR}/binaries"
-    cp -a apps/desktop/binaries/. "${PKG_DIR}/binaries/" 2>/dev/null || true
-  fi
+  # Each executable is already present under bin/. Do not duplicate the staged
+  # externalBin directory: it doubles the compressed payload and can exceed
+  # Git hosting's per-file size limit without adding runtime functionality.
   for doc in README.md VERSION LICENSE CHANGELOG.md; do
     [ -f "$doc" ] && cp -a "$doc" "${PKG_DIR}/" || true
   done

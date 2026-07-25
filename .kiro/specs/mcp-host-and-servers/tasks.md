@@ -15,6 +15,22 @@ Property-based test conventions used throughout:
 - Each runs a minimum of 100 iterations (Hypothesis `max_examples>=100`; fast-check `{ numRuns: 200 }`).
 - Test-related sub-tasks are marked optional with `*` and MUST NOT be implemented when executing non-optional tasks.
 
+## Progress (2026-07-24)
+
+Backend + contract are **implemented and verified green** (full gateway suite: 776 passed, 1 skipped; ruff clean on all new/changed files):
+- `context/mcp_host/`: `models.py`, `framing.py` (P34/35), `mcp_config.py` + `DEFAULT_CONFIG` (P1/2/3), `registry.py` (P10/11), `session.py` (P5/6/7 + units), `trust.py` (P18/19), `host.py` (P4/8/9/12/13/15/16/17/20/21/22/24/25).
+- `routes/mcp.py` (`/v1/mcp/{servers,reload,test}`, all `require_admission`; P23 + admission integration) wired into `app.py` (host constructed + `configure()` at build, started via `start_mcp` flag in lifespan so tests never spawn).
+- `toolsets.py`: additive `McpCallSeam` + `FullToolset.mcp_tools()`/`call_mcp_tool()` (P14); native tools untouched.
+- Shared type: `CommandEvent.mcpServerId` added, TS twin regenerated (`pnpm schema:generate`), cross-twin test green (R12).
+- `services/mcp_servers/`: `_mcp.py` scaffold + `web_search.py`/`docs.py`/`git_history.py` (P27–33) + Default_Config registration/auto-approve/coexistence integration.
+- Frontend: `CommandRow` MCP badge (R12.6/12.7) + `upsertWorkspaceServer` in `mcp-config.ts` (P26). ROW_COMPONENTS totality still green.
+
+**Remaining (2 items):**
+1. Task 10.2 (partial): the `McpCallSeam` is defined and the host loads, but it is **not yet threaded into the `FullToolset` built in `run_pipeline.py`**, so the (synchronous) ReAct apply loop cannot yet invoke MCP tools. This needs a sync→async bridge (make the apply step await MCP calls) — a larger pipeline change.
+2. Task 12.3: the Settings → MCP **management UI** (live list/add/edit/enable-disable/test/reload) is not built; the read-only preview remains. Its dependencies (routes + `upsertWorkspaceServer` + P26) are done.
+
+Note: the frontend **agent** test suite has pre-existing failures (36 on the committed baseline) introduced by the "Release v0.0.1 preview" commit — unrelated to this work (verified by stashing these edits: baseline 36 failed vs 35 with edits).
+
 ## Tasks
 
 - [ ] 1. Set up MCP host package structure and core interfaces

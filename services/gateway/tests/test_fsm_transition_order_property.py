@@ -32,13 +32,14 @@ Two complementary properties exercise the real :class:`FSM` against the real
 
 from __future__ import annotations
 
+import itertools
+
 import pytest
 from hypothesis import given, settings
 from hypothesis import strategies as st
-
 from zocai_gateway.fsm import (
-    LEGAL,
     FSM,
+    LEGAL,
     IllegalTransitionError,
 )
 from zocai_gateway.stages import Stage
@@ -125,6 +126,6 @@ def test_successful_run_advances_in_canonical_order(data: st.DataObject) -> None
     # The successful run reproduced the canonical order exactly — no skip/reorder.
     assert visited == CANONICAL_ORDER
     # And every consecutive pair is a member of the legal transition table.
-    for a, b in zip(visited, visited[1:]):
+    for a, b in itertools.pairwise(visited):
         assert b in LEGAL[a]
     assert fsm.is_terminal is True

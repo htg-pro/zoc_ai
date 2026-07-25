@@ -2,6 +2,11 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 
 import type { RunTrace } from "./agent-trace";
+import {
+  commitAgentEditBatch,
+  registerAgentEditTarget,
+  resetAgentEditBridgeForTests,
+} from "@/features/editor/agent-edit-bridge";
 import { useApp } from "@/lib/store";
 
 const mockDecision = vi.hoisted(() => vi.fn());
@@ -14,6 +19,7 @@ import { RunTraceCard } from "./RunTraceCard";
 
 afterEach(() => {
   cleanup();
+  resetAgentEditBridgeForTests();
   mockDecision.mockReset();
   useApp.setState({
     agentRunCheckpoints: {},
@@ -53,6 +59,10 @@ describe("RunTraceCard", () => {
   it("posts apply with only selected review files", async () => {
     mockDecision.mockResolvedValue(undefined);
     const trace = reviewTrace();
+    const applyA = vi.fn();
+    const applyB = vi.fn();
+    registerAgentEditTarget("/workspace/src/a.ts", applyA);
+    registerAgentEditTarget("/workspace/src/b.ts", applyB);
 
     render(<RunTraceCard trace={trace} />);
     expect(screen.getByTestId("diff-preview-modal")).toBeInTheDocument();
@@ -69,6 +79,9 @@ describe("RunTraceCard", () => {
         acceptedPaths: ["src/a.ts"],
       });
     });
+    expect(commitAgentEditBatch("run-review")).toBe(1);
+    await waitFor(() => expect(applyA).toHaveBeenCalledTimes(1));
+    expect(applyB).not.toHaveBeenCalled();
   });
 
   it("posts accept all and reject all review decisions from the modal", async () => {

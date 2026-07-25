@@ -1,114 +1,170 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   ChevronDown,
   Plus,
-  Search,
   SplitSquareHorizontal,
+  SplitSquareVertical,
   Terminal as TerminalIcon,
   Trash2,
   X,
 } from "lucide-react";
+import type { AgentEvents } from "@zoc-studio/shared-types";
+
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { useAgentStreamContext } from "@/features/agent/agent-stream-context";
+import { AgentTerminalPanes } from "./AgentTerminalPanes";
+import { useTerminalPaneShortcuts } from "./useTerminalPaneShortcuts";
+import { requestReveal, revealPosition } from "@/lib/editor-actions";
+import { joinPath } from "@/lib/paths";
 import { useApp } from "@/lib/store";
 import {
   createTerminal,
   disposeTerminal,
-  findInTerminal,
   hasTerminal,
   killTerminal,
-  mountTerminal,
   setTerminalCallbacks,
-  unmountTerminal,
 } from "@/lib/terminal-manager";
+import {
+  leaves,
+  MAX_PANES,
+  paneCount,
+  type TerminalPane as TerminalPaneLeaf,
+} from "@/lib/terminal-layout";
 import { cn } from "@/lib/utils";
 
+/** Live terminal dock backed by the bounded split-pane tree. */
 export function TerminalPane() {
-  const terminals = useApp((s) => s.terminals);
-  const activeId = useApp((s) => s.activeTerminalId);
-  const profiles = useApp((s) => s.terminalProfiles);
-  const split = useApp((s) => s.terminalSplit);
-  const newTerminal = useApp((s) => s.newTerminal);
-  const closeTerminal = useApp((s) => s.closeTerminal);
-  const setActiveTerminal = useApp((s) => s.setActiveTerminal);
-  const renameTerminal = useApp((s) => s.renameTerminal);
-  const toggleSplit = useApp((s) => s.toggleTerminalSplit);
-  const workspaceRoot = useApp((s) => s.workspaceRoot);
+  useTerminalPaneShortcuts();
+  const terminals = useApp((state) => state.terminals);
+  const activeId = useApp((state) => state.activeTerminalId);
+  const profiles = useApp((state) => state.terminalProfiles);
+  const layout = useApp((state) => state.terminalLayout);
+  const focusedPaneId = useApp((state) => state.focusedPaneId);
+  const closeTerminalPane = useApp((state) => state.closeTerminalPane);
+  const setActiveTerminal = useApp((state) => state.setActiveTerminal);
+  const renameTerminal = useApp((state) => state.renameTerminal);
+  const workspaceRoot = useApp((state) => state.workspaceRoot);
+  const sharedStream = useAgentStreamContext();
 
-  // Wire manager → store/editor once.
+  const commandEvents = useMemo(
+    () =>
+      (sharedStream?.events ?? []).filter(
+        (event): event is AgentEvents.CommandEvent => event.type === "command",
+      ),
+    [sharedStream?.events],
+  );
+  const panes = useMemo(() => leaves(layout), [layout]);
+  const atPaneLimit = paneCount(layout) >= MAX_PANES;
+
+  const addPane = useCallback(
+    (direction: "row" | "column", profileId?: string): void => {
+      const current = useApp.getState();
+      if (paneCount(current.terminalLayout) >= MAX_PANES) return;
+      const sessionId = current.newTerminal(profileId);
+      if (current.terminalLayout === null) {
+        useApp.getState().ensureTerminalPane(sessionId);
+      } else {
+        useApp.getState().splitActivePane(direction, sessionId);
+      }
+    },
+    [],
+  );
+
+  // Seed exactly one terminal/pane on first mount. Reading current state inside
+  // the effect keeps this idempotent under React StrictMode's effect replay.
+  useEffect(() => {
+    const current = useApp.getState();
+    if (current.terminalLayout !== null) return;
+    const existing =
+      current.terminals.find((terminal) => terminal.id === current.activeTerminalId)?.id ??
+      current.terminals[0]?.id;
+    const sessionId = existing ?? current.newTerminal();
+    useApp.getState().ensureTerminalPane(sessionId);
+  }, []);
+
+  // Reconcile every visible pane with one manager-owned xterm/PTTY instance.
+  useEffect(() => {
+    for (const pane of panes) {
+      if (hasTerminal(pane.sessionId)) continue;
+      const terminal = terminals.find((candidate) => candidate.id === pane.sessionId);
+      const profile =
+        profiles.find((candidate) => candidate.id === terminal?.profileId) ?? profiles[0];
+      if (profile) void createTerminal(pane.sessionId, profile, workspaceRoot);
+    }
+  }, [panes, profiles, terminals, workspaceRoot]);
+
+  // Wire PTY exits and clickable native xterm path links into store/editor state.
   useEffect(() => {
     setTerminalCallbacks({
       onExit: (id, code) => useApp.getState().setTerminalExited(id, code),
-      onOpenLink: (path, line) => {
-        const root = useApp.getState().workspaceRoot;
-        const abs =
-          path.startsWith("/") || /^[A-Za-z]:[\\/]/.test(path) || !root
+      onOpenLink: (path, line = 1) => {
+        const state = useApp.getState();
+        const absolute =
+          path.startsWith("/") || /^[A-Za-z]:[\\/]/.test(path) || !state.workspaceRoot
             ? path
-            : `${root.replace(/\/$/, "")}/${path}`;
-        void useApp.getState().openFile(abs);
-        void line; // line targeting lands with editor navigation (Phase 9)
+            : joinPath(state.workspaceRoot, path);
+        if (absolute === state.activeFile) {
+          void state.openFile(absolute);
+          revealPosition(line, 1);
+        } else {
+          requestReveal(absolute, line, 1);
+          void state.openFile(absolute);
+        }
       },
     });
   }, []);
 
-  // Auto-create the first terminal when the pane first appears with none.
-  useEffect(() => {
-    if (terminals.length === 0) newTerminal();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  const closePane = useCallback(
+    (pane: TerminalPaneLeaf): void => {
+      void disposeTerminal(pane.sessionId);
+      closeTerminalPane(pane.id);
+    },
+    [closeTerminalPane],
+  );
 
-  const profileFor = (profileId: string) => profiles.find((p) => p.id === profileId) ?? profiles[0];
-
-  // Reconcile live instances with store metadata: create missing, dispose removed.
-  useEffect(() => {
-    for (const t of terminals) {
-      if (!hasTerminal(t.id)) void createTerminal(t.id, profileFor(t.profileId), workspaceRoot);
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [terminals]);
-
-  const active = terminals.find((t) => t.id === activeId) ?? null;
-  // In split view, show the active terminal + the next one.
-  const secondary =
-    split && active
-      ? terminals[(terminals.findIndex((t) => t.id === active.id) + 1) % terminals.length]
-      : null;
+  const focusedPane = panes.find((pane) => pane.id === focusedPaneId) ?? null;
+  const focusedSessionId = focusedPane?.sessionId ?? activeId;
 
   return (
     <div className="flex h-full min-h-0 min-w-0 flex-col bg-[#0a0a0d]">
       <div className="flex h-8 shrink-0 items-center gap-1 border-b border-border bg-card/40 px-1.5">
         <div className="flex min-w-0 flex-1 items-center gap-0.5 overflow-x-auto" role="tablist">
-          {terminals.map((t) => (
-            <TerminalTab
-              key={t.id}
-              title={t.title}
-              status={t.status}
-              exitCode={t.exitCode}
-              active={t.id === activeId}
-              onSelect={() => setActiveTerminal(t.id)}
-              onClose={() => {
-                void disposeTerminal(t.id);
-                closeTerminal(t.id);
-              }}
-              onRename={(title) => renameTerminal(t.id, title)}
-            />
-          ))}
+          {panes.map((pane) => {
+            const terminal = terminals.find((candidate) => candidate.id === pane.sessionId);
+            return (
+              <TerminalTab
+                key={pane.id}
+                title={terminal?.title ?? "Terminal"}
+                status={terminal?.status ?? "running"}
+                exitCode={terminal?.exitCode ?? null}
+                active={pane.id === focusedPaneId}
+                onSelect={() => {
+                  setActiveTerminal(pane.sessionId);
+                  useApp.setState({ focusedPaneId: pane.id });
+                }}
+                onClose={() => closePane(pane)}
+                onRename={(title) => renameTerminal(pane.sessionId, title)}
+              />
+            );
+          })}
         </div>
+
         <div className="flex shrink-0 items-center gap-0.5">
           <div className="flex items-center">
             <Button
               size="icon"
               variant="ghost"
               className="h-6 w-6"
-              title="New Terminal"
-              aria-label="New Terminal"
-              onClick={() => newTerminal()}
+              title="New terminal pane"
+              aria-label="New terminal pane"
+              disabled={atPaneLimit}
+              onClick={() => addPane("row")}
             >
               <Plus className="h-3.5 w-3.5" />
             </Button>
@@ -116,18 +172,22 @@ export function TerminalPane() {
               <DropdownMenuTrigger asChild>
                 <button
                   type="button"
-                  className="flex h-6 w-4 items-center justify-center text-muted-foreground hover:text-foreground"
+                  className="flex h-6 w-4 items-center justify-center text-muted-foreground hover:text-foreground disabled:opacity-40"
                   aria-label="Select shell profile"
                   title="Select shell profile"
+                  disabled={atPaneLimit}
                 >
                   <ChevronDown className="h-3 w-3" />
                 </button>
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end">
-                {profiles.map((p) => (
-                  <DropdownMenuItem key={p.id} onSelect={() => newTerminal(p.id)}>
+                {profiles.map((profile) => (
+                  <DropdownMenuItem
+                    key={profile.id}
+                    onSelect={() => addPane("row", profile.id)}
+                  >
                     <TerminalIcon className="mr-2 h-3.5 w-3.5" />
-                    {p.name}
+                    {profile.name}
                   </DropdownMenuItem>
                 ))}
               </DropdownMenuContent>
@@ -136,23 +196,33 @@ export function TerminalPane() {
           <Button
             size="icon"
             variant="ghost"
-            className={cn("h-6 w-6", split && "text-primary")}
-            title="Split Terminal"
-            aria-label="Split Terminal"
-            aria-pressed={split}
-            onClick={toggleSplit}
-            disabled={terminals.length < 2}
+            className="h-6 w-6"
+            title="Split terminal right (Ctrl/Cmd+D)"
+            aria-label="Split terminal right"
+            disabled={atPaneLimit || layout === null}
+            onClick={() => addPane("row")}
           >
             <SplitSquareHorizontal className="h-3.5 w-3.5" />
           </Button>
-          {active && (
+          <Button
+            size="icon"
+            variant="ghost"
+            className="h-6 w-6"
+            title="Split terminal down (Ctrl/Cmd+Shift+D)"
+            aria-label="Split terminal down"
+            disabled={atPaneLimit || layout === null}
+            onClick={() => addPane("column")}
+          >
+            <SplitSquareVertical className="h-3.5 w-3.5" />
+          </Button>
+          {focusedSessionId && (
             <Button
               size="icon"
               variant="ghost"
               className="h-6 w-6 text-muted-foreground hover:text-destructive"
-              title="Kill Terminal"
-              aria-label="Kill Terminal"
-              onClick={() => void killTerminal(active.id)}
+              title="Kill terminal"
+              aria-label="Kill terminal"
+              onClick={() => void killTerminal(focusedSessionId)}
             >
               <Trash2 className="h-3.5 w-3.5" />
             </Button>
@@ -160,92 +230,15 @@ export function TerminalPane() {
         </div>
       </div>
 
-      <div className="flex min-h-0 flex-1">
-        {active ? (
-          <TerminalSurface key={active.id} id={active.id} />
+      <div className="min-h-0 flex-1">
+        {layout ? (
+          <AgentTerminalPanes commandEvents={commandEvents} />
         ) : (
-          <div className="flex flex-1 items-center justify-center text-xs text-muted-foreground">
-            No terminal. Click + to open one.
+          <div className="flex h-full items-center justify-center text-xs text-muted-foreground">
+            No terminal pane. Use + to open one.
           </div>
         )}
-        {secondary && secondary.id !== active?.id && (
-          <>
-            <div className="w-px bg-border" />
-            <TerminalSurface key={secondary.id} id={secondary.id} />
-          </>
-        )}
       </div>
-    </div>
-  );
-}
-
-/** Mounts a manager-owned terminal container into the DOM; unmounts (without
- *  disposing) on unmount so the session survives tab switches. Hosts a find box. */
-function TerminalSurface({ id }: { id: string }) {
-  const hostRef = useRef<HTMLDivElement>(null);
-  const [finding, setFinding] = useState(false);
-  const [query, setQuery] = useState("");
-
-  useEffect(() => {
-    const el = hostRef.current;
-    if (!el) return;
-    let cancelled = false;
-    // The instance may still be spawning; poll briefly until it exists.
-    const attach = () => {
-      if (cancelled) return;
-      if (hasTerminal(id)) mountTerminal(id, el);
-      else setTimeout(attach, 50);
-    };
-    attach();
-    return () => {
-      cancelled = true;
-      unmountTerminal(id);
-    };
-  }, [id]);
-
-  return (
-    <div className="relative flex min-h-0 min-w-0 flex-1 flex-col">
-      {finding && (
-        <div className="absolute right-2 top-2 z-10 flex items-center gap-1 rounded border border-border bg-card px-1 py-0.5 shadow">
-          <Search className="h-3 w-3 text-muted-foreground" />
-          <Input
-            autoFocus
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter") findInTerminal(id, query, e.shiftKey ? "prev" : "next");
-              else if (e.key === "Escape") setFinding(false);
-            }}
-            placeholder="Find"
-            className="h-6 w-40 text-[11px]"
-          />
-          <button type="button" aria-label="Close find" onClick={() => setFinding(false)}>
-            <X className="h-3 w-3 text-muted-foreground hover:text-foreground" />
-          </button>
-        </div>
-      )}
-      <button
-        type="button"
-        aria-label="Find in terminal"
-        title="Find (Ctrl/Cmd+F)"
-        onClick={() => setFinding((v) => !v)}
-        className={cn(
-          "absolute right-2 top-2 z-20 flex h-5 w-5 items-center justify-center rounded text-muted-foreground/60 hover:bg-accent hover:text-foreground",
-          finding && "hidden",
-        )}
-      >
-        <Search className="h-3 w-3" />
-      </button>
-      <div
-        ref={hostRef}
-        className="min-h-0 flex-1"
-        onKeyDownCapture={(e) => {
-          if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "f") {
-            e.preventDefault();
-            setFinding(true);
-          }
-        }}
-      />
     </div>
   );
 }
@@ -275,16 +268,18 @@ function TerminalTab({
       <input
         autoFocus
         value={draft}
-        onChange={(e) => setDraft(e.target.value)}
+        onChange={(event) => setDraft(event.target.value)}
         onBlur={() => {
           onRename(draft);
           setEditing(false);
         }}
-        onKeyDown={(e) => {
-          if (e.key === "Enter") {
+        onKeyDown={(event) => {
+          if (event.key === "Enter") {
             onRename(draft);
             setEditing(false);
-          } else if (e.key === "Escape") setEditing(false);
+          } else if (event.key === "Escape") {
+            setEditing(false);
+          }
         }}
         className="h-6 w-28 rounded border border-primary/50 bg-background px-1 text-[11px] outline-none"
       />
@@ -309,7 +304,10 @@ function TerminalTab({
       <span className="max-w-[140px] truncate">{title}</span>
       {status === "exited" && (
         <span
-          className={cn("font-mono text-[9px]", exitCode === 0 ? "text-emerald-500" : "text-destructive")}
+          className={cn(
+            "font-mono text-[9px]",
+            exitCode === 0 ? "text-emerald-500" : "text-destructive",
+          )}
           title={`Exited with code ${exitCode ?? "?"}`}
         >
           [{exitCode ?? "?"}]
@@ -318,11 +316,11 @@ function TerminalTab({
       <button
         type="button"
         aria-label={`Close ${title}`}
-        onClick={(e) => {
-          e.stopPropagation();
+        onClick={(event) => {
+          event.stopPropagation();
           onClose();
         }}
-        className="opacity-0 group-hover:opacity-100"
+        className="opacity-0 group-hover:opacity-100 focus:opacity-100"
       >
         <X className="h-3 w-3 hover:text-foreground" />
       </button>

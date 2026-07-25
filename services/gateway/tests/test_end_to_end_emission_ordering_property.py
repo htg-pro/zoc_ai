@@ -45,7 +45,6 @@ from pathlib import Path
 
 from hypothesis import given, settings
 from hypothesis import strategies as st
-
 from shared_schema.agent_events import (
     ApprovalEvent,
     CommandEvent,
@@ -57,7 +56,6 @@ from shared_schema.agent_events import (
     SummaryEvent,
     ThinkingEvent,
 )
-
 from zocai_gateway.app import _Run
 from zocai_gateway.memory.diary_worker import DiaryWorker
 from zocai_gateway.mode_router import AgentPath
@@ -128,7 +126,7 @@ def _events() -> st.SearchStrategy[object]:
     )
 
 
-def _drain_sse_queue(queue: "asyncio.Queue[dict | None]") -> list[Mapping[str, object]]:
+def _drain_sse_queue(queue: asyncio.Queue[dict | None]) -> list[Mapping[str, object]]:
     """Synchronously drain the run's FIFO SSE queue in order.
 
     ``put_nowait``/``get_nowait`` need no running loop, so we can read the

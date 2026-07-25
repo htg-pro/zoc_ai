@@ -39,10 +39,9 @@ const EXAMPLE = `{
 }`;
 
 /**
- * Extensions / plugins (develop.md Phase 12). Install from a manifest, toggle
- * enable/disable (which adds/removes contributed commands + views), and read
- * the plugin host log. Folder/zip install + sandboxed code execution land in
- * the desktop shell; this surface drives the manifest lifecycle.
+ * Extensions / plugins. Paste a manifest for metadata-only contributions,
+ * toggle enablement, and inspect host logs. Executable zip artifacts are
+ * installed through the Marketplace and run in dedicated workers.
  */
 export function ExtensionsSection() {
   const [, setTick] = useState(0);
@@ -85,9 +84,9 @@ export function ExtensionsSection() {
       <div className="flex items-start gap-2 rounded border border-border bg-accent/40 px-3 py-2 text-xs text-muted-foreground">
         <Blocks className="mt-0.5 h-3.5 w-3.5 shrink-0" />
         <span>
-          Installing from a local folder or <code className="text-xs">.zip</code>, sandboxed code
-          execution, and Open VSX run in the desktop shell. Here you can install a manifest, manage
-          contributions, and read the host log.
+          Marketplace zip artifacts run in dedicated worker sandboxes. A manifest pasted here is
+          metadata-only: views remain available, but commands stay inactive without registered worker
+          handlers.
         </span>
       </div>
 

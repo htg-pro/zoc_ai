@@ -8,6 +8,7 @@ import {
   Keyboard,
   Palette,
   Plug,
+  ScrollText,
   Search,
   ShieldAlert,
   ShieldCheck,
@@ -28,6 +29,7 @@ import { ProfilesSection } from "./sections/Profiles";
 import { McpSection } from "./sections/Mcp";
 import { ExtensionsSection } from "./sections/Extensions";
 import { TrustSection } from "./sections/Trust";
+import { AuditLogSection } from "./sections/AuditLog";
 import { AboutSection } from "./sections/About";
 import { cn } from "@/lib/utils";
 
@@ -38,6 +40,7 @@ type Tab =
   | "indexer"
   | "permissions"
   | "trust"
+  | "audit-log"
   | "appearance"
   | "keybindings"
   | "profiles"
@@ -52,6 +55,7 @@ const TABS: { key: Tab; label: string; Icon: typeof Cpu }[] = [
   { key: "indexer", label: "Indexer", Icon: Database },
   { key: "permissions", label: "Permissions", Icon: ShieldCheck },
   { key: "trust", label: "Trust & Safety", Icon: ShieldAlert },
+  { key: "audit-log", label: "Audit Log", Icon: ScrollText },
   { key: "appearance", label: "Appearance", Icon: Palette },
   { key: "keybindings", label: "Keybindings", Icon: Keyboard },
   { key: "profiles", label: "Profiles", Icon: UserCog },
@@ -119,6 +123,7 @@ export function SettingsView() {
           {tab === "indexer" && <IndexerSection />}
           {tab === "permissions" && <PermissionsSection />}
           {tab === "trust" && <TrustSection />}
+          {tab === "audit-log" && <AuditLogSection />}
           {tab === "appearance" && <AppearanceSection />}
           {tab === "keybindings" && <KeybindingsSection />}
           {tab === "profiles" && <ProfilesSection />}

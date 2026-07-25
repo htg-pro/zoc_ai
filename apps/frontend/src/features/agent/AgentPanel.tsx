@@ -63,9 +63,9 @@ export function AgentPanel() {
             </span>
             <div className="min-w-0">
               <div className="text-[13px] font-semibold text-[#FAFAFA] leading-tight">
-                Zoc{" "}
+                Zoc
                 <span className={cn("font-semibold", isAsk ? "text-[#60a5fa]" : "text-[#9B6AF1]")}>
-                  {isAsk ? "Ask" : "Agent"}
+                  {isAsk ? " Ask" : " Agent"}
                 </span>
               </div>
               <div className="text-[10px] text-[#52525B] leading-tight mt-0.5">
@@ -143,6 +143,7 @@ export function AgentPanel() {
 
             {/* Autonomy badge */}
             <span
+              aria-label={`Autonomy level: ${autonomy}`}
               className="flex items-center gap-1.5 rounded-md border border-[#26262B] bg-[#15151A] px-2 py-0.5"
               title={`Autonomy: ${autonomy}`}
             >

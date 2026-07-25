@@ -3,6 +3,14 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 vi.mock("../agent-port", () => ({
   resolveAgentPort: vi.fn(async () => 8765),
 }));
+vi.mock("../active-model-context", () => ({
+  resolveActiveModelRequestContext: vi.fn(async () => ({
+    provider: "openai",
+    model: "gpt-4o-mini",
+    apiKey: "test-key",
+    baseUrl: "https://api.example/v1",
+  })),
+}));
 
 import { streamCompletion } from "../completions-client";
 
@@ -42,6 +50,18 @@ describe("completions-client streamCompletion (task 10.2)", () => {
     const tokens: string[] = [];
     await streamCompletion(body, (c) => tokens.push(c), new AbortController().signal);
     expect(tokens).toEqual(["foo", "(", "bar)"]);
+
+    const [, init] = (fetch as unknown as ReturnType<typeof vi.fn>).mock.calls[0] as [
+      string,
+      RequestInit,
+    ];
+    expect(JSON.parse(init.body as string)).toMatchObject({
+      ...body,
+      provider: "openai",
+      model: "gpt-4o-mini",
+      apiKey: "test-key",
+      baseUrl: "https://api.example/v1",
+    });
   });
 
   it("stops forwarding at the done terminal", async () => {

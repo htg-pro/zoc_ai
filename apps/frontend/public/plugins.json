@@ -1,0 +1,35 @@
+[
+  {
+    "id": "zoc.hello-world",
+    "name": "Hello World",
+    "description": "A tiny starter plugin that registers a command greeting you from a sandboxed worker.",
+    "author": "Zoc",
+    "version": "1.0.0",
+    "tags": ["example", "starter"],
+    "downloadUrl": "",
+    "stars": 42,
+    "verified": true
+  },
+  {
+    "id": "zoc.word-count",
+    "name": "Word Count",
+    "description": "Shows the word and character count of the current editor selection in a status message.",
+    "author": "Zoc",
+    "version": "0.2.0",
+    "tags": ["editor", "productivity"],
+    "downloadUrl": "",
+    "stars": 17,
+    "verified": true
+  },
+  {
+    "id": "community.todo-highlighter",
+    "name": "TODO Highlighter",
+    "description": "Community plugin that surfaces TODO/FIXME markers from the active file.",
+    "author": "community",
+    "version": "0.1.3",
+    "tags": ["editor", "community"],
+    "downloadUrl": "",
+    "stars": 5,
+    "verified": false
+  }
+]

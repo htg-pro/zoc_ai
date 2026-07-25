@@ -33,7 +33,6 @@ from pathlib import Path
 
 from hypothesis import HealthCheck, given, settings
 from hypothesis import strategies as st
-
 from zocai_gateway.memory import (
     LOG_MAX_CHARS,
     SCHEMA_KEYS,

@@ -144,7 +144,7 @@ def _detect_system_memory_gb() -> float | None:
     Any failure or non-positive reading yields ``None``.
     """
     try:
-        import psutil
+        import psutil  # type: ignore[import-untyped]
 
         total_bytes = int(psutil.virtual_memory().total)
         return _bytes_to_gb(total_bytes)

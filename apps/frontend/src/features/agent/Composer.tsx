@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { ArrowUp, Paperclip, ShieldCheck, Square } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
@@ -15,6 +15,8 @@ import { detectMentionQuery, applyMention } from "@/lib/context-mentions";
 import { basename } from "@/lib/paths";
 import { getActiveSelection } from "@/lib/editor-actions";
 import { resolveSlashCommand } from "@/lib/slash-commands";
+import { detectDestructiveIntent } from "@/lib/destructive-intent";
+import { setRunMode } from "@/lib/trust";
 
 const AUTONOMY_CYCLE: AutonomyLevel[] = ["Low", "Medium", "High"];
 
@@ -51,6 +53,10 @@ export function Composer() {
   const isAsk    = agentMode === "ask";
   const hasText  = !!value.trim();
 
+  // Part 7.1: scan the draft for destructive intent so we can warn inline and
+  // drop to a cautious run mode before anything executes.
+  const { destructive, matched } = useMemo(() => detectDestructiveIntent(value), [value]);
+
   const cycleAutonomy = () => {
     const next = AUTONOMY_CYCLE[(AUTONOMY_CYCLE.indexOf(autonomy) + 1) % AUTONOMY_CYCLE.length];
     setAutonomy(next);
@@ -62,6 +68,15 @@ export function Composer() {
     el.style.height = "0px";
     el.style.height = `${Math.min(Math.max(el.scrollHeight, 44), 160)}px`;
   }, [value]);
+
+  // Cautious mode: as soon as destructive intent appears, force low autonomy
+  // and ask-every-time permission handling before anything executes.
+  useEffect(() => {
+    if (destructive) {
+      setAutonomy("Low");
+      setRunMode("ask");
+    }
+  }, [destructive, setAutonomy]);
 
   const submit = () => {
     const result = validateMessage(value);
@@ -119,6 +134,16 @@ export function Composer() {
       )}
 
       <MessageQueue />
+
+      {/* Part 7.1: destructive-intent warning — cautious mode is now active. */}
+      {destructive && (
+        <div
+          role="alert"
+          className="mb-2 flex items-center gap-1.5 rounded-lg border border-[#fb923c]/30 bg-[#fb923c]/10 px-2.5 py-1.5 text-[11px] text-[#fb923c]"
+        >
+          ⚠ Destructive intent detected ({matched}). Running in cautious mode.
+        </div>
+      )}
 
       {/* Main input box */}
       <div className="relative rounded-xl border border-[#26262B] bg-[#111116] transition-colors focus-within:border-[#3F3F46]">
@@ -241,6 +266,7 @@ export function Composer() {
           {/* Autonomy / read-only indicator */}
           {isAsk ? (
             <span
+              aria-label="Read-only mode"
               className="flex items-center gap-1 rounded-md border border-[#60a5fa]/20 bg-[#60a5fa]/8 px-2 py-0.5 text-[10.5px] text-[#60a5fa]"
               title="Ask mode: no files will change"
             >
@@ -250,6 +276,7 @@ export function Composer() {
             <button
               type="button"
               onClick={cycleAutonomy}
+              aria-label={`Autonomy level: ${autonomy}`}
               className="flex items-center gap-1.5 rounded-md border border-[#1E1E23] bg-[#0F0F14] px-2 py-0.5 text-[10.5px] text-[#71717A] transition-colors hover:bg-[#141419]"
               title={`Autonomy: ${autonomy} — click to cycle`}
             >

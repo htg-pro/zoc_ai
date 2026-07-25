@@ -762,7 +762,6 @@ __all__ = [
     "IndexConfig",
     "IndexQueryResult",
     "IndexStatus",
-    "WorkspaceIndexProgress",
     "InlineEditResult",
     "LogEvent",
     "MemoryStats",
@@ -789,8 +788,8 @@ __all__ = [
     "ProviderDescriptor",
     "ProviderKind",
     "RunAgentRequest",
-    "RunModelBenchmarkRequest",
     "RunLifecycleEvent",
+    "RunModelBenchmarkRequest",
     "RunSlashCommandRequest",
     "Session",
     "SessionStatus",
@@ -816,4 +815,5 @@ __all__ = [
     "UpdateIndexConfigRequest",
     "UpdateSessionRequest",
     "UpdateSettingsRequest",
+    "WorkspaceIndexProgress",
 ]

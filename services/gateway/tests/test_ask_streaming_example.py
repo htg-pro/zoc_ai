@@ -24,7 +24,6 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
-
 from zocai_gateway.channel import AskChannel
 from zocai_gateway.context.rag_matcher import RagFragment
 from zocai_gateway.mode_router import (
@@ -36,7 +35,6 @@ from zocai_gateway.mode_router import (
     Mode,
     SwitchToAgentMessage,
 )
-
 
 # --- Test doubles -----------------------------------------------------------
 
@@ -155,7 +153,7 @@ def test_edit_request_returns_switch_message_without_streaming(
 
     matcher = _OrderRecordingRagMatcher(log=[])
     sink = _CollectingTextSink()
-    channel = AskChannel(sink)
+    AskChannel(sink)
 
     def generate(prompt: str, context: AskContext) -> str:  # pragma: no cover
         raise AssertionError("generate must not run for an edit request")

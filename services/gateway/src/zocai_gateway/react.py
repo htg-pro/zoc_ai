@@ -44,6 +44,8 @@ from shared_schema.agent_events import (
     BudgetEvent,
     CommandEvent,
     EditFileEvent,
+    PermissionEvent,
+    PermissionKind,
     PlanUpdateEvent,
 )
 
@@ -57,6 +59,7 @@ from zocai_gateway.model_runtime import (
     generate_with_tools,
 )
 from zocai_gateway.orchestrator import Orchestrator
+from zocai_gateway.permissions import Decision
 from zocai_gateway.plan import AgentPlan
 from zocai_gateway.stages import Stage
 from zocai_gateway.toolsets import FullToolset, ReadOnlyViolation
@@ -66,6 +69,9 @@ if TYPE_CHECKING:  # pragma: no cover - typing only, avoids a run_pipeline cycle
 
 __all__ = [
     "TOOL_SPECS",
+    "McpDispatch",
+    "PermissionDecisionWaiter",
+    "PermissionGate",
     "ReActExecutor",
     "ReActOutcome",
     "ReAct_System_Prompt",
@@ -149,6 +155,9 @@ TOOL_SPECS: tuple[ToolSpec, ...] = (
 #: not a file, so it is neither gated nor counted (design tool→event table).
 _COUNTED_MUTATIONS = frozenset({"write_file", "delete_file", "move_file"})
 
+#: Bounded wait for a developer's interactive approval before a run gives up (Part 7.1).
+PERMISSION_DECISION_TIMEOUT = 300.0
+
 
 class ToolModelFn(Protocol):
     """The injectable model-boundary seam the executor calls each step (R8.2)."""
@@ -162,6 +171,23 @@ class ToolModelFn(Protocol):
         tool_history: Sequence[Mapping[str, Any]] = ...,
         timeout: float = ...,
     ) -> ModelToolResponse: ...
+
+
+#: Sync dispatch bridge for one MCP tool call: given the Namespaced_Tool_Name and
+#: arguments, returns ``(ok, observation_text)``. The run pipeline binds this to
+#: the async ``MCPHost`` via ``run_coroutine_threadsafe`` (Part 4, §4.1), so the
+#: synchronous ReAct loop stays decoupled from the MCP host and its types.
+McpDispatch = Callable[[str, Mapping[str, Any]], tuple[bool, str]]
+
+
+#: Trust gate for every agent tool (Part 7.1): given ``(action_kind,
+#: tool_name, target)`` it returns the full policy decision. The executor emits
+#: that decision to the run audit stream before it allows, denies, or prompts.
+PermissionGate = Callable[[str, str, str], Decision]
+#: Blocking waiter for an interactive permission decision (Part 7.1): given a
+#: timeout, returns the recorded decision (a ``.decision`` verdict holder) or
+#: ``None`` on timeout. Matches the pipeline's ``ReviewDecisionWaiter`` shape.
+PermissionDecisionWaiter = Callable[[float | None], object | None]
 
 
 # ── Data models ──────────────────────────────────────────────────────────────
@@ -257,6 +283,10 @@ class ReActExecutor:
     tokens_used: int = 0
     run_with_tools: ToolModelFn = generate_with_tools
     authorize_write: Callable[[str], bool] | None = None
+    mcp_call: McpDispatch | None = None
+    check_permission: PermissionGate | None = None
+    wait_for_permission: PermissionDecisionWaiter | None = None
+    _mcp_names: frozenset[str] = field(default_factory=frozenset, init=False)
 
     MAX_STEPS: ClassVar[int] = 30
 
@@ -267,6 +297,9 @@ class ReActExecutor:
         satisfied: set[int] = set()
         total_steps = len(self.plan.steps)
         system_prompt = self._system_prompt()
+        mcp_specs = self._mcp_specs()
+        self._mcp_names = frozenset(spec.name for spec in mcp_specs)
+        tools = [*TOOL_SPECS, *mcp_specs]
 
         paused = False
         step_budget_exhausted = False
@@ -276,7 +309,7 @@ class ReActExecutor:
             response = self.run_with_tools(
                 self.request,
                 system_prompt=system_prompt,
-                tools=list(TOOL_SPECS),
+                tools=tools,
                 tool_history=history.as_messages(),
             )
 
@@ -294,20 +327,20 @@ class ReActExecutor:
             stop_loop = False
             for call in response.tool_calls:
                 if self.authorize_write is not None and any(
-                    not self.authorize_write(path)
-                    for path in self._write_paths(call)
+                    not self.authorize_write(path) for path in self._write_paths(call)
                 ):
                     if self.orchestrator.fsm.current is not Stage.PAUSED:
-                        self.orchestrator.fsm.pause(
-                            "write approval rejected or unavailable"
-                        )
+                        self.orchestrator.fsm.pause("write approval rejected or unavailable")
                     paused = True
                     stopped_reason = "paused_approval"
                     stop_loop = True
                     break
                 # R10.2/10.7: gate a counted mutation on the file-iteration
                 # ceiling *before* it runs; pause + approval at the ceiling.
-                if call.name in _COUNTED_MUTATIONS and not self.orchestrator.budget.before_file_op():
+                if (
+                    call.name in _COUNTED_MUTATIONS
+                    and not self.orchestrator.budget.before_file_op()
+                ):
                     self._pause_for_budget()
                     paused = True
                     stopped_reason = "paused_budget"
@@ -368,6 +401,21 @@ class ReActExecutor:
             prompt = f"{prompt}\n\nVerification command: {self.plan.verification_command}"
         return prompt
 
+    def _mcp_specs(self) -> list[ToolSpec]:
+        """Aggregated MCP tools presented to the model beside the native tools."""
+        if self.mcp_call is None:
+            return []
+        specs: list[ToolSpec] = []
+        for record in self.toolset.mcp_tools():
+            schema = dict(record.input_schema) or {"type": "object", "properties": {}}
+            description = record.description or (
+                f"MCP tool {record.bare_name} (server {record.server_id})"
+            )
+            specs.append(
+                ToolSpec(name=record.namespaced_name, description=description, parameters=schema)
+            )
+        return specs
+
     # -- dispatch (R9.4) ----------------------------------------------------
 
     @staticmethod
@@ -384,6 +432,59 @@ class ReActExecutor:
     def _dispatch(self, call: ToolCall) -> _DispatchResult:
         """Route ``call`` through the FullToolset only, catching failures (R9.4/9.5/9.6)."""
         name = call.name
+        # Part 7.1: every tool is evaluated, including reads and MCP calls.
+        # Emit the full policy decision before execution so the frontend audit
+        # log observes allows, denials, and prompts with one ordered run id.
+        if self.check_permission is not None:
+            kind, tool_name, target = _permission_request(call, is_mcp=name in self._mcp_names)
+            decision = self.check_permission(kind, tool_name, target)
+            self.emit(
+                PermissionEvent(
+                    seq=0,
+                    run_id=self.run_id,
+                    ts=_now(),
+                    kind=kind,
+                    name=tool_name,
+                    target=target or None,
+                    effect=decision.effect,
+                    reason=decision.reason,
+                )
+            )
+            if decision.effect != "allow":
+                approved = False
+                if decision.effect == "prompt" and self.wait_for_permission is not None:
+                    self.emit(
+                        ApprovalEvent(
+                            seq=0,
+                            run_id=self.run_id,
+                            ts=_now(),
+                            prompt=(
+                                f"{decision.reason} Permission required for {tool_name!r}"
+                                f" ({target!r}); approve to proceed or reject to skip."
+                            ),
+                        )
+                    )
+                    verdict = self.wait_for_permission(PERMISSION_DECISION_TIMEOUT)
+                    approved = (
+                        verdict is not None and getattr(verdict, "decision", None) == "approve"
+                    )
+                if not approved:
+                    return _DispatchResult(
+                        observation=ToolObservation(
+                            call.id,
+                            ok=False,
+                            content=(
+                                f"permission {decision.effect}: {kind} {tool_name!r} "
+                                f"for {target!r} — {decision.reason}"
+                            ),
+                        )
+                    )
+
+        if self.mcp_call is not None and name in self._mcp_names:
+            ok, content = self.mcp_call(name, call.arguments)  # aggregated MCP tool (Part 4)
+            return _DispatchResult(
+                observation=ToolObservation(call.id, ok=ok, content=_clip(content))
+            )
         if name == "read_file":
             return self._dispatch_read(call)
         if name == "write_file":
@@ -631,8 +732,10 @@ class ReActExecutor:
         )
 
     def _mark_active(self, call: ToolCall) -> None:
-        path = _arg_str(call.arguments, "dst") if call.name == "move_file" else _arg_str(
-            call.arguments, "path"
+        path = (
+            _arg_str(call.arguments, "dst")
+            if call.name == "move_file"
+            else _arg_str(call.arguments, "path")
         )
         if path and path not in self.orchestrator.active_file_markers:
             self.orchestrator.active_file_markers.append(path)
@@ -664,6 +767,17 @@ def _arg_list(arguments: Mapping[str, Any], key: str) -> list[str]:
     if isinstance(value, str) and value:
         return [value]
     return []
+
+
+def _permission_request(call: ToolCall, *, is_mcp: bool = False) -> tuple[PermissionKind, str, str]:
+    """Map a tool call to ``(action_kind, tool_name, target)`` for policy and audit."""
+    if is_mcp:
+        return "mcp", call.name, call.name
+    if call.name == "run_shell":
+        return "terminal", call.name, " ".join(_arg_list(call.arguments, "argv"))
+    if call.name == "move_file":
+        return "fs", call.name, _arg_str(call.arguments, "dst")
+    return "fs", call.name, _arg_str(call.arguments, "path")
 
 
 def _normalize_path(path: str) -> str:

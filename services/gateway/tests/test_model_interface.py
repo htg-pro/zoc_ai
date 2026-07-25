@@ -12,7 +12,6 @@ from __future__ import annotations
 from dataclasses import fields
 
 import pytest
-
 from zocai_gateway.model_interface import (
     Cloud,
     Edge,

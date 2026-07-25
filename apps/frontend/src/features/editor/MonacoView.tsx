@@ -22,6 +22,15 @@ import {
 } from "./lsp/monaco-services";
 import { createInlineCompletionsProvider } from "./inline-completions";
 import { streamCompletion } from "@/lib/completions-client";
+import { toast } from "@/components/ui/toast";
+import { InlineEditOverlay, type InlineEditOverlayContext } from "./InlineEditOverlay";
+import {
+  AgentEditAnimator,
+  type AgentEditMeta,
+  type AnimatorEditorHandle,
+  type PlannedEdit,
+} from "./AgentEditAnimator";
+import { registerAgentEditTarget } from "./agent-edit-bridge";
 
 const Editor = lazy(async () => {
   // `monaco-vscode-api` must initialize before the first editor is created.
@@ -78,7 +87,11 @@ export function MonacoView({
     position: { lineNumber: number; column: number };
   } | null>(null);
   const inlineCompletionsRef = useRef<{ dispose(): void } | null>(null);
+  const agentAnimatorRef = useRef<AgentEditAnimator | null>(null);
   const [mountTick, setMountTick] = useState(0);
+  const [inlineHintVisible, setInlineHintVisible] = useState(false);
+  // Part 8.2: local ⌘K inline-edit overlay state (no store coupling).
+  const [inlineEditCtx, setInlineEditCtx] = useState<InlineEditOverlayContext | null>(null);
 
   const editorOptions = useMemo(
     () => ({
@@ -97,6 +110,7 @@ export function MonacoView({
       smoothScrolling: true,
       cursorBlinking: "smooth" as const,
       cursorSmoothCaretAnimation: "on" as const,
+      inlineSuggest: { enabled: true, showToolbar: "onHover" as const },
       padding: { top: 12 },
       scrollbar: { verticalScrollbarSize: 8, horizontalScrollbarSize: 8 },
     }),
@@ -117,9 +131,7 @@ export function MonacoView({
       monaco as unknown as Parameters<typeof createInlineCompletionsProvider>[0],
       {
         streamCompletion,
-        rerender: () => {
-          editor.trigger?.("inline-completions", "editor.action.inlineSuggest.trigger", {});
-        },
+        onGhostTextChange: (text) => setInlineHintVisible(text.length > 0),
       },
     );
     setActiveEditor(editor as never);
@@ -153,22 +165,41 @@ export function MonacoView({
         const model = ed.getModel();
         const sel = ed.getSelection();
         if (!model || !sel) return;
-        const start = model.getOffsetAt(sel.getStartPosition());
-        const end = model.getOffsetAt(sel.getEndPosition());
-        if (start === end) return; // require a non-empty selection
+        let startPosition: { lineNumber: number; column: number } = sel.getStartPosition();
+        let start = model.getOffsetAt(startPosition);
+        let end = model.getOffsetAt(sel.getEndPosition());
+        let selection = model.getValueInRange(sel);
+
+        // Cursor-style fallback: with no selection, edit the complete current
+        // line (including an empty line, which permits an insertion).
+        if (start === end) {
+          const lineNumber = startPosition.lineNumber;
+          startPosition = { lineNumber, column: 1 };
+          start = model.getOffsetAt(startPosition);
+          end = model.getOffsetAt({
+            lineNumber,
+            column: model.getLineMaxColumn(lineNumber),
+          });
+          selection = model.getLineContent(lineNumber);
+        }
+
         const full = model.getValue();
-        const WINDOW = 800;
+        const WINDOW = 200;
         const state = useApp.getState();
         const path = state.activeFile ?? "";
-        const language = state.openFiles.find((f) => f.path === path)?.language ?? null;
-        state.openInlineEdit({
+        const language = state.openFiles.find((f) => f.path === path)?.language ?? "";
+        const visiblePosition = ed.getScrolledVisiblePosition(startPosition);
+        const anchorTop = Math.max(8, (visiblePosition?.top ?? 52) - 44);
+        setInlineEditCtx({
           filePath: path,
           language,
-          start,
-          end,
-          original: model.getValueInRange(sel),
+          selection,
           prefix: full.slice(Math.max(0, start - WINDOW), start),
           suffix: full.slice(end, Math.min(full.length, end + WINDOW)),
+          start,
+          end,
+          fullText: full,
+          anchorTop,
         });
       },
     });
@@ -180,6 +211,62 @@ export function MonacoView({
     window.requestAnimationFrame(() => window.requestAnimationFrame(layout));
     setMountTick((n) => n + 1);
   }, []);
+
+  // Mount one persistent animator for both approved Agent edits and Cmd+K.
+  // Review diffs are dispatched here only after the gateway's post-commit
+  // summary, so the live buffer never changes before user approval succeeds.
+  useEffect(() => {
+    if (mountTick === 0) return;
+    const editor = editorRef.current as unknown as AnimatorEditorHandle | null;
+    if (!editor?.createDecorationsCollection) return;
+
+    const animator = new AgentEditAnimator({
+      editor,
+      cadenceMs: reducedMotion ? 0 : 50,
+      holdMs: reducedMotion ? 200 : 1500,
+      toast: {
+        success: (message, options) => void toast.success(message, options),
+        error: (message, options) => void toast.error(message, options),
+      },
+    });
+    agentAnimatorRef.current = animator;
+    const unregister = registerAgentEditTarget(file.path, async (application) => {
+      const openFile = useApp.getState().openFiles.find((open) => open.path === file.path);
+      if (openFile?.dirty) {
+        toast.warning("Agent changes were applied on disk, but this buffer has unsaved edits", {
+          description: file.path,
+        });
+        return;
+      }
+      const applied = await animator.applyEdits(application.edits, {
+        filePath: file.path,
+        adds: application.adds,
+        dels: application.dels,
+      });
+      if (applied.length !== application.edits.length) return;
+      const content = editor.getModel()?.getValue();
+      if (content === undefined) return;
+      useApp.setState((state) => ({
+        openFiles: state.openFiles.map((open) =>
+          open.path === file.path ? { ...open, content, dirty: false } : open,
+        ),
+      }));
+    });
+
+    return () => {
+      unregister();
+      animator.dispose();
+      if (agentAnimatorRef.current === animator) agentAnimatorRef.current = null;
+    };
+  }, [file.path, mountTick, reducedMotion]);
+
+  const applyAnimatedPlan = useCallback(
+    (plan: PlannedEdit[], meta?: AgentEditMeta): Promise<PlannedEdit[]> => {
+      const animator = agentAnimatorRef.current;
+      return animator ? animator.applyPlan(plan, meta) : Promise.resolve([]);
+    },
+    [],
+  );
 
   // Agent-editing decorations + caret driver.
   useEffect(() => {
@@ -356,7 +443,7 @@ export function MonacoView({
   }, [file.path, mountTick]);
 
   return (
-    <div className="flex h-full min-h-0 w-full min-w-0 flex-1 overflow-hidden bg-[#1e1e1e]">
+    <div className="relative flex h-full min-h-0 w-full min-w-0 flex-1 overflow-hidden bg-[#1e1e1e]">
       <EditorLoadBoundary file={file}>
         <Suspense fallback={<EditorFallback file={file} />}>
           <Editor
@@ -377,6 +464,22 @@ export function MonacoView({
           />
         </Suspense>
       </EditorLoadBoundary>
+      {inlineHintVisible && !inlineEditCtx ? (
+        <div
+          role="status"
+          className="pointer-events-none absolute bottom-3 right-3 z-10 rounded border border-white/10 bg-black/55 px-2 py-1 text-[10px] text-white/45 shadow-sm"
+        >
+          Tab to accept
+        </div>
+      ) : null}
+      {/* Part 8.2: ⌘K inline-edit overlay — mounted inside the editor, local state. */}
+      <InlineEditOverlay
+        context={inlineEditCtx}
+        getEditor={() => editorRef.current as unknown as AnimatorEditorHandle | null}
+        applyPlan={applyAnimatedPlan}
+        cancelApply={() => agentAnimatorRef.current?.cancel()}
+        onClose={() => setInlineEditCtx(null)}
+      />
     </div>
   );
 }

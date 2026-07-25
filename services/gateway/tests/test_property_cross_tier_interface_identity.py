@@ -38,7 +38,6 @@ from dataclasses import fields
 
 from hypothesis import given, settings
 from hypothesis import strategies as st
-
 from zocai_gateway.model_interface import (
     Cloud,
     Edge,

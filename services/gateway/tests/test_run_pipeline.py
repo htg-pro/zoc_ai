@@ -8,10 +8,12 @@ ceiling (R11.1), and verified-run trajectory recording (R12).
 
 from __future__ import annotations
 
+import subprocess
 from pathlib import Path
 from types import SimpleNamespace
 
 from zocai_evolution import EvolutionEngine
+from zocai_gateway.atomic_fs import CheckpointError
 from zocai_gateway.context.steering_compiler import SteeringPayload
 from zocai_gateway.context.token_gate import TokenGateResult
 from zocai_gateway.edits import EditPlan, PlannedChange
@@ -22,6 +24,7 @@ from zocai_gateway.memory.state_wrapper import FailureRecord, StateWrapperStore
 from zocai_gateway.mode_router import AgentRunRequest, Mode
 from zocai_gateway.model_allocator import Allocation
 from zocai_gateway.model_interface import ModelTier
+from zocai_gateway.permissions import Decision
 from zocai_gateway.project_tests import ProjectTestResult
 from zocai_gateway.run_pipeline import (
     AllocationSignals,
@@ -37,6 +40,16 @@ def _gate() -> tuple[list[dict[str, object]], EmitGate]:
     events: list[dict[str, object]] = []
     gate = EmitGate(sink=lambda e: events.append(dict(e)))
     return events, gate
+
+
+def _git(root: Path, *args: str) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        ["git", *args],
+        cwd=root,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
 
 
 def test_runtime_agent_brain_parses_model_json(monkeypatch) -> None:
@@ -116,18 +129,14 @@ def test_runtime_brain_injects_failed_test_output_into_remediation_call(monkeypa
 
 
 def test_agent_runs_detected_tests_after_writes_and_emits_counts(tmp_path: Path) -> None:
-    (tmp_path / "package.json").write_text(
-        '{"scripts":{"test":"vitest run"}}', encoding="utf-8"
-    )
+    (tmp_path / "package.json").write_text('{"scripts":{"test":"vitest run"}}', encoding="utf-8")
     events, gate = _gate()
 
     class EditingBrain(DefaultAgentBrain):
         def edit_plan(self, request: AgentRunRequest, context: RunContext) -> EditPlan:
             return EditPlan(
                 reasoning="write code",
-                changes=(
-                    PlannedChange(path="src.txt", content="code\n", diff="+code"),
-                ),
+                changes=(PlannedChange(path="src.txt", content="code\n", diff="+code"),),
             )
 
     calls: list[str] = []
@@ -161,6 +170,86 @@ def test_agent_runs_detected_tests_after_writes_and_emits_counts(tmp_path: Path)
     assert test_event["passed"] == 3
     assert test_event["failed"] == 2
     assert test_event["status"] == "fail"
+
+
+def test_single_pass_write_is_permission_checked_before_mutation(tmp_path: Path) -> None:
+    events, gate = _gate()
+
+    class EditingBrain(DefaultAgentBrain):
+        def edit_plan(self, request: AgentRunRequest, context: RunContext) -> EditPlan:
+            return EditPlan(
+                reasoning="write code",
+                changes=(PlannedChange(path="blocked.txt", content="nope\n", diff="+nope"),),
+            )
+
+    checks: list[tuple[str, str, str]] = []
+
+    def deny_write(kind: str, name: str, target: str) -> Decision:
+        checks.append((kind, name, target))
+        return Decision("deny", "test policy blocks this write")
+
+    result = RunPipeline(
+        AgentRunRequest(prompt="write code", mode="agent"),
+        "run-single-pass-denied",
+        gate=gate,
+        text_sink=lambda _chunk: None,
+        close=lambda: None,
+        workspace_root=tmp_path,
+        brain=EditingBrain(),
+        check_permission=deny_write,
+    ).run()
+
+    assert result.stage is Stage.ERROR_CLOSED
+    assert checks == [("fs", "write_file", "blocked.txt")]
+    assert not (tmp_path / "blocked.txt").exists()
+    permission = next(event for event in events if event["type"] == "permission")
+    assert permission["runId"] == "run-single-pass-denied"
+    assert permission["effect"] == "deny"
+    assert permission["reason"] == "test policy blocks this write"
+
+
+def test_detected_tests_are_permission_checked_before_execution(tmp_path: Path) -> None:
+    (tmp_path / "package.json").write_text('{"scripts":{"test":"vitest run"}}', encoding="utf-8")
+    events, gate = _gate()
+
+    class EditingBrain(DefaultAgentBrain):
+        def edit_plan(self, request: AgentRunRequest, context: RunContext) -> EditPlan:
+            return EditPlan(
+                reasoning="write code",
+                changes=(PlannedChange(path="src.txt", content="code\n", diff="+code"),),
+            )
+
+    test_calls: list[str] = []
+
+    def fake_tests(root: Path, command: object) -> ProjectTestResult:
+        test_calls.append(str(command.command))
+        raise AssertionError("a denied validation command must never execute")
+
+    def check_permission(kind: str, name: str, target: str) -> Decision:
+        if kind == "terminal":
+            return Decision("deny", "terminal execution blocked")
+        return Decision("allow", "test permits file writes")
+
+    result = RunPipeline(
+        AgentRunRequest(prompt="write code", mode="agent"),
+        "run-tests-denied",
+        gate=gate,
+        text_sink=lambda _chunk: None,
+        close=lambda: None,
+        workspace_root=tmp_path,
+        brain=EditingBrain(),
+        project_test_runner=fake_tests,
+        check_permission=check_permission,
+    ).run()
+
+    assert result.stage is Stage.ERROR_CLOSED
+    assert test_calls == []
+    assert (tmp_path / "src.txt").read_text(encoding="utf-8") == "code\n"
+    permissions = [event for event in events if event["type"] == "permission"]
+    assert [(event["kind"], event["name"], event["effect"]) for event in permissions] == [
+        ("fs", "write_file", "allow"),
+        ("terminal", "run_project_tests", "deny"),
+    ]
 
 
 def test_agent_run_without_provider_fails_closed_at_map_files(tmp_path: Path) -> None:
@@ -252,6 +341,74 @@ def test_emission_uses_one_monotonic_sequence(tmp_path: Path) -> None:
     seqs = [int(e["seq"]) for e in events]  # type: ignore[call-overload]
     assert seqs == sorted(seqs)
     assert len(seqs) == len(set(seqs))
+
+
+def test_review_copy_transaction_applies_write_delete_and_checkpoint(tmp_path: Path) -> None:
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "keep.txt").write_text("old\n", encoding="utf-8")
+    (tmp_path / "src" / "remove.txt").write_text("remove\n", encoding="utf-8")
+    assert _git(tmp_path, "init").returncode == 0
+    assert _git(tmp_path, "config", "user.email", "test@example.com").returncode == 0
+    assert _git(tmp_path, "config", "user.name", "Test").returncode == 0
+    assert _git(tmp_path, "config", "commit.gpgsign", "false").returncode == 0
+    assert _git(tmp_path, "add", "-A").returncode == 0
+    assert _git(tmp_path, "commit", "-m", "initial").returncode == 0
+    _events, gate = _gate()
+    pipeline = RunPipeline(
+        AgentRunRequest(prompt="update files", mode="agent", review_changes=True),
+        "run-review-transaction",
+        gate=gate,
+        text_sink=lambda _chunk: None,
+        close=lambda: None,
+        workspace_root=tmp_path,
+        brain=DefaultAgentBrain(),
+    )
+    try:
+        isolated = pipeline._isolated_workspace_root
+        assert isolated is not None
+        (isolated / "src" / "keep.txt").write_text("new\n", encoding="utf-8")
+        (isolated / "src" / "remove.txt").unlink()
+
+        pipeline._copy_review_paths(["src/keep.txt", "src/remove.txt"])
+
+        assert (tmp_path / "src" / "keep.txt").read_text(encoding="utf-8") == "new\n"
+        assert not (tmp_path / "src" / "remove.txt").exists()
+        assert _git(tmp_path, "log", "-1", "--pretty=%s").stdout.strip() == (
+            "zoc: pre-run checkpoint"
+        )
+        assert _git(tmp_path, "status", "--porcelain").stdout.strip() == ""
+    finally:
+        pipeline.cleanup()
+
+
+def test_review_checkpoint_failure_is_non_fatal(tmp_path: Path, monkeypatch) -> None:
+    (tmp_path / "file.txt").write_text("old\n", encoding="utf-8")
+    _events, gate = _gate()
+    pipeline = RunPipeline(
+        AgentRunRequest(prompt="update file", mode="agent", review_changes=True),
+        "run-review-checkpoint-failure",
+        gate=gate,
+        text_sink=lambda _chunk: None,
+        close=lambda: None,
+        workspace_root=tmp_path,
+        brain=DefaultAgentBrain(),
+    )
+
+    def fail_checkpoint(_root: Path, _message: str) -> str | None:
+        raise CheckpointError("git failed: identity unavailable")
+
+    try:
+        isolated = pipeline._isolated_workspace_root
+        assert isolated is not None
+        (isolated / "file.txt").write_text("new\n", encoding="utf-8")
+        monkeypatch.setattr("zocai_gateway.run_pipeline.git_checkpoint", fail_checkpoint)
+
+        checkpoint_error = pipeline._copy_review_paths(["file.txt"])
+
+        assert checkpoint_error == "git failed: identity unavailable"
+        assert (tmp_path / "file.txt").read_text(encoding="utf-8") == "new\n"
+    finally:
+        pipeline.cleanup()
 
 
 def test_done_closes_the_stream(tmp_path: Path) -> None:
@@ -346,9 +503,7 @@ class _RecoveryExhaustingBrain(DefaultAgentBrain):
     def __init__(self) -> None:
         self._n = 0
 
-    def run_checks(
-        self, request: AgentRunRequest, plan: EditPlan
-    ) -> tuple[int, str, str]:
+    def run_checks(self, request: AgentRunRequest, plan: EditPlan) -> tuple[int, str, str]:
         return (1, "pytest", "assertion failed")
 
     def remediation_plan(self, prior: EditPlan, failure: object) -> EditPlan | None:

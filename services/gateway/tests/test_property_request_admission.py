@@ -35,7 +35,6 @@ from __future__ import annotations
 
 from hypothesis import given, settings
 from hypothesis import strategies as st
-
 from zocai_gateway.auth import is_request_admitted
 from zocai_gateway.settings import LOOPBACK_HOSTS, GatewaySettings
 

@@ -23,6 +23,9 @@ describe("path helpers", () => {
   it("isExternalPath compares against the workspace root", () => {
     expect(isExternalPath("/etc/passwd", "/ws")).toBe(true);
     expect(isExternalPath("/ws/src/a.ts", "/ws")).toBe(false);
+    expect(isExternalPath("/workspace-evil/a.ts", "/workspace")).toBe(true);
+    expect(isExternalPath("C:\\Work\\src\\a.ts", "c:\\work")).toBe(false);
+    expect(isExternalPath("C:\\Worker\\a.ts", "C:\\Work")).toBe(true);
     expect(isExternalPath("src/a.ts", "/ws")).toBe(false);
     expect(isExternalPath("../outside/a.ts", "/ws")).toBe(true);
     expect(isExternalPath("/abs", null)).toBe(true); // no root → absolute is external

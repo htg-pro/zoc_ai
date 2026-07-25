@@ -36,7 +36,6 @@ import threading
 from pathlib import Path
 
 from fastapi.testclient import TestClient
-
 from zocai_gateway.app import create_app
 from zocai_gateway.memory.diary_worker import DiaryWorker
 from zocai_gateway.memory.hermes_evolution import HermesEvolution

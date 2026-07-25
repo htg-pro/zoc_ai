@@ -33,6 +33,7 @@ a default agent run walks INTAKE→…→DONE cleanly.
 
 from __future__ import annotations
 
+import asyncio
 import contextlib
 import functools
 import itertools
@@ -43,7 +44,7 @@ import re
 import shutil
 import tempfile
 import time
-from collections.abc import Callable, Mapping
+from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from enum import Enum
@@ -53,8 +54,11 @@ from typing import Protocol
 from pydantic import ValidationError
 from shared_schema.agent_events import (
     AgentEvent,
+    ApprovalEvent,
     BudgetEvent,
     CommandEvent,
+    PermissionEvent,
+    PermissionKind,
     PlanEvent,
     PlanUpdateEvent,
     ReadFileRef,
@@ -88,8 +92,15 @@ from zocai_evolution import (
     Stage as EvoStage,
 )
 
+from zocai_gateway.atomic_fs import (
+    AtomicFileTransaction,
+    CheckpointError,
+    git_checkpoint,
+)
 from zocai_gateway.channel import ModeChannel, TextSink, channel_for
 from zocai_gateway.context.mcp_gateway import MCPGateway
+from zocai_gateway.context.mcp_host.host import MCPHost
+from zocai_gateway.context.mcp_host.models import McpToolRecord, ToolCallOutcome, ToolCallSuccess
 from zocai_gateway.context.project_instructions import (
     prepend_project_instructions,
     read_project_instructions,
@@ -166,7 +177,7 @@ from zocai_gateway.project_tests import (
     detect_project_test_command,
     run_project_tests,
 )
-from zocai_gateway.react import ReActExecutor, ToolModelFn
+from zocai_gateway.react import McpDispatch, PermissionGate, ReActExecutor, ToolModelFn
 from zocai_gateway.remediation import RemediationLoop
 from zocai_gateway.stages import Stage
 from zocai_gateway.toolsets import FullToolset
@@ -207,6 +218,9 @@ DiarySink = Callable[[Mapping[str, object]], object]
 # pydantic decision object without importing app.py into this composition root.
 ReviewDecisionWaiter = Callable[[float | None], object | None]
 ProjectTestRunner = Callable[[Path, ProjectTestCommand], ProjectTestResult]
+PermissionAuthorizer = Callable[[PermissionKind, str, str], str | None]
+
+_PERMISSION_DECISION_TIMEOUT_SECONDS = 300.0
 
 _ISOLATED_IGNORE_NAMES = frozenset(
     {
@@ -300,19 +314,13 @@ class AgentBrain(Protocol):
 
     def think(self, request: AgentRunRequest, context: RunContext) -> str: ...
 
-    def structured_plan(
-        self, request: AgentRunRequest, context: RunContext
-    ) -> AgentPlan: ...
+    def structured_plan(self, request: AgentRunRequest, context: RunContext) -> AgentPlan: ...
 
     def edit_plan(self, request: AgentRunRequest, context: RunContext) -> EditPlan: ...
 
-    def run_checks(
-        self, request: AgentRunRequest, plan: EditPlan
-    ) -> tuple[int, str, str]: ...
+    def run_checks(self, request: AgentRunRequest, plan: EditPlan) -> tuple[int, str, str]: ...
 
-    def remediation_plan(
-        self, prior: EditPlan, failure: object
-    ) -> EditPlan | None: ...
+    def remediation_plan(self, prior: EditPlan, failure: object) -> EditPlan | None: ...
 
     def ask_response(self, prompt: str, context: AskContext) -> str: ...
 
@@ -332,22 +340,16 @@ class DefaultAgentBrain:
     def think(self, request: AgentRunRequest, context: RunContext) -> str:
         return ""
 
-    def structured_plan(
-        self, request: AgentRunRequest, context: RunContext
-    ) -> AgentPlan:
+    def structured_plan(self, request: AgentRunRequest, context: RunContext) -> AgentPlan:
         return AgentPlan(steps=[], verification_command=None, confidence=1.0)
 
     def edit_plan(self, request: AgentRunRequest, context: RunContext) -> EditPlan:
         return EditPlan(reasoning=f"no changes required for: {request.prompt}")
 
-    def run_checks(
-        self, request: AgentRunRequest, plan: EditPlan
-    ) -> tuple[int, str, str]:
+    def run_checks(self, request: AgentRunRequest, plan: EditPlan) -> tuple[int, str, str]:
         return (0, "noop-check", "")
 
-    def remediation_plan(
-        self, prior: EditPlan, failure: object
-    ) -> EditPlan | None:
+    def remediation_plan(self, prior: EditPlan, failure: object) -> EditPlan | None:
         return None
 
     def ask_response(self, prompt: str, context: AskContext) -> str:
@@ -390,17 +392,14 @@ class RuntimeAgentBrain(DefaultAgentBrain):
             # <think>...</think> block (including an opening <think> with no
             # matching close) fails closed.
             raise RuntimeError(
-                "model thinking response did not contain a complete "
-                "<think>...</think> block"
+                "model thinking response did not contain a complete <think>...</think> block"
             )
         # A complete-but-empty/whitespace block is a valid extraction that
         # yields no scratchpad: proceed to ANALYZE with no ThinkingEvent, just
         # like the no-provider path (the R1.3 vs R2.4 boundary).
         return _extract_thinking(text)
 
-    def structured_plan(
-        self, request: AgentRunRequest, context: RunContext
-    ) -> AgentPlan:
+    def structured_plan(self, request: AgentRunRequest, context: RunContext) -> AgentPlan:
         self._request = request
         self._context = context
         response_format = _agent_plan_response_format()
@@ -473,22 +472,17 @@ class RuntimeAgentBrain(DefaultAgentBrain):
             return super().edit_plan(request, context)
         return _edit_plan_from_model_text(text)
 
-    def remediation_plan(
-        self, prior: EditPlan, failure: object
-    ) -> EditPlan | None:
+    def remediation_plan(self, prior: EditPlan, failure: object) -> EditPlan | None:
         """Feed failed test output into the next planner call."""
         request = self._request
         context = self._context
         if request is None or context is None or not isinstance(failure, FailureRecord):
             return None
         output = failure.log[-2_000:]
-        verify_result = parse_verify_result(
-            failure.command, failure.log, failure.exit_code
-        )
+        verify_result = parse_verify_result(failure.command, failure.log, failure.exit_code)
         failed_tests = "\n".join(f"- {name}" for name in verify_result.failures)
         prior_steps = "\n".join(
-            f"- {change.path}: {change.diff or 'full-file replacement'}"
-            for change in prior.changes
+            f"- {change.path}: {change.diff or 'full-file replacement'}" for change in prior.changes
         )
         retry_prompt = (
             f"{request.prompt}\n\n"
@@ -554,9 +548,7 @@ def _has_think_block(text: str) -> bool:
 
 
 def _thinking_system_prompt(context: RunContext) -> str:
-    return prepend_project_instructions(
-        THINKING_SYSTEM_PROMPT, context.project_instructions
-    )
+    return prepend_project_instructions(THINKING_SYSTEM_PROMPT, context.project_instructions)
 
 
 def _agent_plan_response_format() -> dict[str, object]:
@@ -570,9 +562,7 @@ def _agent_plan_response_format() -> dict[str, object]:
     }
 
 
-def _structured_plan_system_prompt(
-    context: RunContext, *, include_schema: bool
-) -> str:
+def _structured_plan_system_prompt(context: RunContext, *, include_schema: bool) -> str:
     parts = [
         "Create a concise, ordered edit plan for the coding task. Return only "
         "JSON matching the AgentPlan schema. Paths must be workspace-relative, "
@@ -589,9 +579,7 @@ def _structured_plan_system_prompt(
             "AgentPlan schema (JSON, also valid YAML):\n"
             + json.dumps(AgentPlan.model_json_schema(), indent=2, sort_keys=True)
         )
-    return prepend_project_instructions(
-        "\n\n".join(parts), context.project_instructions
-    )
+    return prepend_project_instructions("\n\n".join(parts), context.project_instructions)
 
 
 def _agent_plan_from_model_text(text: str) -> AgentPlan:
@@ -619,15 +607,13 @@ def _ask_system_prompt(context: AskContext) -> str:
     return prepend_project_instructions("\n\n".join(parts), context.project_instructions)
 
 
-def _agent_system_prompt(
-    context: RunContext, structured_plan: AgentPlan | None = None
-) -> str:
+def _agent_system_prompt(context: RunContext, structured_plan: AgentPlan | None = None) -> str:
     parts = [
         "You are Zoc Agent, a coding agent planner. Return only JSON with this "
         'shape: {"reasoning":"short explanation","changes":[{"path":"relative/path","content":"full replacement file content","diff":"short summary"}]}.',
         "Only include a change when you know the exact full replacement file "
         "content. If the request is only chat or you are unsure, return an "
-        'empty changes array with useful reasoning.',
+        "empty changes array with useful reasoning.",
     ]
     if context.scratchpad:
         parts.append(f"Private planning scratchpad:\n{context.scratchpad}")
@@ -637,8 +623,7 @@ def _agent_system_prompt(
         parts.append(f"Conversation history:\n{context.conversation_history}")
     if structured_plan is not None:
         parts.append(
-            "Approved structured plan:\n"
-            + structured_plan.model_dump_json(exclude_none=True)
+            "Approved structured plan:\n" + structured_plan.model_dump_json(exclude_none=True)
         )
     steering = context.steering.text.strip()
     if steering:
@@ -796,6 +781,29 @@ def _edit_step_label(action: str, file: str, rationale: str) -> str:
 # ── APPLY_EDITS strategy seam (Req 8, R3.7-R3.9) ─────────────────────────────
 
 
+@dataclass(frozen=True, slots=True)
+class _RunMcpSeam:
+    """Run-bound bridge: exposes aggregated MCP tools to the toolset and proxies
+    calls through the host with the run's emit/approval channel (Part 4, R5.5)."""
+
+    host: MCPHost
+    run_id: str
+    emit: EmitSink
+    await_decision: Callable[[], Awaitable[str]]
+
+    def list_tools(self) -> list[McpToolRecord]:
+        return self.host.registry.list()
+
+    async def proxy(self, namespaced_name: str, arguments: Mapping[str, object]) -> ToolCallOutcome:
+        return await self.host.proxy_tool_call(
+            namespaced_name,
+            arguments,
+            run_id=self.run_id,
+            emit=self.emit,
+            await_decision=self.await_decision,
+        )
+
+
 class ApplyStrategy(str, Enum):
     """Which APPLY_EDITS executor a run drives (design "strategy seam").
 
@@ -850,8 +858,17 @@ class SinglePassApplyExecutor:
     structured_plan: AgentPlan
     emit_plan_update: Callable[[str, str], None]
     emit_budget: Callable[[], None]
+    authorize_tool: PermissionAuthorizer
 
     def apply(self) -> ApplyResult:
+        # Preflight the whole plan before the first mutation. Besides ensuring
+        # every legacy/single-pass tool invocation is permission-checked, this
+        # prevents a denial on a later file from leaving earlier files changed.
+        for change in self.plan.changes:
+            blocked_reason = self.authorize_tool("fs", "write_file", change.path)
+            if blocked_reason is not None:
+                return ApplyResult(failed=True, error=blocked_reason)
+
         outcome = self.edits.apply_edits(self.plan)
         applied = tuple(Diff(path=c.path, diff=c.diff) for c in outcome.applied)
         for change in outcome.applied:
@@ -893,6 +910,9 @@ class ReActApplyExecutor:
     tokens_used: int
     authorize_write: Callable[[str], bool] | None = None
     run_with_tools: ToolModelFn = generate_with_tools
+    mcp_call: McpDispatch | None = None
+    check_permission: PermissionGate | None = None
+    wait_for_approval: ReviewDecisionWaiter | None = None
 
     def apply(self) -> ApplyResult:
         outcome = ReActExecutor(
@@ -906,6 +926,9 @@ class ReActApplyExecutor:
             tokens_used=self.tokens_used,
             run_with_tools=self.run_with_tools,
             authorize_write=self.authorize_write,
+            mcp_call=self.mcp_call,
+            check_permission=self.check_permission,
+            wait_for_permission=self.wait_for_approval,
         ).run()
         return ApplyResult(
             applied=outcome.applied_diffs,
@@ -951,6 +974,9 @@ class RunPipeline:
         project_test_runner: ProjectTestRunner = run_project_tests,
         apply_strategy: ApplyStrategy = ApplyStrategy.SINGLE_PASS,
         run_with_tools: ToolModelFn = generate_with_tools,
+        mcp_host: MCPHost | None = None,
+        mcp_loop: asyncio.AbstractEventLoop | None = None,
+        check_permission: PermissionGate | None = None,
     ) -> None:
         self.run_id = run_id
         self.source_workspace_root = Path(workspace_root).resolve()
@@ -972,6 +998,9 @@ class RunPipeline:
         self._project_test_runner = project_test_runner
         self.apply_strategy = apply_strategy
         self._run_with_tools = run_with_tools
+        self._mcp_host = mcp_host
+        self._mcp_loop = mcp_loop
+        self._check_permission = check_permission
         self._workspace_indexer = workspace_indexer
         self._index_session_id = index_session_id or request.run_id or run_id
         self._hybrid_candidate_source = hybrid_candidate_source
@@ -986,9 +1015,7 @@ class RunPipeline:
 
         self.brain: AgentBrain = brain if brain is not None else RuntimeAgentBrain()
         self.allocator = allocator if allocator is not None else ModelAllocator()
-        self.rag_matcher: RagMatcher = (
-            rag_matcher if rag_matcher is not None else NullRagMatcher()
-        )
+        self.rag_matcher: RagMatcher = rag_matcher if rag_matcher is not None else NullRagMatcher()
         self.mcp_gateway = mcp_gateway if mcp_gateway is not None else MCPGateway()
         self.model_loader = model_loader
         self.evolution = evolution
@@ -1011,17 +1038,24 @@ class RunPipeline:
 
         matrix = MemoryMatrix(self.source_workspace_root)
         self.state_store = (
-            state_store
-            if state_store is not None
-            else StateWrapperStore(matrix.state_wrapper_path)
+            state_store if state_store is not None else StateWrapperStore(matrix.state_wrapper_path)
         )
 
-        self.toolset = FullToolset(self.workspace_root)
+        mcp_seam = (
+            _RunMcpSeam(
+                host=self._mcp_host,
+                run_id=self.run_id,
+                emit=self._emit,
+                await_decision=self._await_mcp_decision,
+            )
+            if self._mcp_host is not None
+            else None
+        )
+        self.toolset = FullToolset(self.workspace_root, mcp=mcp_seam)
+        self._mcp_dispatch = self._make_mcp_dispatch()
         self.fs_read = FSReadAdapter(self.workspace_root)
         self.shell_spawner = ShellSpawner(self.path.mode, self.workspace_root)
-        self._channel: ModeChannel = channel_for(
-            self.path, gate=gate, text_sink=text_sink
-        )
+        self._channel: ModeChannel = channel_for(self.path, gate=gate, text_sink=text_sink)
         self._next_seq: Callable[[], int] = itertools.count().__next__
 
     @staticmethod
@@ -1035,9 +1069,7 @@ class RunPipeline:
             source,
             target,
             dirs_exist_ok=True,
-            ignore=lambda _dir, names: [
-                name for name in names if name in _ISOLATED_IGNORE_NAMES
-            ],
+            ignore=lambda _dir, names: [name for name in names if name in _ISOLATED_IGNORE_NAMES],
         )
         RunPipeline._link_isolated_dependencies(source, target)
         return target
@@ -1070,6 +1102,47 @@ class RunPipeline:
             shutil.rmtree(root, ignore_errors=True)
         finally:
             self._isolated_workspace_root = None
+
+    def _make_mcp_dispatch(self) -> McpDispatch | None:
+        """A synchronous bridge from the in-thread ReAct loop to the async MCP
+        host: schedule ``proxy_tool_call`` on the host's loop and block for the
+        typed outcome, normalized to ``(ok, text)`` (Part 4, §4.1)."""
+        host = self._mcp_host
+        loop = self._mcp_loop
+        if host is None or loop is None:
+            return None
+
+        def dispatch(namespaced_name: str, arguments: Mapping[str, object]) -> tuple[bool, str]:
+            future = asyncio.run_coroutine_threadsafe(
+                host.proxy_tool_call(
+                    namespaced_name,
+                    arguments,
+                    run_id=self.run_id,
+                    emit=self._emit,
+                    await_decision=self._await_mcp_decision,
+                ),
+                loop,
+            )
+            outcome = future.result()
+            if isinstance(outcome, ToolCallSuccess):
+                return True, str(outcome.result)
+            return False, f"{outcome.kind.value}: {outcome.reason}"
+
+        return dispatch
+
+    async def _await_mcp_decision(self) -> str:
+        """Await a user approval decision for a gated MCP tool without blocking
+        the event loop (auto-approved tools never reach here). Fails closed
+        (``reject``) after a bounded wait so a run cannot hang forever."""
+        waiter = self._wait_for_approval_decision
+        if waiter is None:
+            return "reject"
+        for _ in range(3000):  # ~5 minutes at 0.1s polls
+            decision = waiter(0)
+            if decision is not None:
+                return "approve" if getattr(decision, "decision", None) == "approve" else "reject"
+            await asyncio.sleep(0.1)
+        return "reject"
 
     # -- single ordered emit boundary (R6.5) --------------------------------
 
@@ -1105,9 +1178,7 @@ class RunPipeline:
             )
         )
 
-    def _emit_plan(
-        self, plan: EditPlan, structured_plan: AgentPlan | None = None
-    ) -> None:
+    def _emit_plan(self, plan: EditPlan, structured_plan: AgentPlan | None = None) -> None:
         has_changes = plan.has_changes
         items = [
             {"id": "analyze", "label": "Analyze request", "status": "done"},
@@ -1125,24 +1196,23 @@ class RunPipeline:
         items.extend(
             [
                 {
-                "id": "apply",
-                "label": "Apply changes in isolated workspace",
-                "status": "active" if has_changes else "done",
+                    "id": "apply",
+                    "label": "Apply changes in isolated workspace",
+                    "status": "active" if has_changes else "done",
                 },
                 {
-                "id": "validate",
-                "label": (
-                    f"Run {structured_plan.verification_command}"
-                    if structured_plan is not None
-                    and structured_plan.verification_command
-                    else "Run validation"
-                ),
-                "status": "pending" if has_changes else "active",
+                    "id": "validate",
+                    "label": (
+                        f"Run {structured_plan.verification_command}"
+                        if structured_plan is not None and structured_plan.verification_command
+                        else "Run validation"
+                    ),
+                    "status": "pending" if has_changes else "active",
                 },
                 {
-                "id": "review",
-                "label": "Review changes before applying",
-                "status": "pending" if has_changes else "done",
+                    "id": "review",
+                    "label": "Review changes before applying",
+                    "status": "pending" if has_changes else "done",
                 },
                 {"id": "summary", "label": "Summarize result", "status": "pending"},
             ]
@@ -1205,9 +1275,7 @@ class RunPipeline:
         )
 
     def _emit_human_summary(self, text: str) -> None:
-        self._emit(
-            SummaryEvent(seq=0, run_id=self.run_id, ts=_now(), text=text)
-        )
+        self._emit(SummaryEvent(seq=0, run_id=self.run_id, ts=_now(), text=text))
 
     def _emit_test_results(self, result: ProjectTestResult) -> None:
         self._emit(
@@ -1238,10 +1306,55 @@ class RunPipeline:
             )
         )
 
+    def _authorize_tool(
+        self,
+        kind: PermissionKind,
+        name: str,
+        target: str,
+    ) -> str | None:
+        """Audit one non-ReAct tool action and return why it was refused."""
+        checker = self._check_permission
+        if checker is None:
+            return None
+        decision = checker(kind, name, target)
+        self._emit(
+            PermissionEvent(
+                seq=0,
+                run_id=self.run_id,
+                ts=_now(),
+                kind=kind,
+                name=name,
+                target=target or None,
+                effect=decision.effect,
+                reason=decision.reason,
+            )
+        )
+        if decision.effect == "allow":
+            return None
+        if decision.effect == "prompt" and self._wait_for_approval_decision is not None:
+            self._emit(
+                ApprovalEvent(
+                    seq=0,
+                    run_id=self.run_id,
+                    ts=_now(),
+                    prompt=(
+                        f"{decision.reason} Permission required for {name!r} "
+                        f"({target!r}); approve to proceed or reject to skip."
+                    ),
+                )
+            )
+            verdict = self._wait_for_approval_decision(_PERMISSION_DECISION_TIMEOUT_SECONDS)
+            if verdict is not None and getattr(verdict, "decision", None) == "approve":
+                return None
+        return f"permission {decision.effect}: {kind} {name!r} for {target!r} — {decision.reason}"
+
     def _run_post_write_tests(self) -> ProjectTestResult | None:
         detected = detect_project_test_command(self.workspace_root)
         if detected is None:
             return None
+        blocked_reason = self._authorize_tool("terminal", "run_project_tests", detected.command)
+        if blocked_reason is not None:
+            raise PermissionError(blocked_reason)
         return self._project_test_runner(self.workspace_root, detected)
 
     def _provider_configured(self) -> bool:
@@ -1251,9 +1364,7 @@ class RunPipeline:
         it (design selection rule); with no provider the run falls back to the
         single-pass path or the empty-plan skip.
         """
-        return bool(
-            (self.request.provider or "").strip() and (self.request.model or "").strip()
-        )
+        return bool((self.request.provider or "").strip() and (self.request.model or "").strip())
 
     def _emit_budget(
         self,
@@ -1274,18 +1385,63 @@ class RunPipeline:
             )
         )
 
-    def _copy_review_paths(self, paths: list[str]) -> None:
+    def _copy_review_paths(self, paths: list[str]) -> str | None:
         isolated = self._isolated_workspace_root
         if isolated is None:
-            return
+            return None
+        root = self.source_workspace_root.resolve()
+        transaction = AtomicFileTransaction()
+        seen: set[str] = set()
         for raw_path in paths:
             rel = _safe_relative_path(raw_path)
+            normalized = rel.as_posix()
+            if normalized in seen:
+                continue
+            seen.add(normalized)
+
             source = isolated / rel
-            target = self.source_workspace_root / rel
-            if not source.exists():
-                raise FileNotFoundError(f"review file disappeared: {raw_path}")
-            target.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(source, target)
+            target = root / rel
+            try:
+                target.resolve(strict=False).relative_to(root)
+            except ValueError as exc:
+                raise ValueError(f"review path escapes workspace: {raw_path}") from exc
+
+            cursor = root
+            for component in rel.parts:
+                cursor /= component
+                if cursor.is_symlink():
+                    raise ValueError(f"review path traverses a symlink: {raw_path}")
+                if not cursor.exists():
+                    break
+
+            if source.is_symlink():
+                raise ValueError(f"review source is a symlink: {raw_path}")
+            if source.is_file():
+                transaction.add_write(
+                    target,
+                    source.read_bytes(),
+                    mode=source.stat().st_mode,
+                )
+            elif source.exists():
+                raise IsADirectoryError(f"review path is not a file: {raw_path}")
+            else:
+                # A selected file absent from the isolated copy represents an
+                # agent deletion; missing real targets remain a no-op.
+                transaction.add_delete(target)
+
+        result = transaction.commit()
+        if result.written + result.deleted == 0:
+            return None
+        try:
+            git_checkpoint(root, "zoc: pre-run checkpoint")
+        except CheckpointError as exc:
+            logger.warning(
+                "run %s applied reviewed changes but checkpoint creation failed: %s",
+                self.run_id,
+                exc,
+            )
+            return str(exc)
+        return None
 
     def _review_and_maybe_apply(self, applied: list[Diff]) -> str:
         if not applied:
@@ -1309,12 +1465,22 @@ class RunPipeline:
             self._emit_plan_update("summary", "active")
             return "Discarded the isolated changes. Your workspace was left unchanged."
         accepted_paths = list(getattr(decision, "accepted_paths", []) or [])
-        self._copy_review_paths(accepted_paths)
+        reviewed_paths = {diff.path for diff in applied}
+        unknown_paths = [path for path in accepted_paths if path not in reviewed_paths]
+        if unknown_paths:
+            raise ValueError(
+                "review decision included paths outside the emitted diff: "
+                + ", ".join(unknown_paths[:5])
+            )
+        checkpoint_error = self._copy_review_paths(accepted_paths)
         self._emit_plan_update("review", "done")
         self._emit_plan_update("summary", "active")
         count = len(accepted_paths)
         noun = "file" if count == 1 else "files"
-        return f"Applied {count} reviewed {noun} to your workspace."
+        summary = f"Applied {count} reviewed {noun} to your workspace."
+        if checkpoint_error is not None:
+            summary += f" Checkpoint creation failed: {checkpoint_error}"
+        return summary
 
     # -- entrypoint ---------------------------------------------------------
 
@@ -1336,9 +1502,7 @@ class RunPipeline:
         """
         result = path.execute(
             self.original_request,
-            generate=lambda _prompt, context: self._ask_response(
-                self.request.prompt, context
-            ),
+            generate=lambda _prompt, context: self._ask_response(self.request.prompt, context),
             workspace_root=self.workspace_root,
             rag_matcher=self.rag_matcher,
         )
@@ -1443,9 +1607,7 @@ class RunPipeline:
             workspace_root=self.workspace_root,
         )
 
-    def _read_selected_files(
-        self, event: MapFilesEvent
-    ) -> tuple[str, tuple[str, ...]]:
+    def _read_selected_files(self, event: MapFilesEvent) -> tuple[str, tuple[str, ...]]:
         read_paths: list[str] = []
 
         def read_file(path: str) -> str:
@@ -1474,17 +1636,13 @@ class RunPipeline:
         )
 
     @staticmethod
-    def _context_with_memory(
-        context: RunContext, memory: ConversationMemory
-    ) -> RunContext:
+    def _context_with_memory(context: RunContext, memory: ConversationMemory) -> RunContext:
         rendered = "\n".join(
             f"{message.role.value}: {message.content}" for message in memory.messages
         )
         return replace(context, conversation_history=rendered)
 
-    def _maybe_compress(
-        self, memory: ConversationMemory, max_tokens: int
-    ) -> None:
+    def _maybe_compress(self, memory: ConversationMemory, max_tokens: int) -> None:
         memory.summarizer = (
             runtime_summarizer(self.request) if self._provider_configured() else None
         )
@@ -1569,9 +1727,7 @@ class RunPipeline:
                 allocation=allocation,
             )
         if scratchpad:
-            memory.messages.append(
-                Message(Role.ASSISTANT, scratchpad, Stage.ANALYZE.value)
-            )
+            memory.messages.append(Message(Role.ASSISTANT, scratchpad, Stage.ANALYZE.value))
             context = replace(context, scratchpad=scratchpad)
             context = self._context_with_memory(context, memory)
             self._emit_scratchpad(
@@ -1624,9 +1780,7 @@ class RunPipeline:
         read_payload, read_paths = self._read_selected_files(map_event)
         context = replace(context, read_files_payload=read_payload)
         if read_payload:
-            memory.messages.append(
-                Message(Role.TOOL_RESULT, read_payload, Stage.READ_FILES.value)
-            )
+            memory.messages.append(Message(Role.TOOL_RESULT, read_payload, Stage.READ_FILES.value))
         context = self._context_with_memory(context, memory)
         try:
             self._emit(
@@ -1646,15 +1800,11 @@ class RunPipeline:
             run_id=self.run_id,
             emit=self._emit,
             write_allowlist=(
-                preapproved_writes(map_event)
-                if self._enforce_write_allowlist
-                else None
+                preapproved_writes(map_event) if self._enforce_write_allowlist else None
             ),
             wait_for_approval=self._wait_for_approval_decision,
         )
-        orchestrator = Orchestrator(
-            fsm=fsm, edits=edits, run_id=self.run_id, emit=self._emit
-        )
+        orchestrator = Orchestrator(fsm=fsm, edits=edits, run_id=self.run_id, emit=self._emit)
         remediation = RemediationLoop(
             fsm=fsm,
             planner=self.brain.remediation_plan,
@@ -1782,6 +1932,9 @@ class RunPipeline:
                         tokens_used=tokens_used,
                         authorize_write=edits.authorize_write,
                         run_with_tools=self._run_with_tools,
+                        mcp_call=self._mcp_dispatch,
+                        check_permission=self._check_permission,
+                        wait_for_approval=self._wait_for_approval_decision,
                     )
                 else:
                     executor = SinglePassApplyExecutor(
@@ -1793,6 +1946,7 @@ class RunPipeline:
                         emit_budget=functools.partial(
                             self._emit_budget, context, orchestrator, tokens_used
                         ),
+                        authorize_tool=self._authorize_tool,
                     )
                 result = executor.apply()
                 applied.extend(result.applied)  # edit-file events already emitted (R3.7)
@@ -1846,8 +2000,8 @@ class RunPipeline:
                     run_id=self.run_id,
                     stage=Stage.ERROR_CLOSED,
                     stages=tuple(stages),
-                        allocation=allocation,
-                    )
+                    allocation=allocation,
+                )
             checks.append((command, exit_code))
             memory.messages.append(
                 Message(
@@ -1865,9 +2019,7 @@ class RunPipeline:
             if test_result is not None:
                 self._emit_test_results(test_result)
             if not verify_result.passed:
-                self._emit_recovery_attempt(
-                    remediation.recoveries + 1, verify_result.failures
-                )
+                self._emit_recovery_attempt(remediation.recoveries + 1, verify_result.failures)
             rem = remediation.on_checks_complete(
                 exit_code, command=command, log=log, prior_plan=plan
             )
@@ -1966,9 +2118,7 @@ class RunPipeline:
 
         # Recovery budget exhausted without resolution → freeze + hot-swap.
         resume_stage = fsm.current
-        hot_swap = self._preserve_and_swap(
-            resume_stage, orchestrator, applied, allocation
-        )
+        hot_swap = self._preserve_and_swap(resume_stage, orchestrator, applied, allocation)
         if fsm.current is not Stage.PAUSED:
             fsm.pause("recovery budget exhausted; hot-swap required")
             stages.append(Stage.PAUSED)
@@ -2059,6 +2209,9 @@ def execute_run(
     hybrid_candidate_source: bool = False,
     apply_strategy: ApplyStrategy = ApplyStrategy.SINGLE_PASS,
     run_with_tools: ToolModelFn = generate_with_tools,
+    mcp_host: MCPHost | None = None,
+    mcp_loop: asyncio.AbstractEventLoop | None = None,
+    check_permission: PermissionGate | None = None,
 ) -> RunResult:
     """Build a :class:`RunPipeline` for ``request`` and drive it to completion.
 
@@ -2096,6 +2249,9 @@ def execute_run(
             hybrid_candidate_source=hybrid_candidate_source,
             apply_strategy=apply_strategy,
             run_with_tools=run_with_tools,
+            mcp_host=mcp_host,
+            mcp_loop=mcp_loop,
+            check_permission=check_permission,
         )
         try:
             return pipeline.run()

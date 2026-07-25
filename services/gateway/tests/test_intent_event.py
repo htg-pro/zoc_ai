@@ -14,7 +14,6 @@ The exhaustive "first emitted event records tier and window" property
 from __future__ import annotations
 
 from shared_schema.agent_events import AgentEventModel, IntentEvent, ThinkingEvent
-
 from zocai_gateway.fsm import FSM
 from zocai_gateway.intent_event import (
     DEFAULT_INTENT_TEXT,

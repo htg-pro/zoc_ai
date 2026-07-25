@@ -13,7 +13,6 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
-
 from zocai_gateway.fsm import FSM
 from zocai_gateway.mode_router import (
     AgentPath,

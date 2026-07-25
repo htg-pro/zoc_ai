@@ -51,6 +51,7 @@ zoc-studio-v*.zip
 secrets.json
 credentials.json
 .claude/settings.local.json
+.kiro/settings/mcp.json
 
 testsprite_tests/tmp/config.json
 

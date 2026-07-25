@@ -19,7 +19,6 @@ import itertools
 from pathlib import Path
 
 from shared_schema.agent_events import AgentEventModel, ApprovalEvent
-
 from zocai_gateway.edits import EditCoordinator, PlannedChange
 from zocai_gateway.fsm import FSM
 from zocai_gateway.orchestrator import (

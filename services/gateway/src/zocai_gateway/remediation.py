@@ -52,7 +52,7 @@ import itertools
 from collections import Counter
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Protocol
 
 from shared_schema.agent_events import ApprovalEvent
@@ -63,13 +63,13 @@ from zocai_gateway.memory.state_wrapper import FailureRecord
 from zocai_gateway.stages import Stage
 
 __all__ = [
+    "DiarySink",
     "PlanDelta",
+    "RemediationLoop",
+    "RemediationOutcome",
+    "RemediationPlanner",
     "diff_plans",
     "plan_references_failure",
-    "RemediationPlanner",
-    "DiarySink",
-    "RemediationOutcome",
-    "RemediationLoop",
 ]
 
 
@@ -365,4 +365,4 @@ class RemediationLoop:
 
 def _now() -> str:
     """An ISO-8601 UTC timestamp for the ``ts`` field."""
-    return datetime.now(timezone.utc).isoformat()
+    return datetime.now(UTC).isoformat()

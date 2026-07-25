@@ -155,10 +155,16 @@ export function createInlineCompletionController(
   return {
     request(window, options) {
       if (options.automatic) {
+        // A new keystroke invalidates the old request immediately; waiting for
+        // the next debounce before aborting can otherwise render stale text.
+        clearDebounce();
+        abortInflight();
+        if (text) {
+          text = "";
+          deps.onUpdate?.(text);
+        }
         // R8.4: both-empty automatic trigger → no request.
         if (!hasNonEmptyContext(window)) return;
-        // R8.3: restart the debounce; the interrupted interval fires nothing.
-        clearDebounce();
         debounceHandle = timers.setTimeout(() => {
           debounceHandle = null;
           dispatch(window); // R8.2: one request 400 ms after the last keystroke.
@@ -214,8 +220,10 @@ export interface InlineCompletionsDeps {
   maxPrefix?: number;
   maxSuffix?: number;
   timers?: TimerApi;
-  /** Optional re-trigger so streamed tokens grow the on-screen ghost text. */
+  /** Optional compatibility hook invoked when streamed ghost text changes. */
   rerender?: () => void;
+  /** Drives the muted editor-level “Tab to accept” affordance. */
+  onGhostTextChange?: (text: string) => void;
 }
 
 export interface RegisteredInlineProvider {
@@ -236,18 +244,34 @@ export function createInlineCompletionsProvider(
   const maxPrefix = deps.maxPrefix ?? DEFAULT_MAX_PREFIX;
   const maxSuffix = deps.maxSuffix ?? DEFAULT_MAX_SUFFIX;
 
+  const listeners = new Set<() => void>();
+  const notifyChanged = (): void => {
+    for (const listener of [...listeners]) listener();
+  };
   const controller = createInlineCompletionController({
     streamCompletion: deps.streamCompletion,
     debounceMs: deps.debounceMs,
     timers: deps.timers,
-    onUpdate: () => deps.rerender?.(),
+    onUpdate: (text) => {
+      deps.onGhostTextChange?.(text);
+      notifyChanged();
+      deps.rerender?.();
+    },
   });
 
   const explicitKind =
     monaco.languages.InlineCompletionTriggerKind?.Explicit ??
     monaco.languages.InlineCompletionTriggerKind?.Invoke;
+  let lastWindowKey: string | null = null;
 
   const provider = {
+    // Monaco listens to this event and asks the provider for a fresh item as
+    // SSE tokens arrive. The same cursor window is deduplicated below, so a
+    // refresh never recursively starts another model request.
+    onDidChangeInlineCompletions(listener: () => void): { dispose(): void } {
+      listeners.add(listener);
+      return { dispose: () => listeners.delete(listener) };
+    },
     provideInlineCompletions(
       model: MonacoModelLike,
       position: MonacoInlinePosition,
@@ -259,16 +283,23 @@ export function createInlineCompletionsProvider(
       const language = model.getLanguageId?.() ?? "";
       const filePath = model.uri?.path ?? model.uri?.toString() ?? "";
       const window = buildCursorWindow(text, offset, language, filePath, maxPrefix, maxSuffix);
-
+      const windowKey = JSON.stringify(window);
       const automatic =
         explicitKind === undefined ? true : context.triggerKind !== explicitKind;
-      controller.request(window, { automatic });
+
+      if (
+        windowKey !== lastWindowKey ||
+        (!automatic && controller.currentText() === "")
+      ) {
+        lastWindowKey = windowKey;
+        controller.request(window, { automatic });
+      }
 
       const ghost = controller.currentText();
       return { items: ghost ? [{ insertText: ghost }] : [] };
     },
     freeInlineCompletions(): void {
-      /* nothing to free — items are plain objects */
+      /* items are plain objects; request cancellation is driven by new input */
     },
   };
 
@@ -281,6 +312,8 @@ export function createInlineCompletionsProvider(
     provider,
     dispose() {
       controller.dispose();
+      listeners.clear();
+      deps.onGhostTextChange?.("");
       registration.dispose();
     },
   };

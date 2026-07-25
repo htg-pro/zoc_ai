@@ -1,6 +1,6 @@
 [project]
 name = "zoc-studio-workspace"
-version = "0.0.1"
+version = "0.0.2"
 description = "Workspace root for Zoc AI Python packages."
 requires-python = ">=3.11"
 
@@ -10,16 +10,17 @@ members = ["services/gateway", "packages/shared-types/python", "python/zocai_evo
 [tool.ruff]
 line-length = 100
 target-version = "py311"
-extend-exclude = ["legacy"]
+extend-exclude = ["legacy", "testsprite_tests"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "B", "UP", "SIM", "RUF"]
 # E501: line length handled by formatter.
 # B008: FastAPI's `Depends()`/`Query()` in argument defaults is the idiomatic,
 #       documented pattern — not a real mutable-default bug.
-# RUF002: ambiguous-unicode in docstrings (en-dashes/arrows) is intentional prose.
+# RUF002/RUF003: ambiguous-unicode in docstrings/comments (en-dashes/arrows) is
+#       intentional prose.
 # UP042: `class X(str, Enum)` is valid and used for Pydantic compatibility.
-ignore = ["E501", "B008", "RUF002", "UP042"]
+ignore = ["E501", "B008", "RUF002", "RUF003", "UP042"]
 
 [tool.ruff.lint.per-file-ignores]
 

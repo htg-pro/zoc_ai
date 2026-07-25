@@ -15,7 +15,6 @@ import subprocess
 from pathlib import Path
 
 import pytest
-
 from zocai_migration import git_available
 from zocai_migration.cli import main
 

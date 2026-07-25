@@ -7,9 +7,11 @@ import {
   getAuditLog,
   getTrustConfig,
   removeFromAllowlist,
+  recordDecision,
   setProtection,
   setRunMode,
   setTrust,
+  setTrustWorkspace,
 } from "@/lib/trust";
 
 const realLocalStorage = globalThis.localStorage;
@@ -65,6 +67,18 @@ describe("trust config + audit", () => {
     expect(getTrustConfig().commandAllowlist).toEqual([]);
   });
 
+  it("isolates trust configuration by workspace", () => {
+    setTrustWorkspace("/work/project-a");
+    setTrust("trusted");
+    setRunMode("all");
+
+    setTrustWorkspace("/work/project-b");
+    expect(getTrustConfig()).toMatchObject({ trust: "restricted", runMode: "ask" });
+
+    setTrustWorkspace("/work/project-a/");
+    expect(getTrustConfig()).toMatchObject({ trust: "trusted", runMode: "all" });
+  });
+
   it("checkAction records every decision in the audit log", () => {
     setTrust("restricted");
     const denied = checkAction({ kind: "terminal", name: "ls" });
@@ -86,5 +100,24 @@ describe("trust config + audit", () => {
     expect(getAuditLog().length).toBeGreaterThan(0);
     clearAuditLog();
     expect(getAuditLog()).toEqual([]);
+  });
+
+  it("persists audit entries across reloads with run identity", () => {
+    recordDecision(
+      { kind: "fs", name: "write_file", target: "src/a.ts" },
+      { effect: "prompt", reason: "Ask-every-time mode." },
+      "run-audit-1",
+    );
+
+    __resetTrustForTests();
+
+    expect(getAuditLog()).toEqual([
+      expect.objectContaining({
+        runId: "run-audit-1",
+        kind: "fs",
+        target: "src/a.ts",
+        effect: "prompt",
+      }),
+    ]);
   });
 });

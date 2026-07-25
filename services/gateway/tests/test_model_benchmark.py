@@ -1,11 +1,10 @@
 from __future__ import annotations
 
 import json
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import pytest
 from fastapi.testclient import TestClient
-
 from shared_schema.models import RunModelBenchmarkRequest
 from zocai_gateway.app import create_app
 from zocai_gateway.benchmark import BenchmarkStore, ModelBenchmarker
@@ -35,7 +34,7 @@ def make_benchmarker(path) -> ModelBenchmarker:
         stream_generate=stream_generate,
         quality_generate=quality_generate,
         clock=StepClock(),
-        now=lambda: datetime(2026, 6, 21, tzinfo=timezone.utc),
+        now=lambda: datetime(2026, 6, 21, tzinfo=UTC),
     )
 
 

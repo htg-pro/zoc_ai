@@ -11,7 +11,6 @@ gate, and the run's close sentinel: driving a bound FSM to DONE puts the
 from __future__ import annotations
 
 from fastapi.testclient import TestClient
-
 from zocai_gateway.app import RunRegistry, _Run, create_app
 from zocai_gateway.fsm import FSM
 from zocai_gateway.mode_router import AgentRunRequest, ModeRouter

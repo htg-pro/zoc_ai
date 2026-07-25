@@ -41,13 +41,13 @@ from zocai_gateway.mode_router import ExecutionPath, Mode
 
 __all__ = [
     "PLANNING_ROW_TYPES",
+    "SUPPRESSED_IN_ASK_ROW_TYPES",
     "TODO_ROW_TYPES",
     "TOOL_ACTIVITY_ROW_TYPES",
-    "SUPPRESSED_IN_ASK_ROW_TYPES",
-    "TextSink",
-    "ModeChannel",
     "AgentChannel",
     "AskChannel",
+    "ModeChannel",
+    "TextSink",
     "channel_for",
     "suppresses_structured_rows",
 ]
@@ -180,7 +180,7 @@ class AskChannel(ModeChannel):
 
     mode = Mode.ASK
 
-    __slots__ = ("_text_sink", "_suppressed")
+    __slots__ = ("_suppressed", "_text_sink")
 
     def __init__(self, text_sink: TextSink) -> None:
         self._text_sink = text_sink

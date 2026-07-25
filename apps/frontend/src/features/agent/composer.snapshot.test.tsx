@@ -38,8 +38,8 @@ vi.mock("lucide-react", () => {
   };
   return {
     __esModule: true,
+    ArrowUp: icon("ArrowUp"),
     Paperclip: icon("Paperclip"),
-    Send: icon("Send"),
     ShieldCheck: icon("ShieldCheck"),
     Square: icon("Square"),
   };
@@ -111,8 +111,13 @@ function composerRoot(container: HTMLElement): HTMLElement {
 
 /** The control bar row: Ask/Agent toggle + pill + send/stop. */
 function controlBar(container: HTMLElement): HTMLElement {
-  // The control row is the only element carrying the `mt-2.5` spacing token.
-  return composerRoot(container).querySelector(".mt-2\\.5") as HTMLElement;
+  const ask = Array.from(
+    composerRoot(container).querySelectorAll<HTMLButtonElement>("button"),
+  ).find((button) => button.textContent === "Ask");
+  if (!ask?.parentElement?.parentElement) {
+    throw new Error("Composer control bar not found");
+  }
+  return ask.parentElement.parentElement;
 }
 
 afterEach(() => {
@@ -126,21 +131,21 @@ describe("Composer snapshot — control-bar structure (R1.2, R1.5, R1.6)", () =>
     const { container } = render(<Composer />);
     expect(controlBar(container)).toMatchInlineSnapshot(`
       <div
-        class="mt-2.5 flex items-center gap-2"
+        class="flex items-center gap-1.5 px-2 pb-2 pt-1"
       >
         <div
-          class="flex items-center bg-[#1B1B21] rounded-full p-0.5 shrink-0 border border-[#26262B]"
+          class="flex items-center rounded-lg border border-[#1E1E23] bg-[#0F0F14] p-0.5"
         >
           <button
-            class="px-3 py-0.5 text-[11px] rounded-full font-semibold transition-all text-[#71717A] hover:text-[#A1A1AA]"
-            title="Ask: read-only Q&A about your code"
+            class="px-2.5 py-1 text-[11px] rounded-md font-medium transition-all text-[#52525B] hover:text-[#A1A1AA]"
+            title="Ask: read-only Q&A"
             type="button"
           >
             Ask
           </button>
           <button
-            class="px-3 py-0.5 text-[11px] rounded-full font-semibold transition-all text-[#0b0e14] bg-[var(--zoc-ember)] shadow-sm"
-            title="Agent: full autonomy — can edit files and run commands"
+            class="px-2.5 py-1 text-[11px] rounded-md font-medium transition-all bg-[#2A1F4E] text-[#9B6AF1] shadow-sm"
+            title="Agent: full autonomy"
             type="button"
           >
             Agent
@@ -148,30 +153,30 @@ describe("Composer snapshot — control-bar structure (R1.2, R1.5, R1.6)", () =>
         </div>
         <button
           aria-label="Autonomy level: Medium"
-          class="flex items-center gap-1.5 px-1.5 py-0.5 rounded-md border border-[#26262B] bg-[#15151A] shrink-0 hover:bg-[#1B1B21] transition-colors"
-          title="Autonomy: Medium (click to change)"
+          class="flex items-center gap-1.5 rounded-md border border-[#1E1E23] bg-[#0F0F14] px-2 py-0.5 text-[10.5px] text-[#71717A] transition-colors hover:bg-[#141419]"
+          title="Autonomy: Medium — click to cycle"
           type="button"
         >
           <span
-            class="w-1.5 h-1.5 rounded-full bg-primary"
+            class="h-1.5 w-1.5 rounded-full bg-[#9B6AF1]"
           />
-          <span
-            class="text-[11px] text-[#A1A1AA]"
+          Medium
+        </button>
+        <div
+          class="ml-auto flex items-center gap-1.5"
+        >
+          <button
+            aria-label="Send"
+            class="flex h-7 w-7 items-center justify-center rounded-lg border transition-all border-[#26262B] bg-[#15151A] text-[#3F3F46] cursor-not-allowed"
+            disabled=""
+            type="button"
           >
-            Medium
-          </span>
-        </button>
-        <button
-          aria-label="Send"
-          class="ml-auto w-7 h-7 rounded-lg bg-gradient-to-br from-[#7C3AED] to-[#9B6AF1] flex items-center justify-center shadow-[0_4px_12px_rgba(124,58,237,0.3)] disabled:opacity-40 disabled:pointer-events-none shrink-0"
-          disabled=""
-          type="button"
-        >
-          <span
-            class="h-3 w-3 text-white"
-            data-icon="Send"
-          />
-        </button>
+            <span
+              class="h-3.5 w-3.5"
+              data-icon="ArrowUp"
+            />
+          </button>
+        </div>
       </div>
     `);
   });
@@ -181,21 +186,21 @@ describe("Composer snapshot — control-bar structure (R1.2, R1.5, R1.6)", () =>
     const { container } = render(<Composer />);
     expect(controlBar(container)).toMatchInlineSnapshot(`
       <div
-        class="mt-2.5 flex items-center gap-2"
+        class="flex items-center gap-1.5 px-2 pb-2 pt-1"
       >
         <div
-          class="flex items-center bg-[#1B1B21] rounded-full p-0.5 shrink-0 border border-[#26262B]"
+          class="flex items-center rounded-lg border border-[#1E1E23] bg-[#0F0F14] p-0.5"
         >
           <button
-            class="px-3 py-0.5 text-[11px] rounded-full font-semibold transition-all text-[#0b0e14] bg-[var(--zoc-info)] shadow-sm"
-            title="Ask: read-only Q&A about your code"
+            class="px-2.5 py-1 text-[11px] rounded-md font-medium transition-all bg-[#1A3A5C] text-[#60a5fa] shadow-sm"
+            title="Ask: read-only Q&A"
             type="button"
           >
             Ask
           </button>
           <button
-            class="px-3 py-0.5 text-[11px] rounded-full font-semibold transition-all text-[#71717A] hover:text-[#A1A1AA]"
-            title="Agent: full autonomy — can edit files and run commands"
+            class="px-2.5 py-1 text-[11px] rounded-md font-medium transition-all text-[#52525B] hover:text-[#A1A1AA]"
+            title="Agent: full autonomy"
             type="button"
           >
             Agent
@@ -203,29 +208,26 @@ describe("Composer snapshot — control-bar structure (R1.2, R1.5, R1.6)", () =>
         </div>
         <span
           aria-label="Read-only mode"
-          class="flex items-center gap-1.5 px-1.5 py-0.5 rounded-md border border-[var(--zoc-info)]/40 bg-[var(--zoc-info)]/10 shrink-0"
-          title="Ask mode is read-only — no files change"
+          class="flex items-center gap-1 rounded-md border border-[#60a5fa]/20 bg-[#60a5fa]/8 px-2 py-0.5 text-[10.5px] text-[#60a5fa]"
+          title="Ask mode: no files will change"
         >
-          <span
-            class="w-1.5 h-1.5 rounded-full bg-[var(--zoc-info)]"
-          />
-          <span
-            class="text-[11px] text-[#A1A1AA]"
-          >
-            Read-only
-          </span>
+          Read-only
         </span>
-        <button
-          aria-label="Send"
-          class="ml-auto w-7 h-7 rounded-lg bg-gradient-to-br from-[#7C3AED] to-[#9B6AF1] flex items-center justify-center shadow-[0_4px_12px_rgba(124,58,237,0.3)] disabled:opacity-40 disabled:pointer-events-none shrink-0"
-          disabled=""
-          type="button"
+        <div
+          class="ml-auto flex items-center gap-1.5"
         >
-          <span
-            class="h-3 w-3 text-white"
-            data-icon="Send"
-          />
-        </button>
+          <button
+            aria-label="Send"
+            class="flex h-7 w-7 items-center justify-center rounded-lg border transition-all border-[#26262B] bg-[#15151A] text-[#3F3F46] cursor-not-allowed"
+            disabled=""
+            type="button"
+          >
+            <span
+              class="h-3.5 w-3.5"
+              data-icon="ArrowUp"
+            />
+          </button>
+        </div>
       </div>
     `);
   });
@@ -235,50 +237,45 @@ describe("Composer snapshot — preserved controls and tokens (R1.2, R1.5, R1.6)
   it("retains the full set of controls in Agent mode", () => {
     applyState(baseState({ agentMode: "agent" }));
     const { getByText, getByLabelText, container } = render(<Composer />);
-    // Message input.
     expect(container.querySelector("textarea")).toBeInTheDocument();
-    // Ask/Agent mode toggle.
     expect(getByText("Ask")).toBeInTheDocument();
     expect(getByText("Agent")).toBeInTheDocument();
-    // Autonomy/priority pill (Agent mode).
     expect(getByLabelText("Autonomy level: Medium")).toBeInTheDocument();
-    // Send button.
     expect(getByLabelText("Send")).toBeInTheDocument();
   });
 
-  it("preserves the outer container border/background tokens and padding", () => {
+  it("preserves the outer container and input-card tokens", () => {
     applyState(baseState());
     const { container } = render(<Composer />);
     const root = composerRoot(container);
     expect(root.className).toContain("border-t");
-    expect(root.className).toContain("border-[#1E1E23]");
-    expect(root.className).toContain("bg-[#101014]");
+    expect(root.className).toContain("border-[#1A1A1F]");
+    expect(root.className).toContain("bg-[#0C0C10]");
     expect(root.className).toContain("p-3");
-    // Inner input card preserved tokens + radius.
-    const card = root.querySelector(".rounded-\\[10px\\]") as HTMLElement;
+    const card = root.querySelector(".rounded-xl") as HTMLElement;
     expect(card).toBeInTheDocument();
-    expect(card.className).toContain("bg-[#131318]");
+    expect(card.className).toContain("bg-[#111116]");
     expect(card.className).toContain("border-[#26262B]");
   });
 
-  it("preserves the toggle pill container tokens", () => {
+  it("preserves the toggle container tokens", () => {
     applyState(baseState({ agentMode: "agent" }));
     const { getByText } = render(<Composer />);
     const toggle = getByText("Ask").parentElement as HTMLElement;
-    expect(toggle.className).toContain("bg-[#1B1B21]");
-    expect(toggle.className).toContain("rounded-full");
-    expect(toggle.className).toContain("border-[#26262B]");
+    expect(toggle.className).toContain("bg-[#0F0F14]");
+    expect(toggle.className).toContain("rounded-lg");
+    expect(toggle.className).toContain("border-[#1E1E23]");
   });
 
-  it("preserves the send button gradient and the textarea text token", () => {
-    applyState(baseState({ agentMode: "agent" }));
+  it("preserves the enabled send and textarea tokens", () => {
+    applyState(baseState({ agentMode: "agent", input: "run this" }));
     const { getByLabelText, container } = render(<Composer />);
     const send = getByLabelText("Send") as HTMLElement;
-    expect(send.className).toContain("from-[#7C3AED]");
-    expect(send.className).toContain("to-[#9B6AF1]");
+    expect(send.className).toContain("bg-[#7C3AED]");
+    expect(send.className).toContain("border-[#9B6AF1]/30");
     const textarea = container.querySelector("textarea") as HTMLElement;
-    expect(textarea.className).toContain("text-[#FAFAFA]");
-    expect(textarea.className).toContain("placeholder:text-[#52525B]");
+    expect(textarea.className).toContain("text-[#EDEDF0]");
+    expect(textarea.className).toContain("placeholder:text-[#3F3F46]");
   });
 });
 
@@ -308,16 +305,16 @@ describe("Composer snapshot — Ask/Agent toggle indicator (R1.4)", () => {
   it("marks Ask active and shows the Read-only pill in Ask mode", () => {
     applyState(baseState({ agentMode: "ask" }));
     const { getByText, getByLabelText } = render(<Composer />);
-    expect(getByText("Ask").className).toContain("bg-[var(--zoc-info)]");
-    expect(getByText("Agent").className).not.toContain("bg-[var(--zoc-ember)]");
+    expect(getByText("Ask").className).toContain("bg-[#1A3A5C]");
+    expect(getByText("Agent").className).not.toContain("bg-[#2A1F4E]");
     expect(getByLabelText("Read-only mode")).toBeInTheDocument();
   });
 
   it("marks Agent active and shows the autonomy pill in Agent mode", () => {
     applyState(baseState({ agentMode: "agent" }));
     const { getByText, getByLabelText } = render(<Composer />);
-    expect(getByText("Agent").className).toContain("bg-[var(--zoc-ember)]");
-    expect(getByText("Ask").className).not.toContain("bg-[var(--zoc-info)]");
+    expect(getByText("Agent").className).toContain("bg-[#2A1F4E]");
+    expect(getByText("Ask").className).not.toContain("bg-[#1A3A5C]");
     expect(getByLabelText("Autonomy level: Medium")).toBeInTheDocument();
   });
 

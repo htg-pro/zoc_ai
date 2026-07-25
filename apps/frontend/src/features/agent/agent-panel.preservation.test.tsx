@@ -128,7 +128,7 @@ describe("AgentPanel preservation — header chrome (idle)", () => {
       "grid-rows-[auto_auto_minmax(0,1fr)_auto]",
     );
     expect(root.className).toContain("grid-cols-1");
-    expect(root.className).toContain("bg-background");
+    expect(root.className).toContain("bg-[#0C0C10]");
     // The four grid rows are preserved in order.
     expect(container.querySelector(".row-start-1")).toBeInTheDocument();
     expect(container.querySelector(".row-start-2")).toBeInTheDocument();
@@ -140,37 +140,35 @@ describe("AgentPanel preservation — header chrome (idle)", () => {
     const { container } = render(<AgentPanel />);
     const head = header(container);
     expect(head.className).toContain("border-b");
-    expect(head.className).toContain("border-[#1E1E23]");
-    expect(head.className).toContain("bg-[#101014]");
-    // Top-bar row spacing preserved.
-    const topBar = head.querySelector(".min-h-\\[44px\\]") as HTMLElement;
+    expect(head.className).toContain("border-[#1A1A1F]");
+    expect(head.className).toContain("bg-[#0C0C10]");
+    const topBar = head.querySelector(".min-h-\\[48px\\]") as HTMLElement;
     expect(topBar).toBeInTheDocument();
-    expect(topBar.className).toContain("px-3");
-    expect(topBar.className).toContain("py-1.5");
-    expect(topBar.className).toContain("gap-2.5");
+    expect(topBar.className).toContain("px-3.5");
+    expect(topBar.className).toContain("py-2");
+    expect(topBar.className).toContain("gap-3");
   });
 
-  it("preserves the ember Zap badge with its color tokens", () => {
+  it("preserves the purple Zap badge with its color tokens", () => {
     const { container } = render(<AgentPanel />);
-    const badge = container.querySelector(
-      ".text-\\[var\\(--zoc-ember\\)\\]",
-    ) as HTMLElement;
-    expect(badge).toBeInTheDocument();
-    expect(badge.className).toContain("bg-[rgba(251,146,60,0.12)]");
-    expect(badge.className).toContain("border-[rgba(251,146,60,0.28)]");
-    expect(badge.querySelector('[data-icon="Zap"]')).toBeInTheDocument();
+    const icon = container.querySelector('[data-icon="Zap"]') as HTMLElement;
+    expect(icon).toBeInTheDocument();
+    expect(icon.className).toContain("text-[#9B6AF1]");
+    const badge = icon.parentElement as HTMLElement;
+    expect(badge.className).toContain("from-[#3B1F7C]");
+    expect(badge.className).toContain("to-[#1A0E3A]");
+    expect(badge.className).toContain("border-[#7C3AED]/30");
   });
 
-  it("renders the 'Zoc Agent' title with the ember accent word", () => {
+  it("renders the 'Zoc Agent' title with the purple accent word", () => {
     const { container } = render(<AgentPanel />);
     const head = header(container);
     expect(head.textContent).toContain("Zoc");
     expect(head.textContent).toContain("Agent");
-    // The accent header word carries the ember color token.
     const accentWord = Array.from(head.querySelectorAll("span")).find(
-      (s) =>
-        s.textContent === "Agent" &&
-        s.className.includes("text-[var(--zoc-ember)]"),
+      (span) =>
+        span.textContent?.trim() === "Agent" &&
+        span.className.includes("text-[#9B6AF1]"),
     );
     expect(accentWord).toBeTruthy();
   });
@@ -220,29 +218,21 @@ describe("AgentPanel preservation — active-execution control bar (running)", (
   });
 
   it("retains pause, stop, timer, autonomy pill and model chip controls", () => {
-    const { getByTitle, container } = render(<AgentPanel />);
-    // Pause control (resume when paused).
+    const { getByTitle, getByLabelText, container } = render(<AgentPanel />);
     expect(getByTitle("Pause run")).toBeInTheDocument();
-    // Stop control with its destructive color tokens.
     const stop = getByTitle("Stop run") as HTMLElement;
-    expect(stop.className).toContain("bg-[rgba(248,113,113,0.12)]");
-    expect(stop.className).toContain("border-[rgba(248,113,113,0.3)]");
-    expect(stop.className).toContain("text-[#F87171]");
-    // Elapsed timer (monospace).
-    const timer = container.querySelector(".font-mono") as HTMLElement;
-    expect(timer).toBeInTheDocument();
-    // Autonomy pill reflects current level.
-    expect(getByTitle("Autonomy level: Medium")).toBeInTheDocument();
-    // Model chip shows the trailing model id.
-    expect(
-      getByTitle("anthropic/claude-3-5-sonnet"),
-    ).toBeInTheDocument();
+    expect(stop.className).toContain("bg-[#f87171]/10");
+    expect(stop.className).toContain("border-[#f87171]/30");
+    expect(stop.className).toContain("text-[#f87171]");
+    expect(container.querySelector(".font-mono")).toBeInTheDocument();
+    expect(getByLabelText("Autonomy level: Medium")).toBeInTheDocument();
+    expect(getByTitle("anthropic/claude-3-5-sonnet")).toBeInTheDocument();
   });
 
   it("shows the running status pill with a pulsing dot", () => {
     const { getByText, container } = render(<AgentPanel />);
     expect(getByText("Building…")).toBeInTheDocument();
-    expect(container.querySelector(".animate-pulse-dot")).toBeInTheDocument();
+    expect(container.querySelector(".animate-ping")).toBeInTheDocument();
   });
 
   it("shows Ask wording while an auto-routed Ask run is active", () => {

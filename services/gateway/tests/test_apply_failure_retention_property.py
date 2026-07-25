@@ -50,7 +50,6 @@ from shared_schema.agent_events import (
     CommandEvent,
     EditFileEvent,
 )
-
 from zocai_gateway.edits import EditCoordinator, EditPlan, PlannedChange
 from zocai_gateway.toolsets import FullToolset
 

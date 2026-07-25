@@ -98,10 +98,7 @@ def test_query_can_return_semantic_match_without_lexical_overlap(tmp_path) -> No
             return EmbedderInfo(kind="test", model="controlled", dim=2)
 
         def embed_documents(self, documents):
-            return [
-                [0.0, 1.0] if "alpha" in document else [1.0, 0.0]
-                for document in documents
-            ]
+            return [[0.0, 1.0] if "alpha" in document else [1.0, 0.0] for document in documents]
 
         def embed_query(self, query):
             assert query == "conceptual lookup"
@@ -128,7 +125,8 @@ def test_fs_changed_debounces_and_reembeds_only_affected_file(tmp_path) -> None:
     beta.write_text("beta untouched\n", encoding="utf-8")
 
     class CountingEmbedder:
-        batches: list[list[str]] = []
+        def __init__(self) -> None:
+            self.batches: list[list[str]] = []
 
         @property
         def info(self) -> EmbedderInfo:
@@ -137,10 +135,7 @@ def test_fs_changed_debounces_and_reembeds_only_affected_file(tmp_path) -> None:
         def embed_documents(self, documents):
             batch = list(documents)
             self.batches.append(batch)
-            return [
-                [1.0, 0.0] if "alpha" in document else [0.0, 1.0]
-                for document in batch
-            ]
+            return [[1.0, 0.0] if "alpha" in document else [0.0, 1.0] for document in batch]
 
         def embed_query(self, query):
             return [1.0, 0.0] if "alpha" in query else [0.0, 1.0]
@@ -155,29 +150,21 @@ def test_fs_changed_debounces_and_reembeds_only_affected_file(tmp_path) -> None:
         alpha.write_text("alpha intermediate\n", encoding="utf-8")
         await bus.publish(
             FS_CHANGED_TOPIC,
-            WorkspaceFilesChanged(
-                session_id="session-incremental", paths=(str(alpha),)
-            ),
+            WorkspaceFilesChanged(session_id="session-incremental", paths=(str(alpha),)),
         )
         await asyncio.sleep(0.005)
         alpha.write_text("alpha finalmarker\n", encoding="utf-8")
         await bus.publish(
             FS_CHANGED_TOPIC,
-            WorkspaceFilesChanged(
-                session_id="session-incremental", paths=(str(alpha),)
-            ),
+            WorkspaceFilesChanged(session_id="session-incremental", paths=(str(alpha),)),
         )
         await asyncio.sleep(0.05)
 
         assert len(embedder.batches) == 2
         assert len(embedder.batches[0]) == 2
         assert embedder.batches[1] == ["alpha finalmarker"]
-        assert indexer.query("session-incremental", "finalmarker")[0].chunk.file == (
-            "alpha.py"
-        )
-        assert indexer.query("session-incremental", "beta untouched")[0].chunk.file == (
-            "beta.py"
-        )
+        assert indexer.query("session-incremental", "finalmarker")[0].chunk.file == ("alpha.py")
+        assert indexer.query("session-incremental", "beta untouched")[0].chunk.file == ("beta.py")
 
         unsubscribe()
         await indexer.close()
@@ -237,9 +224,7 @@ def test_fs_changed_during_embedding_preserves_both_batches(tmp_path) -> None:
         last_batch = embedder.batches[-1]
         assert "alpha updatedmarker" in last_batch
         assert "beta finalmarker" in last_batch
-        assert indexer.query("session-race", "updatedmarker")[0].chunk.file == (
-            "alpha.py"
-        )
+        assert indexer.query("session-race", "updatedmarker")[0].chunk.file == ("alpha.py")
         assert indexer.query("session-race", "finalmarker")[0].chunk.file == "beta.py"
         await indexer.close()
 

@@ -36,8 +36,8 @@ from zocai_gateway.stages import Stage
 
 __all__ = [
     "DEFAULT_INTENT_TEXT",
-    "build_intent_event",
     "allocation_stage_event_factory",
+    "build_intent_event",
 ]
 
 #: The intent text used when the caller does not supply a per-run prompt

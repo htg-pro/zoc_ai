@@ -3,10 +3,12 @@
 //! indexing/chunking, ripgrep-style search, and fuzzy patch application.
 
 pub mod chunker;
+pub mod checkpoint;
 pub mod fs_watch;
 pub mod indexer;
 pub mod patch;
 pub mod pty;
 pub mod search;
+pub mod transaction;
 
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");

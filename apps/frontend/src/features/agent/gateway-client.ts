@@ -23,6 +23,7 @@
  */
 
 import { resolveAgentPort } from "@/lib/agent-port";
+import { getTrustConfig } from "@/lib/trust";
 import type {
   ModelBenchmarkHistory,
   ModelBenchmarkRun,
@@ -152,6 +153,9 @@ export async function postAgentRun(req: AgentRunRequest): Promise<AgentRunHandle
   const accepted = await postJson<{ runId?: string; run_id?: string }>("/v1/agent/run", {
     prompt: req.input,
     mode: req.mode,
+    // Part 7.1: send the live workspace trust PermissionConfig so the gateway
+    // gates tools with the exact policy the UI configured (read as `req.permission`).
+    permission: getTrustConfig(req.workspaceRoot),
     runId: req.runId ?? null,
     context_files: req.contextFiles ?? [],
     model: req.model ?? null,

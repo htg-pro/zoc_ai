@@ -50,7 +50,7 @@ from __future__ import annotations
 import itertools
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from enum import Enum
 from pathlib import Path
 from typing import ClassVar
@@ -64,11 +64,11 @@ from zocai_gateway.stages import Stage
 
 __all__ = [
     "Budget",
-    "BudgetKind",
-    "RetainedState",
     "BudgetExceededError",
+    "BudgetKind",
     "NotPausedError",
     "Orchestrator",
+    "RetainedState",
 ]
 
 
@@ -356,7 +356,7 @@ class Orchestrator:
         event = ApprovalEvent(
             seq=self.next_seq(),
             run_id=self.run_id,
-            ts=datetime.now(timezone.utc).isoformat(),
+            ts=datetime.now(UTC).isoformat(),
             prompt=prompt,
         )
         self.events.append(event)

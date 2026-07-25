@@ -10,7 +10,6 @@ dedicated property tests (tasks 3.6–3.9).
 from __future__ import annotations
 
 import pytest
-
 from zocai_gateway.hardware_probe import HardwareProfile
 from zocai_gateway.model_allocator import (
     FALLBACK_REASON_UNAVAILABLE,

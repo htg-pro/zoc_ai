@@ -22,7 +22,6 @@ from typing import Any
 import pytest
 from hypothesis import given, settings
 from hypothesis import strategies as st
-
 from zocai_gateway.memory import DiaryWorker
 from zocai_gateway.memory.diary_worker import DiaryEntry
 

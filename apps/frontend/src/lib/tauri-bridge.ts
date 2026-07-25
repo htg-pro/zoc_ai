@@ -73,6 +73,20 @@ export interface ApplyPatchResult {
   bytes_written: number;
 }
 
+/** One operation staged by Rust before an all-or-nothing commit. */
+export type TransactionOperation =
+  | { kind: "write"; path: string; content: string }
+  | { kind: "delete"; path: string }
+  | { kind: "patch"; path: string; unified_diff: string };
+
+/** Mirrors Rust `patch::ApplyTransactionResult`. */
+export interface ApplyTransactionResult {
+  written: number;
+  deleted: number;
+  checkpoint: string | null;
+  checkpoint_error: string | null;
+}
+
 /** Payload emitted by the Rust watcher on `fs://changed`: a list of
  *  absolute paths that changed within the active debounce window. */
 export type FsChangedPayload = string[];
@@ -617,6 +631,18 @@ export async function applyPatch(
       file_path: filePath,
       unified_diff: unifiedDiff,
     },
+  });
+}
+
+/** Stage and commit a set of workspace operations atomically in Rust. */
+export async function applyTransaction(
+  workspaceRoot: string,
+  ops: TransactionOperation[],
+): Promise<ApplyTransactionResult | null> {
+  const b = await bindings();
+  if (!b) return null;
+  return b.invoke<ApplyTransactionResult>("apply_transaction", {
+    args: { workspace_root: workspaceRoot, ops },
   });
 }
 

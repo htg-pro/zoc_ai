@@ -40,7 +40,6 @@ import itertools
 
 from hypothesis import given, settings
 from hypothesis import strategies as st
-
 from zocai_gateway.edits import EditPlan, PlannedChange
 from zocai_gateway.fsm import FSM
 from zocai_gateway.memory.state_wrapper import FailureRecord

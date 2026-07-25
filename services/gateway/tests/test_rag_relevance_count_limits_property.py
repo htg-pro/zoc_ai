@@ -30,7 +30,6 @@ from collections.abc import Sequence
 
 from hypothesis import given, settings
 from hypothesis import strategies as st
-
 from zocai_gateway.context.rag_matcher import (
     MAX_FRAGMENTS,
     RELEVANCE_THRESHOLD,

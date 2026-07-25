@@ -19,7 +19,6 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
-
 from zocai_gateway.context.rag_matcher import RagFragment, RagMatcher
 from zocai_gateway.mode_router import (
     SWITCH_TO_AGENT_MESSAGE,
@@ -34,7 +33,6 @@ from zocai_gateway.mode_router import (
     is_edit_request,
 )
 from zocai_gateway.toolsets import ReadOnlyViolation
-
 
 # --- Test doubles -----------------------------------------------------------
 

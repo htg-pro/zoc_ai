@@ -10,7 +10,11 @@
 interface ActiveEditor {
   // Loosely typed — we only touch a tiny, stable slice of the Monaco API.
   getAction?: (id: string) => { run: () => void } | null;
-  getModel?: () => { getValueInRange?: (selection: unknown) => string } | null;
+  getModel?: () => {
+    getValueInRange?: (selection: unknown) => string;
+    getValue?: () => string;
+    setValue?: (value: string) => void;
+  } | null;
   getSelection?: () => unknown | null;
   revealLineInCenter?: (line: number) => void;
   setPosition?: (pos: { lineNumber: number; column: number }) => void;
@@ -38,6 +42,16 @@ export function getActiveSelection(): string | null {
   if (!model?.getValueInRange || !selection) return null;
   const text = model.getValueInRange(selection);
   return text.trim() ? text : null;
+}
+
+/** Full text of the focused editor's model (plugin `zoc.editor.getText`). */
+export function getActiveText(): string {
+  return active?.getModel?.()?.getValue?.() ?? "";
+}
+
+/** Replace the focused editor's model text (plugin `zoc.editor.setText`). */
+export function setActiveText(text: string): void {
+  active?.getModel?.()?.setValue?.(text);
 }
 
 /** Run a built-in Monaco editor action by id. Returns false when no editor is

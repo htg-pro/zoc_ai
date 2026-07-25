@@ -32,7 +32,6 @@ from __future__ import annotations
 
 from hypothesis import given, settings
 from hypothesis import strategies as st
-
 from shared_schema.agent_events import IntentEvent
 from zocai_gateway.fsm import FSM
 from zocai_gateway.intent_event import allocation_stage_event_factory

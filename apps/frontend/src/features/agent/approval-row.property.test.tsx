@@ -53,7 +53,7 @@ describe("Feature: zoc-agent-ecosystem-merge, Property 5: ApprovalRow decision d
           return Promise.resolve();
         };
 
-        const { getByRole } = render(
+        const { getByRole, getByText, queryByRole } = render(
           <ApprovalRow event={event} onDecision={onDecision} />,
         );
 
@@ -67,31 +67,21 @@ describe("Feature: zoc-agent-ecosystem-merge, Property 5: ApprovalRow decision d
         const chosenBtn = choice === "approve" ? approveBtn : rejectBtn;
         const otherBtn = choice === "approve" ? rejectBtn : approveBtn;
 
-        // Select the chosen verdict.
+        // Select the chosen verdict, then attempt rapid duplicate selections
+        // through the previously captured controls. The settled ref must make
+        // every later handler invocation a no-op.
         fireEvent.click(chosenBtn);
-
-        // Both actions are disabled once a decision is recorded/in-flight.
-        await waitFor(() => {
-          expect(approveBtn.disabled).toBe(true);
-          expect(rejectBtn.disabled).toBe(true);
-        });
-
-        // Subsequent selections (the other action and the chosen one again) are
-        // ignored — no further decisions are posted.
         fireEvent.click(otherBtn);
         fireEvent.click(chosenBtn);
 
-        // Let any pending microtasks/state settle, then assert the invariant.
         await waitFor(() => {
-          expect(calls.length).toBe(1);
+          expect(calls).toEqual([{ runId: event.runId, decision: choice }]);
+          expect(getByText(choice === "approve" ? "Approved" : "Rejected")).toBeInTheDocument();
         });
 
-        // Exactly one decision carrying the row's runId and the chosen verdict.
-        expect(calls).toEqual([{ runId: event.runId, decision: choice }]);
-
-        // Both actions remain disabled after a successful post.
-        expect(approveBtn.disabled).toBe(true);
-        expect(rejectBtn.disabled).toBe(true);
+        // Settled rows replace both actions with the immutable result badge.
+        expect(queryByRole("button", { name: /approve/i })).toBeNull();
+        expect(queryByRole("button", { name: /reject/i })).toBeNull();
       }),
       { numRuns: 100 },
     );

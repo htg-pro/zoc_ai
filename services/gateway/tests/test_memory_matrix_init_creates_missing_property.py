@@ -39,7 +39,6 @@ from pathlib import Path
 
 from hypothesis import given, settings
 from hypothesis import strategies as st
-
 from zocai_gateway.memory import MemoryMatrix
 
 # The stable names the matrix uses to expose its owned stores. Splitting them

@@ -23,6 +23,10 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { parseUnifiedDiff } from "@/lib/diff-utils";
+import {
+  cancelAgentEditBatch,
+  stageAgentEditBatch,
+} from "@/features/editor/agent-edit-bridge";
 import { useApp } from "@/lib/store";
 import { postAgentDecision } from "./gateway-client";
 import { cn } from "@/lib/utils";
@@ -386,6 +390,15 @@ function ReviewChangesRow({
   async function decide(decision: "apply" | "discard", paths = [...selected]): Promise<void> {
     setError(null);
     setPending(decision);
+    if (decision === "apply") {
+      const accepted = new Set(paths);
+      stageAgentEditBatch(
+        runId,
+        review.files.filter((file) => accepted.has(file.path)),
+      );
+    } else {
+      cancelAgentEditBatch(runId);
+    }
     try {
       await postAgentDecision({
         runId,
@@ -393,6 +406,7 @@ function ReviewChangesRow({
         acceptedPaths: decision === "apply" ? paths : [],
       });
     } catch (err) {
+      cancelAgentEditBatch(runId);
       setError((err as Error).message);
       setPending(null);
     }

@@ -39,7 +39,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Protocol
 
 from shared_schema.agent_events import (
@@ -53,12 +53,12 @@ from shared_schema.agent_events import (
 from zocai_gateway.stages import Stage
 
 __all__ = [
-    "LEGAL",
     "FSM",
-    "StageEventFactory",
+    "LEGAL",
+    "AmbiguousTransitionError",
     "EmitSink",
     "IllegalTransitionError",
-    "AmbiguousTransitionError",
+    "StageEventFactory",
     "default_stage_event_factory",
 ]
 
@@ -351,7 +351,7 @@ class FSM:
 
     def _emit_entry(self, stage: Stage, detail: str | None = None) -> None:
         """Build and emit a conforming stage event for entering ``stage`` (R3.3)."""
-        ts = datetime.now(timezone.utc).isoformat()
+        ts = datetime.now(UTC).isoformat()
         event = self.stage_event_factory(stage, self._seq, self.run_id, ts, detail)
         self._seq += 1
         self.events.append(event)

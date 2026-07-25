@@ -22,7 +22,6 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-
 from zocai_gateway.memory import (
     DiaryWorker,
     reconstruct_run_state,

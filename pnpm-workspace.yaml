@@ -1,7 +1,6 @@
 packages:
   - "apps/*"
   - "packages/*/typescript"
-  - "zoc-model"
 
 minimumReleaseAgeExclude:
   - dompurify@3.4.11

@@ -1,0 +1,58 @@
+name: Publish committed Linux release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag (for example v0.0.2)"
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  publish:
+    name: Verify and publish committed packages
+    runs-on: ubuntu-latest
+    env:
+      RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Check out tagged source
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          ref: ${{ inputs.tag || github.ref }}
+
+      - name: Verify version and Linux packages
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="$(tr -d '[:space:]' < VERSION)"
+          test "$RELEASE_TAG" = "v$version"
+          test -f "dist/installers/Zoc AI_${version}_amd64.deb"
+          test -f "dist/installers/Zoc AI-${version}-1.x86_64.rpm"
+          test -f "dist/installers/zoc-studio-${version}-linux-x86_64.tar.gz"
+          test -f dist/installers/SHA256SUMS
+          (cd dist/installers && sha256sum --check SHA256SUMS)
+
+      - name: Create or update GitHub Release
+        shell: bash
+        run: |
+          set -euo pipefail
+          mapfile -d '' assets < <(
+            find dist/installers -maxdepth 1 -type f \
+              \( -name '*.deb' -o -name '*.rpm' -o -name '*.tar.gz' -o -name 'SHA256SUMS' \) \
+              -print0 | sort -z
+          )
+          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            gh release upload "$RELEASE_TAG" "${assets[@]}" --clobber
+          else
+            gh release create "$RELEASE_TAG" "${assets[@]}" \
+              --title "Zoc AI $RELEASE_TAG" \
+              --notes-file "RELEASE_NOTES_${RELEASE_TAG}.md" \
+              --verify-tag
+          fi

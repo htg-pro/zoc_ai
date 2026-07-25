@@ -1618,7 +1618,7 @@ dependencies = [
 
 [[package]]
 name = "hardware-probe"
-version = "2.0.0"
+version = "0.0.2"
 dependencies = [
  "serde",
  "serde_json",
@@ -6259,7 +6259,7 @@ checksum = "b8848ee67ecc8aedbaf3e4122217aff892639231befc6a1b58d29fff4c2cabaa"
 
 [[package]]
 name = "zoc-studio-desktop"
-version = "2.0.0"
+version = "0.0.2"
 dependencies = [
  "anyhow",
  "chrono",
@@ -6288,7 +6288,7 @@ dependencies = [
 
 [[package]]
 name = "zoc-studio-hotpath"
-version = "2.0.0"
+version = "0.0.2"
 dependencies = [
  "anyhow",
  "clap",

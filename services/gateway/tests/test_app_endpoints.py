@@ -9,6 +9,9 @@ are exercised by task 7.2's tests, not here.
 
 from __future__ import annotations
 
+import threading
+from pathlib import Path
+
 import pytest
 from fastapi.testclient import TestClient
 from zocai_gateway.app import create_app
@@ -169,9 +172,7 @@ def test_workspace_reindex_streams_progress_and_updates_status(tmp_path) -> None
 
 
 def test_decision_acknowledged_for_known_run(client: TestClient) -> None:
-    run_id = client.post(
-        "/v1/agent/run", json={"prompt": "build", "mode": "agent"}
-    ).json()["runId"]
+    run_id = client.post("/v1/agent/run", json={"prompt": "build", "mode": "agent"}).json()["runId"]
     resp = client.post(
         "/v1/agent/decision",
         json={"runId": run_id, "kind": "approval", "decision": "approve"},
@@ -187,9 +188,7 @@ def test_decision_acknowledged_for_known_run(client: TestClient) -> None:
 
 
 def test_decision_budget_continuation_for_known_run(client: TestClient) -> None:
-    run_id = client.post(
-        "/v1/agent/run", json={"prompt": "build", "mode": "agent"}
-    ).json()["runId"]
+    run_id = client.post("/v1/agent/run", json={"prompt": "build", "mode": "agent"}).json()["runId"]
     resp = client.post(
         "/v1/agent/decision",
         json={"runId": run_id, "kind": "budget-continuation", "decision": "continue"},
@@ -239,21 +238,25 @@ def test_run_has_emit_gate_feeding_its_queue() -> None:
     registry = RunRegistry()
     run = registry.create(ModeRouter().route(AgentRunRequest(prompt="go", mode="agent")))
 
-    assert run.emit_gate.emit(
-        {
-            "type": "intent",
-            "seq": 0,
-            "runId": run.run_id,
-            "ts": "t",
-            "text": "x",
-            "modelTier": "cloud",
-            "contextWindowTokens": 128000,
-        }
-    ) is True
+    assert (
+        run.emit_gate.emit(
+            {
+                "type": "intent",
+                "seq": 0,
+                "runId": run.run_id,
+                "ts": "t",
+                "text": "x",
+                "modelTier": "cloud",
+                "contextWindowTokens": 128000,
+            }
+        )
+        is True
+    )
     assert run.emit_gate.emit({"type": "garbage"}) is False
-    assert run.emit_gate.emit(
-        {"type": "done", "seq": 1, "runId": run.run_id, "ts": "t", "ok": True}
-    ) is True
+    assert (
+        run.emit_gate.emit({"type": "done", "seq": 1, "runId": run.run_id, "ts": "t", "ok": True})
+        is True
+    )
     run.close()
 
     drained: list[dict[str, object] | None] = []
@@ -269,18 +272,14 @@ def test_run_has_emit_gate_feeding_its_queue() -> None:
 
 
 def test_invalid_approval_verdict_is_rejected(client: TestClient) -> None:
-    run_id = client.post(
-        "/v1/agent/run", json={"prompt": "build", "mode": "agent"}
-    ).json()["runId"]
+    run_id = client.post("/v1/agent/run", json={"prompt": "build", "mode": "agent"}).json()["runId"]
     response = client.post(
         "/v1/agent/decision",
         json={"runId": run_id, "kind": "approval", "decision": "continue"},
     )
 
     assert response.status_code == 422
-    assert response.json()["detail"] == (
-        "approval decisions must be 'approve' or 'reject'"
-    )
+    assert response.json()["detail"] == ("approval decisions must be 'approve' or 'reject'")
 
 
 def test_approval_decisions_are_consumed_once() -> None:
@@ -288,9 +287,7 @@ def test_approval_decisions_are_consumed_once() -> None:
     from zocai_gateway.mode_router import AgentRunRequest, ModeRouter
 
     registry = RunRegistry()
-    run = registry.create(
-        ModeRouter().route(AgentRunRequest(prompt="go", mode="agent"))
-    )
+    run = registry.create(ModeRouter().route(AgentRunRequest(prompt="go", mode="agent")))
     first = DecisionRequest(
         runId=run.run_id,
         kind="approval",
@@ -307,3 +304,37 @@ def test_approval_decisions_are_consumed_once() -> None:
     assert run.wait_for_approval_decision(timeout=0) is None
     run.record_decision(second)
     assert run.wait_for_approval_decision(timeout=0) == second
+
+
+def test_agent_run_uses_authoritative_sidecar_workspace(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    authoritative = tmp_path / "trusted"
+    attacker_claim = tmp_path / "outside"
+    authoritative.mkdir()
+    attacker_claim.mkdir()
+    captured: dict[str, object] = {}
+    finished = threading.Event()
+
+    def fake_execute_run(*_args: object, **kwargs: object) -> None:
+        captured["workspace_root"] = kwargs["workspace_root"]
+        close = kwargs["close"]
+        assert callable(close)
+        close()
+        finished.set()
+
+    monkeypatch.setattr("zocai_gateway.app.execute_run", fake_execute_run)
+    app = create_app(workspace_root=authoritative)
+    with TestClient(app) as test_client:
+        response = test_client.post(
+            "/v1/agent/run",
+            json={
+                "prompt": "write a file",
+                "mode": "agent",
+                "workspaceRoot": str(attacker_claim),
+            },
+        )
+        assert response.status_code == 200
+        assert finished.wait(timeout=2)
+
+    assert Path(str(captured["workspace_root"])).resolve() == authoritative.resolve()

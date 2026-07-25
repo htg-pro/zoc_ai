@@ -13,7 +13,6 @@ from __future__ import annotations
 from collections.abc import Iterable
 
 import pytest
-
 from zocai_migration import (
     DeletionGuard,
     GuardError,
@@ -21,7 +20,6 @@ from zocai_migration import (
     ReplacementSpec,
     module_importable,
 )
-
 
 # ---------------------------------------------------------------------------
 # Fakes

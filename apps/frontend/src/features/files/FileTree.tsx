@@ -34,7 +34,6 @@ import {
   fsListDir,
   fsWatchStart,
   fsWatchStop,
-  isTauri,
   onFsChanged,
   type FileNode as LiveFileNode,
 } from "@/lib/tauri-bridge";

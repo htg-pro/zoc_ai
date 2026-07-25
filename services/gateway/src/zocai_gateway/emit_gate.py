@@ -92,7 +92,7 @@ class EmitGate:
             gate emits without mirroring.
     """
 
-    __slots__ = ("_sink", "_diary", "_violations")
+    __slots__ = ("_diary", "_sink", "_violations")
 
     def __init__(self, sink: EmitSink, diary: DiaryMirror | None = None) -> None:
         self._sink = sink

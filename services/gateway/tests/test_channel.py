@@ -19,10 +19,8 @@ from hypothesis import given
 from hypothesis import strategies as st
 from shared_schema.agent_events import (
     DoneEvent,
-    IntentEvent,
     ThinkingEvent,
 )
-
 from zocai_gateway.channel import (
     SUPPRESSED_IN_ASK_ROW_TYPES,
     AgentChannel,

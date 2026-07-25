@@ -14,11 +14,13 @@ use std::time::Duration;
 use anyhow::{Context, Result};
 use parking_lot::Mutex;
 use serde::Serialize;
-use tauri::{AppHandle, Emitter, Runtime};
+use tauri::{AppHandle, Emitter, Manager, Runtime};
 use tauri_plugin_shell::process::{CommandChild, CommandEvent};
 use tauri_plugin_shell::ShellExt;
-use tokio::sync::watch;
+use tokio::sync::{watch, Notify};
 use tokio::time::sleep;
+
+use crate::workspace::WorkspaceState;
 
 const READY_PREFIX: &str = "ZOC_STUDIO_AGENT_PORT=";
 const HEALTH_INTERVAL: Duration = Duration::from_secs(5);
@@ -39,11 +41,25 @@ pub struct AgentSupervisor {
     pub status: Mutex<AgentStatus>,
     pub child: Mutex<Option<CommandChild>>,
     pub shutdown_tx: Mutex<Option<watch::Sender<bool>>>,
+    restart_notify: Notify,
 }
 
 impl AgentSupervisor {
     pub fn current(&self) -> AgentStatus {
         self.status.lock().clone()
+    }
+
+    /// Restart the child while leaving the supervisor loop active. The health
+    /// poll observes the terminated child and the next spawn receives the
+    /// current authoritative workspace environment.
+    pub fn restart(&self) {
+        if let Some(child) = self.child.lock().take() {
+            let _ = child.kill();
+        }
+        let mut status = self.status.lock();
+        status.running = false;
+        status.port = None;
+        self.restart_notify.notify_one();
     }
 
     /// Best-effort shutdown: drop the child handle (sends SIGTERM on Unix /
@@ -85,7 +101,7 @@ pub fn supervise<R: Runtime>(app: AppHandle<R>, sup: Arc<AgentSupervisor>) {
                     backoff = MIN_BACKOFF;
 
                     // Health-poll until child exits or shutdown requested.
-                    let died = health_poll_until_dead(port, &mut rx).await;
+                    let died = health_poll_until_dead(port, &mut rx, &sup).await;
                     if *rx.borrow() {
                         break;
                     }
@@ -143,6 +159,10 @@ async fn spawn_once<R: Runtime>(
         "ZOC_STUDIO_LLAMACPP_STATE_PATH",
         runtime_state_path().to_string_lossy().to_string(),
     );
+    let workspace = app.state::<Arc<WorkspaceState>>();
+    if let Some(root) = workspace.get() {
+        cmd = cmd.env("ZOC_STUDIO_WORKSPACE", root.to_string_lossy().to_string());
+    }
     let (mut rx, child) = cmd.spawn().context("failed to spawn agent sidecar")?;
     *sup.child.lock() = Some(child);
 
@@ -185,7 +205,11 @@ async fn spawn_once<R: Runtime>(
     anyhow::bail!("agent sidecar stream ended before announcing port")
 }
 
-async fn health_poll_until_dead(port: u16, shutdown: &mut watch::Receiver<bool>) -> String {
+async fn health_poll_until_dead(
+    port: u16,
+    shutdown: &mut watch::Receiver<bool>,
+    sup: &Arc<AgentSupervisor>,
+) -> String {
     let client = reqwest::Client::builder()
         .timeout(HEALTH_TIMEOUT)
         .build()
@@ -196,6 +220,7 @@ async fn health_poll_until_dead(port: u16, shutdown: &mut watch::Receiver<bool>)
         tokio::select! {
             _ = sleep(HEALTH_INTERVAL) => {}
             _ = shutdown.changed() => return "shutdown".into(),
+            _ = sup.restart_notify.notified() => return "workspace changed".into(),
         }
         match client.get(&url).send().await {
             Ok(resp) if resp.status().is_success() => failures = 0,

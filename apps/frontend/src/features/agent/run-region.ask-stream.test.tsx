@@ -34,7 +34,7 @@ afterEach(() => {
 });
 
 describe("RunRegion Ask stream rendering", () => {
-  it("renders streamed token chunks as one Agent bubble and finishes on terminal token", async () => {
+  it("renders streamed token chunks as one Zoc bubble and finishes on terminal token", async () => {
     mockStream.events = [
       { type: "token", seq: 1, runId: "run-ask", ts: TS, text: "OK", done: false },
       { type: "token", seq: 2, runId: "run-ask", ts: TS, text: ".", done: false },
@@ -49,7 +49,7 @@ describe("RunRegion Ask stream rendering", () => {
     const { rerender } = render(<RunRegion />);
 
     expect(screen.getByText("OK.")).toBeInTheDocument();
-    expect(screen.getByText("Agent")).toBeInTheDocument();
+    expect(screen.getByText("Zoc")).toBeInTheDocument();
     mockStream.events = [
       ...mockStream.events,
       { type: "token", seq: 3, runId: "run-ask", ts: TS, text: "", done: true },
