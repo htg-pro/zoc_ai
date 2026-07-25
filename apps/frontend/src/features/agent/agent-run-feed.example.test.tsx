@@ -30,6 +30,7 @@ import type { AgentEvents } from "@zoc-studio/shared-types";
 vi.mock("@/features/agent/gateway-client", () => ({
   postAgentRun: vi.fn(),
   postAgentDecision: vi.fn(),
+  postAgentCancel: vi.fn(),
 }));
 
 import AgentRunFeed from "./AgentRunFeed";

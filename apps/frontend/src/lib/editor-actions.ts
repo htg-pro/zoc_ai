@@ -54,6 +54,31 @@ export function setActiveText(text: string): void {
   active?.getModel?.()?.setValue?.(text);
 }
 
+/**
+ * Insert `text` at the caret (or over the selection) in the focused editor.
+ *
+ * Used by "Insert at cursor" on an Ask Mode code block (§12.1). Goes through
+ * Monaco's `executeEdits` rather than `setValue` so the insertion joins the
+ * undo stack as one reversible edit — the user can Ctrl+Z it like anything they
+ * typed. Returns false when no editor is focused, so the caller can explain why
+ * nothing happened.
+ */
+export function insertAtCursor(text: string): boolean {
+  const editor = active as
+    | (ActiveEditor & {
+        executeEdits?: (source: string, edits: unknown[]) => boolean;
+      })
+    | null;
+  if (!editor?.executeEdits) return false;
+  const selection = editor.getSelection?.();
+  if (!selection) return false;
+  const ok = editor.executeEdits("zoc.insertAtCursor", [
+    { range: selection, text, forceMoveMarkers: true },
+  ]);
+  editor.focus?.();
+  return ok !== false;
+}
+
 /** Run a built-in Monaco editor action by id. Returns false when no editor is
  *  focused. */
 export function runEditorAction(id: string): boolean {

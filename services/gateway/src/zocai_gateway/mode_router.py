@@ -37,6 +37,7 @@ from zocai_gateway.context.steering_compiler import (
     compile_steering,
 )
 from zocai_gateway.fsm import FSM
+from zocai_gateway.security import log_security_event
 from zocai_gateway.stages import Stage
 from zocai_gateway.toolsets import (
     FullToolset,
@@ -46,6 +47,8 @@ from zocai_gateway.toolsets import (
 )
 
 __all__ = [
+    "ASK_ACTIVE_FILE_CHAR_LIMIT",
+    "ASK_RAG_TOP_K",
     "SWITCH_TO_AGENT_MESSAGE",
     "AgentPath",
     "AgentRunRequest",
@@ -59,6 +62,7 @@ __all__ = [
     "ExecutionPath",
     "Mode",
     "ModeRouter",
+    "RequestContext",
     "SwitchToAgentMessage",
     "build_ask_context",
     "is_edit_request",
@@ -66,10 +70,15 @@ __all__ = [
 
 
 class Mode(str, Enum):
-    """The two execution modes a request can select (R2.1, R3.1)."""
+    """The execution modes a request can select (R2.1, R3.1, §12.2).
+
+    ``PLAN`` is Agent mode with the brakes on: it runs the same stages up to
+    ``PLAN_EDITS`` and then stops for approval instead of applying anything.
+    """
 
     ASK = "ask"
     AGENT = "agent"
+    PLAN = "plan"
 
 
 class ContextFileReference(BaseModel):
@@ -79,6 +88,27 @@ class ContextFileReference(BaseModel):
 
     token: str
     path: str
+
+
+class RequestContext(BaseModel):
+    """Editor context accompanying a run request (§12.1).
+
+    Ask Mode answers questions *about the code in front of the user*, so it needs
+    to know what that is. These fields are the editor's view at submit time:
+
+    * ``active_file`` — workspace-relative (or absolute) path of the open editor.
+    * ``selection`` — the highlighted text, when there is a selection.
+    * ``cursor_line`` — 1-based caret line, used to locate the answer.
+
+    All optional: a request without them behaves exactly as before.
+    """
+
+    model_config = ConfigDict(populate_by_name=True, extra="ignore")
+
+    active_file: str | None = Field(default=None, alias="activeFile")
+    selection: str | None = None
+    cursor_line: int | None = Field(default=None, alias="cursorLine")
+    language: str | None = None
 
 
 class AgentRunRequest(BaseModel):
@@ -105,6 +135,8 @@ class AgentRunRequest(BaseModel):
         default_factory=list,
         alias="contextFiles",
     )
+    #: Editor context (active file / selection / caret) used by Ask Mode (§12.1).
+    context: RequestContext | None = None
     model: str | None = None
     provider: str | None = None
     api_key: str | None = Field(default=None, alias="apiKey")
@@ -133,20 +165,68 @@ SWITCH_TO_AGENT_MESSAGE = (
 #: Verbs that, when they lead the request, signal an edit/implementation
 #: *intent* (R2.4) rather than a question. Matched as whole words after any
 #: leading courtesy/framing filler is stripped.
-_EDIT_VERBS = frozenset({
-    "implement", "create", "write", "edit", "modify", "change", "add",
-    "delete", "remove", "refactor", "rename", "fix", "build", "generate",
-    "update", "install", "append", "replace", "insert", "scaffold", "apply",
-    "patch", "make", "rewrite", "drop", "move",
-})
+_EDIT_VERBS = frozenset(
+    {
+        "implement",
+        "create",
+        "write",
+        "edit",
+        "modify",
+        "change",
+        "add",
+        "delete",
+        "remove",
+        "refactor",
+        "rename",
+        "fix",
+        "build",
+        "generate",
+        "update",
+        "install",
+        "append",
+        "replace",
+        "insert",
+        "scaffold",
+        "apply",
+        "patch",
+        "make",
+        "rewrite",
+        "drop",
+        "move",
+    }
+)
 
 #: Leading words that merely frame a request ("please create …", "can you add
 #: …", "I want you to write …") and are skipped before classifying the intent.
-_REQUEST_FRAMING_FILLER = frozenset({
-    "please", "could", "can", "would", "will", "you", "i", "we", "want",
-    "need", "to", "kindly", "pls", "just", "now", "go", "ahead", "and",
-    "let", "lets", "us", "me", "the", "a", "an",
-})
+_REQUEST_FRAMING_FILLER = frozenset(
+    {
+        "please",
+        "could",
+        "can",
+        "would",
+        "will",
+        "you",
+        "i",
+        "we",
+        "want",
+        "need",
+        "to",
+        "kindly",
+        "pls",
+        "just",
+        "now",
+        "go",
+        "ahead",
+        "and",
+        "let",
+        "lets",
+        "us",
+        "me",
+        "the",
+        "a",
+        "an",
+    }
+)
 
 #: Tokenizer for the intent classifier: lowercase alphabetic words (with
 #: intra-word apostrophes), so punctuation never hides a leading verb.
@@ -170,17 +250,66 @@ def is_edit_request(prompt: str) -> bool:
     return index < len(tokens) and tokens[index] in _EDIT_VERBS
 
 
+#: How many RAG fragments Ask Mode injects into the system prompt (§12.1).
+ASK_RAG_TOP_K = 5
+
+#: Cap on how much of the active file is inlined, so a large file cannot crowd
+#: out the rest of the prompt. The selection is always included in full.
+ASK_ACTIVE_FILE_CHAR_LIMIT = 8_000
+
+
 @dataclass(frozen=True, slots=True)
 class AskContext:
     """The context payload assembled before generating an Ask response.
 
     Built by :func:`build_ask_context` from workspace instructions, compiled
-    steering guides (R2.5), and RAG-extracted code fragments (R2.6).
+    steering guides (R2.5), RAG-extracted code fragments (R2.6), and — for
+    context-aware Ask Mode (§12.1) — the file the user is looking at plus any
+    selection.
     """
 
     steering: SteeringPayload
     rag_fragments: tuple[RagFragment, ...] = ()
     project_instructions: str = ""
+    #: Path of the file open in the editor when the question was asked.
+    active_file: str | None = None
+    #: Content of :attr:`active_file` (truncated to the char limit).
+    active_file_content: str | None = None
+    #: The user's editor selection, verbatim.
+    selection: str | None = None
+    #: 1-based caret line, when the editor reported one.
+    cursor_line: int | None = None
+
+    def system_prompt_sections(self) -> tuple[str, ...]:
+        """The ordered prompt sections describing this context (§12.1).
+
+        Ordered most-specific first — selection, then active file, then retrieved
+        fragments — because a model that truncates should lose the *least*
+        specific context, not the user's own selection.
+        """
+        sections: list[str] = []
+        if self.selection:
+            where = f" (around line {self.cursor_line})" if self.cursor_line else ""
+            sections.append(
+                f"The user has selected this text{where}"
+                + (f" in {self.active_file}" if self.active_file else "")
+                + ":\n"
+                + self.selection
+            )
+        if self.active_file:
+            header = f"The user is currently viewing {self.active_file}"
+            if self.active_file_content:
+                sections.append(f"{header}:\n{self.active_file_content}")
+            else:
+                sections.append(f"{header}.")
+        top = self.rag_fragments[:ASK_RAG_TOP_K]
+        if top:
+            rendered = "\n\n".join(
+                f"--- {fragment.path} (relevance {fragment.score:.2f}) ---\n{fragment.content}"
+                for fragment in top
+            )
+            sections.append(f"Possibly relevant code from the workspace:\n{rendered}")
+        return tuple(sections)
 
 
 @dataclass(frozen=True, slots=True)
@@ -243,6 +372,7 @@ def build_ask_context(
     workspace_root: Path | str = ".",
     steering_dir: Path | None = None,
     rag_matcher: RagMatcher | None = None,
+    context: RequestContext | None = None,
 ) -> AskContext:
     """Compile steering and run RAG extraction into an :class:`AskContext`.
 
@@ -252,20 +382,64 @@ def build_ask_context(
     relevant to ``prompt``. ``steering_dir`` defaults to
     ``<workspace_root>/.zoc/steering``; ``rag_matcher`` defaults to the no-op
     :class:`NullRagMatcher` until task 8.1 wires the real matcher.
+
+    When ``context`` carries an ``active_file``, its content is read from the
+    workspace and inlined (truncated to
+    :data:`ASK_ACTIVE_FILE_CHAR_LIMIT`) so Ask Mode can answer about the code the
+    user is actually looking at (§12.1). A missing or unreadable file degrades to
+    "path only" rather than failing the request.
     """
     resolved_steering_dir = (
-        steering_dir
-        if steering_dir is not None
-        else Path(workspace_root) / DEFAULT_STEERING_DIR
+        steering_dir if steering_dir is not None else Path(workspace_root) / DEFAULT_STEERING_DIR
     )
     steering = compile_steering(resolved_steering_dir)
     matcher: RagMatcher = rag_matcher if rag_matcher is not None else NullRagMatcher()
     fragments = tuple(matcher.extract(prompt))
+    active_file = context.active_file if context is not None else None
     return AskContext(
         steering=steering,
         rag_fragments=fragments,
         project_instructions=read_project_instructions(workspace_root),
+        active_file=active_file,
+        active_file_content=(
+            _read_active_file(workspace_root, active_file) if active_file is not None else None
+        ),
+        selection=context.selection if context is not None else None,
+        cursor_line=context.cursor_line if context is not None else None,
     )
+
+
+def _read_active_file(workspace_root: Path | str, active_file: str) -> str | None:
+    """Read the editor's active file, confined to the workspace (§12.1).
+
+    Returns ``None`` when the path escapes the workspace, does not exist, or is
+    not decodable text. The confinement matters: ``active_file`` arrives from the
+    renderer, so it is untrusted input and must not be able to read
+    ``../../.ssh/id_rsa`` into a prompt.
+    """
+    root = Path(workspace_root).resolve()
+    candidate = Path(active_file)
+    target = candidate if candidate.is_absolute() else root / candidate
+    try:
+        resolved = target.resolve()
+    except OSError:
+        return None
+    if resolved != root and root not in resolved.parents:
+        log_security_event(
+            "path_traversal",
+            "blocked active editor file outside the workspace",
+            path=active_file,
+            operation="ask_context",
+            workspace=str(root),
+        )
+        return None
+    try:
+        text = resolved.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError, ValueError):
+        return None
+    if len(text) <= ASK_ACTIVE_FILE_CHAR_LIMIT:
+        return text
+    return text[:ASK_ACTIVE_FILE_CHAR_LIMIT] + "\n… (truncated)"
 
 
 class ExecutionPath(abc.ABC):
@@ -341,6 +515,7 @@ class AskPath(ExecutionPath):
             workspace_root=workspace_root,
             steering_dir=steering_dir,
             rag_matcher=rag_matcher,
+            context=request.context,
         )
 
         # R2.4: an edit/implementation request never generates or mutates.
@@ -362,6 +537,11 @@ class AgentPath(ExecutionPath):
     Constructed with the FSM initialized at :attr:`Stage.INTAKE` and a
     :class:`FullToolset` that permits write / shell / mkdir in the workspace.
     The planner runs, so ``skip_planner`` is ``False``.
+
+    ``plan_only`` selects Plan mode (§12.2): the same path and toolset, but the
+    pipeline stops for approval after ``PLAN_EDITS`` instead of applying. The
+    toolset is *not* narrowed, because approval resumes the very same run — the
+    guarantee comes from the pipeline gate, not from removing capabilities.
     """
 
     mode = Mode.AGENT
@@ -372,9 +552,13 @@ class AgentPath(ExecutionPath):
         *,
         fsm: FSM | None = None,
         toolset: FullToolset | None = None,
+        plan_only: bool = False,
     ) -> None:
         self.fsm = fsm if fsm is not None else FSM(initial=Stage.INTAKE)
         self.toolset = toolset if toolset is not None else FullToolset()
+        self.plan_only = plan_only
+        if plan_only:
+            self.mode = Mode.PLAN
 
     @property
     def is_read_only(self) -> bool:
@@ -382,15 +566,21 @@ class AgentPath(ExecutionPath):
 
 
 class ModeRouter:
-    """Routes a request to the correct execution path (R2.1, R3.1)."""
+    """Routes a request to the correct execution path (R2.1, R3.1, §12.2)."""
 
     def route(self, req: AgentRunRequest) -> ExecutionPath:
-        """Dispatch ``req`` to the Ask or Agent path by its ``mode``.
+        """Dispatch ``req`` to the Ask, Plan, or Agent path by its ``mode``.
 
         ``mode = "ask"`` yields an :class:`AskPath` (``skip_planner = True``,
-        :class:`ReadOnlyToolset`); any other mode yields an :class:`AgentPath`
-        (FSM at :attr:`Stage.INTAKE`, :class:`FullToolset`).
+        :class:`ReadOnlyToolset`); ``mode = "plan"`` yields an
+        :class:`AgentPath` with ``plan_only = True``; any other mode yields a
+        plain :class:`AgentPath` (FSM at :attr:`Stage.INTAKE`,
+        :class:`FullToolset`).
         """
         if req.mode == Mode.ASK:
             return AskPath(skip_planner=True, toolset=ReadOnlyToolset())
-        return AgentPath(fsm=FSM(initial=Stage.INTAKE), toolset=FullToolset())
+        return AgentPath(
+            fsm=FSM(initial=Stage.INTAKE),
+            toolset=FullToolset(),
+            plan_only=req.mode == Mode.PLAN,
+        )

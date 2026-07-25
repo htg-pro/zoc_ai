@@ -163,7 +163,9 @@ fn log_file_path() -> std::path::PathBuf {
 const LOG_ROTATE_BYTES: u64 = 10 * 1024 * 1024;
 
 fn rotate_log_if_needed(path: &std::path::Path) {
-    let Ok(meta) = std::fs::metadata(path) else { return };
+    let Ok(meta) = std::fs::metadata(path) else {
+        return;
+    };
     if meta.len() < LOG_ROTATE_BYTES {
         return;
     }
@@ -252,12 +254,18 @@ pub async fn llamacpp_load<R: Runtime>(
 
     // Build the command with all runtime options
     let mut cmd = Command::new("llama-server");
-    cmd.arg("-m").arg(&path)
-        .arg("-ngl").arg(&ngl_str)
-        .arg("--host").arg(actual_host)
-        .arg("--port").arg(&port_str);
+    cmd.arg("-m")
+        .arg(&path)
+        .arg("-ngl")
+        .arg(&ngl_str)
+        .arg("--host")
+        .arg(actual_host)
+        .arg("--port")
+        .arg(&port_str);
 
-    let mut cmd_log = format!("spawn: llama-server -m {path} -ngl {ngl_str} --host {actual_host} --port {port_str}");
+    let mut cmd_log = format!(
+        "spawn: llama-server -m {path} -ngl {ngl_str} --host {actual_host} --port {port_str}"
+    );
 
     if let Some(ctx) = n_ctx {
         cmd.arg("--ctx-size").arg(ctx.to_string());
@@ -321,8 +329,10 @@ pub async fn llamacpp_load<R: Runtime>(
             if sup_for_drain.generation.load(Ordering::SeqCst) == drain_gen {
                 let mut s = sup_for_drain.status.lock();
                 if s.running {
-                    s.last_error =
-                        Some("llama-server exited unexpectedly; see ~/.zoc-studio/logs/llama-server.log".into());
+                    s.last_error = Some(
+                        "llama-server exited unexpectedly; see ~/.zoc-studio/logs/llama-server.log"
+                            .into(),
+                    );
                 }
                 s.running = false;
                 s.host = None;
@@ -389,7 +399,8 @@ pub async fn llamacpp_load<R: Runtime>(
                     actual_port
                 )
             } else {
-                "llama-server exited during startup; see ~/.zoc-studio/logs/llama-server.log".to_string()
+                "llama-server exited during startup; see ~/.zoc-studio/logs/llama-server.log"
+                    .to_string()
             };
             sup.status.lock().last_error = Some(err.clone());
             let snap = sup.snapshot();
@@ -444,8 +455,6 @@ pub fn llamacpp_unload<R: Runtime>(
 }
 
 #[tauri::command]
-pub fn llamacpp_status(
-    sup: tauri::State<'_, Arc<LlamaServerSupervisor>>,
-) -> LlamaServerStatus {
+pub fn llamacpp_status(sup: tauri::State<'_, Arc<LlamaServerSupervisor>>) -> LlamaServerStatus {
     sup.snapshot()
 }

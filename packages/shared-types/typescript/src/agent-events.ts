@@ -19,6 +19,7 @@ export type EventType =
   | "thinking"
   | "plan"
   | "plan-update"
+  | "plan-ready"
   | "map-files"
   | "read-files"
   | "edit-file"
@@ -150,6 +151,21 @@ export interface PlanItem {
   status: "pending" | "active" | "done";
 }
 
+export interface PlanReadyEvent extends BaseEvent {
+  type: "plan-ready";
+  steps: PlanReadyStep[];
+  verificationCommand?: string | null;
+  confidence: number;
+  fileCount?: number;
+}
+
+export interface PlanReadyStep {
+  file: string;
+  action: "create" | "modify" | "delete" | "rename";
+  rationale: string;
+  diff?: string | null;
+}
+
 export interface PlanUpdateEvent extends BaseEvent {
   type: "plan-update";
   id: string;
@@ -232,6 +248,7 @@ export type AgentEvent =
   | ThinkingEvent
   | PlanEvent
   | PlanUpdateEvent
+  | PlanReadyEvent
   | MapFilesEvent
   | ReadFilesEvent
   | ContextCompressedEvent

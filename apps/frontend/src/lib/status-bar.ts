@@ -8,17 +8,18 @@ import type { CursorPosition } from "./editor-actions";
 
 export interface AgentStateView {
   label: string;
-  tone: "idle" | "busy" | "ask";
+  tone: "idle" | "busy" | "ask" | "plan";
 }
 
 /** Human label + tone for the agent state indicator. */
 export function agentStateLabel(s: {
   streaming: boolean;
   isRunning: boolean;
-  agentMode: "ask" | "agent";
+  agentMode: "ask" | "plan" | "agent";
 }): AgentStateView {
   if (s.streaming || s.isRunning) return { label: "Running", tone: "busy" };
   if (s.agentMode === "ask") return { label: "Ask", tone: "ask" };
+  if (s.agentMode === "plan") return { label: "Plan", tone: "plan" };
   return { label: "Agent", tone: "idle" };
 }
 
@@ -102,4 +103,74 @@ export function diagnosticsLabel(errors: number, warnings: number): string {
   if (errors > 0) parts.push(`${errors} error${errors === 1 ? "" : "s"}`);
   if (warnings > 0) parts.push(`${warnings} warning${warnings === 1 ? "" : "s"}`);
   return parts.join(", ");
+}
+
+// ── Hardware monitor (§16.2) ────────────────────────────────────────────────
+
+/** Mirrors the gateway's `HardwareSnapshot` wire payload. */
+export interface HardwareSnapshot {
+  cpu_percent: number | null;
+  ram_used_gb: number | null;
+  ram_total_gb: number | null;
+  gpu_vram_used_mb: number | null;
+  gpu_vram_total_mb: number | null;
+  llm_tokens_per_second: number | null;
+  llm_inference_active: boolean;
+}
+
+/** Only surface CPU when it is high enough to be worth the user's attention. */
+export const CPU_ALERT_THRESHOLD = 80;
+
+export interface Gauge {
+  label: string;
+  /** 0–1 fill ratio, clamped. */
+  ratio: number;
+  detail: string;
+}
+
+function clampRatio(used: number, total: number): number {
+  if (!Number.isFinite(used) || !Number.isFinite(total) || total <= 0) return 0;
+  return Math.max(0, Math.min(1, used / total));
+}
+
+/**
+ * RAM gauge, or `null` when memory could not be read.
+ *
+ * Returning `null` rather than a zeroed gauge matters: a 0 %-full RAM bar would
+ * be a lie, while a missing bar correctly says "unknown".
+ */
+export function ramGauge(snapshot: HardwareSnapshot | null): Gauge | null {
+  if (!snapshot?.ram_total_gb || snapshot.ram_used_gb === null) return null;
+  return {
+    label: "RAM",
+    ratio: clampRatio(snapshot.ram_used_gb, snapshot.ram_total_gb),
+    detail: `${snapshot.ram_used_gb.toFixed(1)} / ${snapshot.ram_total_gb.toFixed(1)} GB`,
+  };
+}
+
+/** VRAM gauge, or `null` when there is no (readable) GPU. */
+export function vramGauge(snapshot: HardwareSnapshot | null): Gauge | null {
+  if (!snapshot?.gpu_vram_total_mb) return null;
+  const used = snapshot.gpu_vram_used_mb ?? 0;
+  const toGb = (mb: number) => (mb / 1024).toFixed(1);
+  return {
+    label: "VRAM",
+    ratio: clampRatio(used, snapshot.gpu_vram_total_mb),
+    detail: `${toGb(used)} / ${toGb(snapshot.gpu_vram_total_mb)} GB`,
+  };
+}
+
+/** "32 t/s" while the model is generating, otherwise `null`. */
+export function tokensPerSecondLabel(snapshot: HardwareSnapshot | null): string | null {
+  if (!snapshot?.llm_inference_active) return null;
+  const tps = snapshot.llm_tokens_per_second;
+  if (tps === null || !Number.isFinite(tps) || tps <= 0) return null;
+  return `${Math.round(tps)} t/s`;
+}
+
+/** "91%" only when CPU load is above {@link CPU_ALERT_THRESHOLD}. */
+export function cpuAlertLabel(snapshot: HardwareSnapshot | null): string | null {
+  const cpu = snapshot?.cpu_percent;
+  if (cpu === null || cpu === undefined || !Number.isFinite(cpu)) return null;
+  return cpu > CPU_ALERT_THRESHOLD ? `${Math.round(cpu)}%` : null;
 }

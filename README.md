@@ -168,20 +168,30 @@ Out of scope for the default build. To enable:
 
 ### Auto-update
 
-The Tauri updater is **disabled by default**. To enable, in
-`tauri.conf.json`:
+The Tauri updater plugin is **registered but inert**: `plugins.updater.active`
+is `false` and `pubkey` is empty in `tauri.conf.json`, so `check()` reports that
+no update is available and the app behaves exactly as if the feature were
+absent. The client side is fully wired — `apps/frontend/src/lib/auto-update.ts`
+plus the `UpdateBanner` at the top of the shell and Settings → About → Updates.
+
+To turn it on, in `tauri.conf.json`:
 
 ```json
 "plugins": {
   "updater": {
     "active": true,
     "endpoints": ["https://releases.zoc.studio/updates/{{target}}/{{arch}}/{{current_version}}"],
+    "dialog": false,
     "pubkey": "<your minisign pubkey>"
   }
 }
 ```
 
-and host signed update manifests at that endpoint. See
+`dialog: false` is deliberate: the app renders its own non-blocking bar
+("Zoc AI v… is available — Release notes / Update now") which the user can
+dismiss for 24 h, instead of Tauri's modal. Generate the signing keypair with
+`pnpm --filter @zoc-studio/desktop exec tauri signer generate` and host signed
+update manifests at that endpoint. See
 [Tauri updater docs](https://v2.tauri.app/plugin/updater/).
 
 ## Troubleshooting

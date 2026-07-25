@@ -26,10 +26,15 @@ from pydantic import BaseModel, ConfigDict, Field
 
 __all__ = [
     "AUTH_TOKEN_ENV_VAR",
+    "EVENT_REPLAY_BUFFER_ENV_VAR",
     "HOST_ENV_VAR",
     "LOOPBACK_HOSTS",
+    "MAX_CONCURRENT_RUNS_ENV_VAR",
     "PORT_ENV_VAR",
     "RUN_TIMEOUT_ENV_VAR",
+    "SSE_CLIENT_TIMEOUT_ENV_VAR",
+    "SSE_HEARTBEAT_ENV_VAR",
+    "SSE_QUEUE_MAXSIZE_ENV_VAR",
     "SSE_QUEUE_TIMEOUT_ENV_VAR",
     "GatewayConfigError",
     "GatewaySettings",
@@ -51,6 +56,21 @@ RUN_TIMEOUT_ENV_VAR = "ZOC_STUDIO_GATEWAY_RUN_TIMEOUT_SECONDS"
 
 #: Environment variable overriding how long an SSE stream waits for a frame.
 SSE_QUEUE_TIMEOUT_ENV_VAR = "ZOC_STUDIO_GATEWAY_SSE_QUEUE_TIMEOUT_SECONDS"
+
+#: Environment variable overriding the bounded SSE queue depth (§9.2).
+SSE_QUEUE_MAXSIZE_ENV_VAR = "ZOC_STUDIO_GATEWAY_SSE_QUEUE_MAXSIZE"
+
+#: Environment variable overriding the SSE heartbeat interval in seconds (§9.2).
+SSE_HEARTBEAT_ENV_VAR = "ZOC_STUDIO_GATEWAY_SSE_HEARTBEAT_SECONDS"
+
+#: Environment variable overriding the SSE client idle timeout (§9.2).
+SSE_CLIENT_TIMEOUT_ENV_VAR = "ZOC_STUDIO_GATEWAY_SSE_CLIENT_TIMEOUT_SECONDS"
+
+#: Environment variable overriding the per-run replay buffer size (§9.2).
+EVENT_REPLAY_BUFFER_ENV_VAR = "ZOC_STUDIO_GATEWAY_EVENT_REPLAY_BUFFER"
+
+#: Environment variable overriding how many runs may execute at once (§12.3).
+MAX_CONCURRENT_RUNS_ENV_VAR = "ZOC_STUDIO_GATEWAY_MAX_CONCURRENT_RUNS"
 
 #: Host strings treated as the loopback interface (R12.1/R12.4).
 LOOPBACK_HOSTS = frozenset({"127.0.0.1", "::1", "localhost"})
@@ -78,6 +98,18 @@ class GatewaySettings(BaseModel):
             gateway emits an error and closes the run stream.
         sse_queue_timeout_seconds: Maximum idle wait for an SSE queue frame
             before the stream emits an error and closes.
+        sse_queue_maxsize: Bounded depth of each run's SSE event queue (§9.2).
+            A full queue makes producers *wait*, which pushes backpressure into
+            the agent loop instead of growing memory without limit.
+        sse_heartbeat_seconds: How often an idle SSE stream emits a heartbeat
+            frame, so a client can distinguish "quiet" from "dead" (§9.2).
+        sse_client_timeout_seconds: How long a stream may stay idle before it
+            emits a terminal error frame and closes. The *run* keeps going; the
+            client reconnects with ``?since_seq=N`` (§9.2).
+        event_replay_buffer_size: How many recent events each run retains for
+            ``/v1/agent/runs/{id}/events/replay`` (§9.2).
+        max_concurrent_runs: How many agent runs may execute simultaneously
+            (§12.3).
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -87,6 +119,11 @@ class GatewaySettings(BaseModel):
     auth_token: str | None = None
     run_timeout_seconds: float = Field(default=300.0, gt=0)
     sse_queue_timeout_seconds: float = Field(default=300.0, gt=0)
+    sse_queue_maxsize: int = Field(default=512, gt=0)
+    sse_heartbeat_seconds: float = Field(default=15.0, gt=0)
+    sse_client_timeout_seconds: float = Field(default=60.0, gt=0)
+    event_replay_buffer_size: int = Field(default=1024, gt=0)
+    max_concurrent_runs: int = Field(default=3, gt=0)
 
     @classmethod
     def from_env(cls, env: Mapping[str, str] | None = None) -> GatewaySettings:
@@ -110,6 +147,11 @@ class GatewaySettings(BaseModel):
         token = source.get(AUTH_TOKEN_ENV_VAR)
         run_timeout = source.get(RUN_TIMEOUT_ENV_VAR)
         sse_timeout = source.get(SSE_QUEUE_TIMEOUT_ENV_VAR)
+        sse_maxsize = source.get(SSE_QUEUE_MAXSIZE_ENV_VAR)
+        sse_heartbeat = source.get(SSE_HEARTBEAT_ENV_VAR)
+        sse_client_timeout = source.get(SSE_CLIENT_TIMEOUT_ENV_VAR)
+        replay_buffer = source.get(EVENT_REPLAY_BUFFER_ENV_VAR)
+        max_runs = source.get(MAX_CONCURRENT_RUNS_ENV_VAR)
 
         return cls(
             host=host if host else defaults.host,
@@ -120,6 +162,23 @@ class GatewaySettings(BaseModel):
             ),
             sse_queue_timeout_seconds=(
                 float(sse_timeout) if sse_timeout else defaults.sse_queue_timeout_seconds
+            ),
+            sse_queue_maxsize=(
+                int(sse_maxsize) if sse_maxsize else defaults.sse_queue_maxsize
+            ),
+            sse_heartbeat_seconds=(
+                float(sse_heartbeat) if sse_heartbeat else defaults.sse_heartbeat_seconds
+            ),
+            sse_client_timeout_seconds=(
+                float(sse_client_timeout)
+                if sse_client_timeout
+                else defaults.sse_client_timeout_seconds
+            ),
+            event_replay_buffer_size=(
+                int(replay_buffer) if replay_buffer else defaults.event_replay_buffer_size
+            ),
+            max_concurrent_runs=(
+                int(max_runs) if max_runs else defaults.max_concurrent_runs
             ),
         )
 

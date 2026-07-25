@@ -32,6 +32,7 @@ EventType = Literal[
     "thinking",
     "plan",
     "plan-update",
+    "plan-ready",
     "map-files",
     "read-files",
     "edit-file",
@@ -99,6 +100,34 @@ class PlanUpdateEvent(BaseEvent):
     type: Literal["plan-update"] = "plan-update"
     id: str
     status: PlanItemStatus
+
+
+class PlanReadyStep(BaseModel):
+    """One reviewable step of a Plan-mode plan (§12.2)."""
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    file: str
+    action: Literal["create", "modify", "delete", "rename"]
+    rationale: str
+    #: Unified diff preview for a modify step, when one could be produced.
+    diff: str | None = None
+
+
+class PlanReadyEvent(BaseEvent):
+    """The full plan, emitted in Plan mode before anything is applied (§12.2).
+
+    Plan mode stops the FSM after ``PLAN_EDITS``. This event carries the whole
+    plan so the user can review every step — and deselect individual ones —
+    before approving. ``steps`` mirrors the ``AgentPlan`` the model produced.
+    """
+
+    type: Literal["plan-ready"] = "plan-ready"
+    steps: list[PlanReadyStep]
+    verification_command: str | None = Field(default=None, alias="verificationCommand")
+    confidence: float = Field(default=0.0, ge=0, le=1)
+    #: Number of distinct files the plan touches, for the summary line.
+    file_count: int = Field(default=0, ge=0, alias="fileCount")
 
 
 class ReadFileRef(BaseModel):
@@ -272,6 +301,7 @@ AgentEvent = Annotated[
     | ThinkingEvent
     | PlanEvent
     | PlanUpdateEvent
+    | PlanReadyEvent
     | MapFilesEvent
     | ReadFilesEvent
     | ContextCompressedEvent
@@ -319,6 +349,8 @@ __all__ = [
     "PlanEvent",
     "PlanItem",
     "PlanItemStatus",
+    "PlanReadyEvent",
+    "PlanReadyStep",
     "PlanUpdateEvent",
     "ReadFileRef",
     "ReadFilesEvent",

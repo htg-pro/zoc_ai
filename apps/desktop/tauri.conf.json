@@ -79,7 +79,7 @@
       "endpoints": [
         "https://releases.zoc.studio/updates/{{target}}/{{arch}}/{{current_version}}"
       ],
-      "dialog": true,
+      "dialog": false,
       "pubkey": ""
     }
   }

@@ -9,6 +9,7 @@ import { EditorArea } from "@/features/editor/EditorArea";
 import { AgentPanel } from "@/features/agent/AgentPanel";
 import { SessionsView } from "@/features/sessions/SessionsView";
 import { SettingsView } from "@/features/settings/SettingsView";
+import { UpdateBanner } from "@/features/settings/UpdateBanner";
 import { DiffReviewView } from "@/features/diff/DiffReviewView";
 import { ShowcaseView } from "@/features/showcase/ShowcaseView";
 import { CommandPalette } from "@/features/palette/CommandPalette";
@@ -72,6 +73,7 @@ export function Shell() {
 
   return (
     <div className="flex h-dvh max-h-dvh min-h-0 w-screen min-w-0 flex-col overflow-hidden bg-background text-foreground">
+      <UpdateBanner />
       <TopBar />
       <div className="flex min-h-0 flex-1 overflow-hidden">
         <ActivityBar />

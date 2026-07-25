@@ -3,6 +3,7 @@ the policy does not allow, without executing them, and never aborts the run."""
 
 from __future__ import annotations
 
+import json
 import tempfile
 from pathlib import Path
 
@@ -19,6 +20,7 @@ from zocai_gateway.permissions import Decision
 from zocai_gateway.plan import AgentPlan, EditStep
 from zocai_gateway.react import ReActExecutor
 from zocai_gateway.run_pipeline import ReActApplyExecutor, RunContext
+from zocai_gateway.security import security_log_path
 from zocai_gateway.stages import Stage
 from zocai_gateway.toolsets import FullToolset
 
@@ -289,3 +291,30 @@ def test_prompt_without_waiter_fails_closed_without_event() -> None:
         events = _run_prompt(Path(tmp), lambda _k, _n, _t: Decision("prompt", "test prompt"), None)
         assert not (Path(tmp) / "ok.py").exists()  # no waiter → refuse, no interactive ask
     assert not any(e.type == "approval" for e in events)
+
+
+def test_permission_denial_is_written_to_security_log(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv("ZOC_STUDIO_HOME", str(tmp_path / "home"))
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+
+    _run(
+        workspace,
+        lambda _kind, _name, _target: Decision("deny", "policy denied"),
+        _RESPONSE,
+    )
+
+    records = [
+        json.loads(line)
+        for line in security_log_path().read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+    assert any(
+        record["kind"] == "permission_denied"
+        and record.get("run_id") == "r"
+        and record.get("tool") == "write_file"
+        for record in records
+    )

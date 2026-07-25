@@ -16,6 +16,23 @@ export interface AgentStatus {
   running: boolean;
   restarts: number;
   last_error: string | null;
+  /** Lifecycle phase from the Rust supervisor (§11.1). */
+  status?: "starting" | "running" | "crashed" | "stopped";
+  /** Absolute path of the crash report for the latest crash, if any. */
+  crash_report?: string | null;
+}
+
+/** Mirrors Rust `sidecar::CrashReport` plus the file it was read from. */
+export interface CrashReport {
+  timestamp: string;
+  exit_code: number | null;
+  reason: string;
+  last_log_lines: string[];
+  rust_version: string;
+  app_version: string;
+  os_info: string;
+  file?: string;
+  path?: string;
 }
 
 /** Mirrors Rust `llama_server::LlamaServerStatus`. */
@@ -174,6 +191,23 @@ export async function agentPort(): Promise<number | null> {
 
 export async function agentStatus(): Promise<AgentStatus | null> {
   return callOrNull<AgentStatus>("agent_status");
+}
+
+// ── Crash reporting & recovery (§11.1) ────────────────────────────────────
+
+/** Persisted crash reports, newest first. Empty outside the desktop shell. */
+export async function agentCrashReports(): Promise<CrashReport[]> {
+  return (await callOrNull<CrashReport[]>("agent_crash_reports")) ?? [];
+}
+
+/** Delete every persisted crash report; returns how many were removed. */
+export async function agentCrashReportsClear(): Promise<number> {
+  return (await callOrNull<number>("agent_crash_reports_clear")) ?? 0;
+}
+
+/** Ask the supervisor to restart the sidecar now. */
+export async function agentRestart(): Promise<void> {
+  await callOrNull<void>("agent_restart");
 }
 
 export async function secretGet(key: string): Promise<string | null> {
@@ -683,6 +717,84 @@ export async function legacyImport(): Promise<LegacyImportResult> {
 
 export async function telemetryLog(kind: string, meta: Record<string, unknown> = {}): Promise<void> {
   await callOrNull<void>("telemetry_log", { event: { kind, meta } });
+}
+
+// ── Anonymous usage telemetry (§11.2) ─────────────────────────────────────
+// `telemetry_event` writes to ~/.zoc-studio/telemetry.jsonl, the *only* store
+// eligible for batch upload. `telemetry_log` above is the local-only diagnostic
+// channel and is never uploaded.
+
+export interface TelemetryStats {
+  opted_in: boolean;
+  events: number;
+  bytes: number;
+  path: string;
+}
+
+export async function telemetryEvent(
+  kind: string,
+  meta: Record<string, unknown> = {},
+): Promise<void> {
+  await callOrNull<void>("telemetry_event", { event: { kind, meta } });
+}
+
+export async function telemetryStats(): Promise<TelemetryStats> {
+  return (
+    (await callOrNull<TelemetryStats>("telemetry_stats")) ?? {
+      opted_in: false,
+      events: 0,
+      bytes: 0,
+      path: "",
+    }
+  );
+}
+
+export async function telemetryDrain(limit?: number): Promise<unknown[]> {
+  return (await callOrNull<unknown[]>("telemetry_drain", { limit })) ?? [];
+}
+
+export async function telemetryClear(): Promise<void> {
+  await callOrNull<void>("telemetry_clear");
+}
+
+// ── Read-only LAN session sharing (§10.1) ─────────────────────────────────
+
+/** Mirrors Rust `share::ShareInfo`. */
+export interface ShareInfo {
+  url: string;
+  token: string;
+  run_id: string;
+  port: number;
+  lan_ip: string;
+  viewers: number;
+}
+
+/**
+ * Start (or return) the read-only LAN share. Throws with the Rust error string
+ * when the sidecar isn't up yet or the port can't be bound, so the UI can tell
+ * the user *why* sharing is unavailable instead of silently doing nothing.
+ */
+export async function shareSession(runId: string): Promise<ShareInfo> {
+  return callOrThrow<ShareInfo>("share_session", { runId });
+}
+
+export async function shareSessionStop(): Promise<void> {
+  await callOrNull<void>("share_session_stop");
+}
+
+export async function shareSessionStatus(): Promise<ShareInfo | null> {
+  return callOrNull<ShareInfo | null>("share_session_status");
+}
+
+/** Subscribe to live viewer-count changes. Returns an unsubscribe fn. */
+export async function onShareViewers(cb: (count: number) => void): Promise<() => void> {
+  const b = await bindings();
+  if (!b) return () => undefined;
+  try {
+    return await b.listen<number>("share://viewers", (e) => cb(e.payload));
+  } catch {
+    return () => undefined;
+  }
 }
 
 /** Subscribe to fs://changed events. Returns an unsubscribe fn. */

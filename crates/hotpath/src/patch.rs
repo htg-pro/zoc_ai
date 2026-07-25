@@ -74,7 +74,7 @@ pub fn apply_unified_fuzzy(original: &str, diff: &str, fuzz: u32) -> PatchResult
                     result_lines.push(src_lines[src_idx].to_string());
                     src_idx += 1;
                 }
-                
+
                 // Apply the hunk
                 result_lines.extend(new_lines);
                 src_idx = actual_start + consumed;
@@ -99,7 +99,9 @@ pub fn apply_unified_fuzzy(original: &str, diff: &str, fuzz: u32) -> PatchResult
             success: true,
             applied_hunks: applied_count,
             failed_hunks: Vec::new(),
-            new_content: Some(result_lines.join("\n") + if original.ends_with('\n') { "\n" } else { "" }),
+            new_content: Some(
+                result_lines.join("\n") + if original.ends_with('\n') { "\n" } else { "" },
+            ),
         }
     } else {
         PatchResult {
@@ -225,7 +227,7 @@ fn try_apply_hunk_at(
 fn levenshtein_distance(a: &str, b: &str) -> usize {
     let a_len = a.len();
     let b_len = b.len();
-    
+
     if a_len == 0 {
         return b_len;
     }
@@ -302,7 +304,11 @@ impl<'a> DiffParser<'a> {
         // Skip file headers
         while self.pos < self.lines.len() {
             let line = self.lines[self.pos];
-            if line.starts_with("---") || line.starts_with("+++") || line.starts_with("diff ") || line.starts_with("index ") {
+            if line.starts_with("---")
+                || line.starts_with("+++")
+                || line.starts_with("diff ")
+                || line.starts_with("index ")
+            {
                 self.pos += 1;
             } else {
                 break;
@@ -332,7 +338,7 @@ impl<'a> DiffParser<'a> {
         let mut lines = Vec::new();
         while self.pos < self.lines.len() {
             let line = self.lines[self.pos];
-            
+
             if line.starts_with("@@") {
                 break;
             }
@@ -371,10 +377,7 @@ impl<'a> DiffParser<'a> {
 
     fn parse_hunk_header(&self, line: &str) -> Result<(usize, usize, usize, usize), String> {
         // @@ -old_start,old_count +new_start,new_count @@
-        let rest = line
-            .strip_prefix("@@")
-            .ok_or("Invalid hunk header")?
-            .trim();
+        let rest = line.strip_prefix("@@").ok_or("Invalid hunk header")?.trim();
 
         let parts: Vec<&str> = rest.split_whitespace().collect();
         if parts.len() < 2 {
@@ -412,7 +415,7 @@ mod tests {
     fn test_strict_match() {
         let original = "alpha\nbeta\ngamma\n";
         let diff = "--- a/x\n+++ b/x\n@@ -1,3 +1,3 @@\n alpha\n-beta\n+BETA\n gamma\n";
-        
+
         let result = apply_unified_fuzzy(original, diff, 0);
         assert!(result.success);
         assert_eq!(result.applied_hunks, 1);
@@ -424,11 +427,14 @@ mod tests {
         // Original has 2 extra lines before the hunk
         let original = "extra1\nextra2\nalpha\nbeta\ngamma\n";
         let diff = "--- a/x\n+++ b/x\n@@ -1,3 +1,3 @@\n alpha\n-beta\n+BETA\n gamma\n";
-        
+
         let result = apply_unified_fuzzy(original, diff, 3);
         assert!(result.success);
         assert_eq!(result.applied_hunks, 1);
-        assert_eq!(result.new_content.unwrap(), "extra1\nextra2\nalpha\nBETA\ngamma\n");
+        assert_eq!(
+            result.new_content.unwrap(),
+            "extra1\nextra2\nalpha\nBETA\ngamma\n"
+        );
     }
 
     #[test]
@@ -436,7 +442,7 @@ mod tests {
         // Original is missing 2 lines before the hunk
         let original = "alpha\nbeta\ngamma\n";
         let diff = "--- a/x\n+++ b/x\n@@ -3,3 +3,3 @@\n alpha\n-beta\n+BETA\n gamma\n";
-        
+
         let result = apply_unified_fuzzy(original, diff, 3);
         assert!(result.success);
         assert_eq!(result.applied_hunks, 1);
@@ -447,7 +453,7 @@ mod tests {
     fn test_failed_match() {
         let original = "alpha\nbeta\ngamma\n";
         let diff = "--- a/x\n+++ b/x\n@@ -1,2 +1,2 @@\n alpha\n-WRONG\n+NEW\n";
-        
+
         let result = apply_unified_fuzzy(original, diff, 3);
         assert!(!result.success);
         assert_eq!(result.failed_hunks.len(), 1);
@@ -458,11 +464,14 @@ mod tests {
     fn test_multiple_hunks() {
         let original = "line1\nline2\nline3\nline4\nline5\nline6\n";
         let diff = "--- a/x\n+++ b/x\n@@ -1,2 +1,2 @@\n line1\n-line2\n+LINE2\n@@ -5,2 +5,2 @@\n line5\n-line6\n+LINE6\n";
-        
+
         let result = apply_unified_fuzzy(original, diff, 0);
         assert!(result.success);
         assert_eq!(result.applied_hunks, 2);
-        assert_eq!(result.new_content.unwrap(), "line1\nLINE2\nline3\nline4\nline5\nLINE6\n");
+        assert_eq!(
+            result.new_content.unwrap(),
+            "line1\nLINE2\nline3\nline4\nline5\nLINE6\n"
+        );
     }
 
     #[test]

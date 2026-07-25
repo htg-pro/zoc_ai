@@ -11,14 +11,18 @@ from __future__ import annotations
 
 import json
 import math
+import threading
 from collections.abc import Callable, Iterator, Mapping, Sequence
+from contextlib import contextmanager
 from dataclasses import dataclass
+from time import monotonic
 from typing import Any, Literal
 
 from zocai_gateway.mode_router import AgentRunRequest
 
 __all__ = [
     "PROVIDER_NATIVE_TOOLS",
+    "LiveInferenceMetrics",
     "ModelRuntimeError",
     "ModelToolResponse",
     "StreamMetrics",
@@ -27,6 +31,7 @@ __all__ = [
     "generate_text",
     "generate_text_stream",
     "generate_with_tools",
+    "live_inference_metrics",
 ]
 
 _DEFAULT_MAX_TOKENS = 512
@@ -43,6 +48,70 @@ class StreamMetrics:
 
     completion_tokens: int | None = None
     tokens_per_second: float | None = None
+
+
+@dataclass(frozen=True)
+class LiveInferenceMetrics:
+    """Thread-safe snapshot consumed by ``/v1/hardware/stream`` (§16.2)."""
+
+    tokens_per_second: float | None = None
+    inference_active: bool = False
+
+
+_metrics_lock = threading.Lock()
+_active_inference_requests = 0
+_last_tokens_per_second: float | None = None
+_sample_started_at = 0.0
+_sampled_tokens = 0.0
+
+
+@contextmanager
+def _inference_scope() -> Iterator[None]:
+    """Mark one model HTTP request active for the hardware monitor."""
+    global _active_inference_requests, _last_tokens_per_second
+    global _sample_started_at, _sampled_tokens
+    with _metrics_lock:
+        if _active_inference_requests == 0:
+            _last_tokens_per_second = None
+            _sample_started_at = monotonic()
+            _sampled_tokens = 0.0
+        _active_inference_requests += 1
+    try:
+        yield
+    finally:
+        with _metrics_lock:
+            _active_inference_requests = max(0, _active_inference_requests - 1)
+
+
+def _record_stream_metrics(metrics: StreamMetrics | None) -> None:
+    global _last_tokens_per_second
+    if metrics is None or metrics.tokens_per_second is None:
+        return
+    with _metrics_lock:
+        _last_tokens_per_second = metrics.tokens_per_second
+
+
+def _record_generated_chunk(text: str) -> None:
+    """Maintain a fallback live rate until llama.cpp emits final timings."""
+    global _last_tokens_per_second, _sampled_tokens
+    if not text:
+        return
+    with _metrics_lock:
+        # A four-character estimate is used only between provider timing
+        # samples; a llama.cpp ``predicted_per_second`` value replaces it.
+        _sampled_tokens += max(1.0, len(text) / 4.0)
+        elapsed = max(0.25, monotonic() - _sample_started_at)
+        _last_tokens_per_second = _sampled_tokens / elapsed
+
+
+def live_inference_metrics() -> LiveInferenceMetrics:
+    """Return current inference activity and the latest live token rate."""
+    with _metrics_lock:
+        active = _active_inference_requests > 0
+        return LiveInferenceMetrics(
+            tokens_per_second=_last_tokens_per_second if active else None,
+            inference_active=active,
+        )
 
 
 # ── Tool-calling surface (Req 8) ─────────────────────────────────────────────
@@ -739,6 +808,7 @@ def _openai_compatible_chat_stream(
         token = _choice_text_delta(first)
         if token:
             chunks.append(token)
+            _record_generated_chunk(token)
             if on_token is not None:
                 on_token(token)
 
@@ -907,7 +977,7 @@ def _post_json(
     httpx = _import_httpx()
 
     try:
-        with httpx.Client(timeout=_http_timeout(timeout)) as client:
+        with _inference_scope(), httpx.Client(timeout=_http_timeout(timeout)) as client:
             response = client.post(url, headers=dict(headers), json=dict(payload))
     except httpx.HTTPError as exc:
         raise ModelRuntimeError(str(exc)) from exc
@@ -920,6 +990,7 @@ def _post_json(
         raise ModelRuntimeError("provider returned invalid JSON") from exc
     if not isinstance(parsed, dict):
         raise ModelRuntimeError("provider returned a non-object JSON response")
+    _record_stream_metrics(_stream_metrics(parsed))
     return parsed
 
 
@@ -932,6 +1003,7 @@ def _stream_json_lines(
     httpx = _import_httpx()
     try:
         with (
+            _inference_scope(),
             httpx.Client(timeout=_http_timeout(timeout)) as client,
             client.stream(
                 "POST",
@@ -952,6 +1024,7 @@ def _stream_json_lines(
                     continue
                 if not isinstance(frame, dict):
                     raise ModelRuntimeError("provider returned an invalid stream sentinel")
+                _record_stream_metrics(_stream_metrics(frame))
                 yield frame
     except httpx.HTTPError as exc:
         raise ModelRuntimeError(str(exc)) from exc

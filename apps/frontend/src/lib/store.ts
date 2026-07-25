@@ -140,7 +140,17 @@ import {
   DEFAULT_PORT,
   loadLocalModels,
 } from "./local-models";
-import { track } from "./telemetry";
+import { track, trackEvent } from "./telemetry";
+import { currentEditorContext } from "./editor-context";
+import {
+  activeRuns,
+  canStartRun,
+  finishRun,
+  isTerminal,
+  upsertRun,
+  type RunPhase,
+  type TrackedRun,
+} from "@/features/agent/agent-runs";
 import { buildInlineEditPatch, spliceText, stripCodeFence } from "./inline-edit";
 import type { AutonomyLevel } from "./run-machine";
 import { decideIngest } from "./event-ingest";
@@ -148,13 +158,17 @@ import { decideIngest } from "./event-ingest";
 // helper (prepare-agent-run). The Composer submit path posts runs to the
 // Gateway through these and lets `useAgentStream` drive the feed — no legacy
 // run/event transport is touched (task 4.1; R2.1, R4.x, R6.5).
-import { postAgentRun, type ContextFileRef } from "@/features/agent/gateway-client";
+import {
+  postAgentCancel,
+  postAgentRun,
+  type ContextFileRef,
+} from "@/features/agent/gateway-client";
 import { prepareAgentRun } from "@/features/agent/prepare-agent-run";
 import { resolveSessionIntent } from "./session-lifecycle";
 import { effectiveSettings, setSetting } from "./settings";
 import { checkAction } from "./trust";
 
-export type AgentMode = "ask" | "agent";
+export type AgentMode = "ask" | "plan" | "agent";
 
 type AttachmentKind = "file" | "selection" | "folder" | "symbol";
 
@@ -354,6 +368,32 @@ export interface AppState {
   plan: Plan | null;
   /** Draft text in the single Agent Panel composer. */
   input: string;
+  /**
+   * The most recent prompt actually submitted. Retained so a crash banner can
+   * re-fill the composer with the message whose run was interrupted (§11.1).
+   */
+  lastSentPrompt: string;
+  /** Epoch ms when the active run started, for telemetry duration (§11.2). */
+  runStartedAt: number | null;
+  /**
+   * Type of the most recent event seen for the active run, used as the
+   * `stage_reached` / `stage_at_cancel` telemetry dimension (§11.2). An event
+   * type is a fixed enum, so it carries no workspace detail.
+   */
+  runStage: string | null;
+  /** Record the latest observed stage for one run (active run by default). */
+  setRunStage: (stage: string, runId?: string | null) => void;
+  /**
+   * Every run the panel knows about, active or finished (§12.3). Populated
+   * alongside `runId` so the switcher can list concurrent runs and keep
+   * completed ones reachable.
+   */
+  trackedRuns: TrackedRun[];
+  /** Which run's card is focused in the panel. */
+  focusedRunId: string | null;
+  /** Server-reported concurrency ceiling. */
+  maxConcurrentRuns: number;
+  focusRun: (runId: string) => void;
   streaming: boolean;
   isRunning: boolean;
   /** The active run's id — the backend-issued (here client-supplied, backend
@@ -589,6 +629,8 @@ export interface AppState {
   rejectPermission: (requestId: string) => Promise<void>;
   runTests: () => Promise<void>;
   cancelRun: () => Promise<void>;
+  /** Stop exactly one concurrent Gateway run by id. */
+  cancelRunById: (runId: string) => Promise<void>;
   runReview: (req?: CodeReviewRequest) => Promise<void>;
   runTestGen: (req: TestGenRequest) => Promise<void>;
   reRunTest: () => Promise<void>;
@@ -631,8 +673,8 @@ export interface AppState {
   clearQueue: () => void;
   /** Cancel the current run and send `content` immediately ("stop and send"). */
   stopAndSend: (content: string) => void;
-  /** Mark the canonical Gateway run complete and release the next queued send. */
-  finishGatewayRun: (runId?: string | null) => void;
+  /** Mark one Gateway run terminal and release queued work when capacity opens. */
+  finishGatewayRun: (runId?: string | null, phase?: RunPhase) => void;
   /** Accept a budget frame only when it belongs to the currently bound run. */
   updateRunBudget: (budget: AgentEvents.BudgetEvent) => void;
   /** Persist the completed Ask stream before the transient SSE buffer is cleared. */
@@ -1185,6 +1227,12 @@ export const useApp = create<AppState>((set, get) => ({
   agentItems: entriesToWorkflowItems(initialChat),
   plan: null,
   input: "",
+  lastSentPrompt: "",
+  runStartedAt: null,
+  runStage: null,
+  trackedRuns: [],
+  focusedRunId: null,
+  maxConcurrentRuns: 3,
   streaming: false,
   isRunning: false,
   runId: null,
@@ -2497,7 +2545,13 @@ export const useApp = create<AppState>((set, get) => ({
       // Empty / whitespace-only (or otherwise invalid) input — send nothing.
       return;
     }
+    if (!canStartRun(state.trackedRuns, state.maxConcurrentRuns)) {
+      const id = `q-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+      set((s) => ({ messageQueue: [...s.messageQueue, { id, content: request.input }] }));
+      return;
+    }
 
+    const startedAt = Date.now();
     const userMsg: Message = {
       id: `local-${Date.now()}`,
       role: "user",
@@ -2505,11 +2559,8 @@ export const useApp = create<AppState>((set, get) => ({
       created_at: new Date().toISOString(),
     };
 
-    // Terminate any previous in-flight (e.g. slash-command) stream before
-    // starting a new run so a stale stream's terminal handler can't clobber
-    // the new run's state.
-    currentAbort?.abort();
-    currentAbort = null;
+    // Gateway runs own independent SSE streams; starting another must not
+    // abort or detach an already-running peer.
 
     // Echo the user message into the panel and mark a run active. The Gateway
     // issues the authoritative `runId` (set below once accepted); the single
@@ -2521,10 +2572,11 @@ export const useApp = create<AppState>((set, get) => ({
       agentItems: upsertWorkflowMessage(s.agentItems, userMsg),
       streaming: true,
       isRunning: true,
-      runId: null,
       runBudget: null,
       activeRunMode: request.mode,
       boundMessageId: userMsg.id,
+      // Start of the wall-clock window reported as `duration_ms` (§11.2).
+      runStartedAt: startedAt,
     }));
     await track("session.message_sent", { id: sessionId });
 
@@ -2571,6 +2623,9 @@ export const useApp = create<AppState>((set, get) => ({
         baseUrl: modelContext.baseUrl,
         workspaceRoot: modelContext.workspaceRoot,
         reviewChanges: request.mode === "agent",
+        // §12.1: tell the gateway what the user is looking at, so Ask Mode can
+        // answer about the open file / selection instead of guessing.
+        context: currentEditorContext(get().activeFile),
         ...(modelContext.temperature !== undefined
           ? { temperature: modelContext.temperature }
           : {}),
@@ -2586,16 +2641,31 @@ export const useApp = create<AppState>((set, get) => ({
         agentRunCheckpoints: checkpointHash
           ? { ...s.agentRunCheckpoints, [runId]: checkpointHash }
           : s.agentRunCheckpoints,
+        // §12.3: remember every run so the switcher can list concurrent runs
+        // and keep completed ones reachable.
+        trackedRuns: upsertRun(s.trackedRuns, {
+          runId,
+          mode: request.mode,
+          phase: "running",
+          title: content.split("\n")[0] ?? content,
+          startedAt,
+        }),
+        focusedRunId: runId,
       }));
       if (checkpointHash) void get().refreshGit();
     } catch (err) {
       appendErrorChat(set, "sendUserMessage", err);
-      set({
-        streaming: false,
-        isRunning: false,
-        runId: null,
-        runBudget: null,
-        activeRunMode: null,
+      set((s) => {
+        const remaining = activeRuns(s.trackedRuns);
+        const fallback = remaining[remaining.length - 1];
+        return {
+          streaming: remaining.length > 0,
+          isRunning: remaining.length > 0,
+          runId: fallback?.runId ?? null,
+          runBudget: null,
+          activeRunMode: fallback?.mode ?? null,
+          runStartedAt: fallback?.startedAt ?? null,
+        };
       });
       // The submit failed and no run is active — release the next queued
       // message (if any) so the queue does not stall.
@@ -2720,7 +2790,9 @@ export const useApp = create<AppState>((set, get) => ({
   sendMessage: async () => {
     const content = get().input;
     if (!content.trim()) return;
-    set({ input: "" });
+    // Remember it before clearing: if the sidecar dies mid-run the crash banner
+    // offers to re-send exactly this prompt.
+    set({ input: "", lastSentPrompt: content });
     await get().sendUserMessage(content);
   },
 
@@ -2747,7 +2819,17 @@ export const useApp = create<AppState>((set, get) => ({
   },
 
   cancelRun: async () => {
-    get().cancelStream();
+    const state = get();
+    const focused = state.trackedRuns.find((run) => run.runId === state.focusedRunId);
+    const current = state.trackedRuns.find((run) => run.runId === state.runId);
+    const target = focused && !isTerminal(focused)
+      ? focused.runId
+      : current && !isTerminal(current)
+        ? current.runId
+        : activeRuns(state.trackedRuns).at(-1)?.runId
+          ?? (current ? undefined : state.runId);
+    if (target) await get().cancelRunById(target);
+    else get().cancelStream();
   },
 
   runReview: async (req) => {
@@ -3124,9 +3206,66 @@ export const useApp = create<AppState>((set, get) => ({
     return true;
   },
 
+  cancelRunById: async (runId) => {
+    const target = get().trackedRuns.find((run) => run.runId === runId);
+    if (target && isTerminal(target)) return;
+    if (get().liveMode && target) {
+      try {
+        await postAgentCancel(runId);
+      } catch (err) {
+        appendErrorChat(set, "cancelRun", err);
+        return;
+      }
+    }
+
+    // Anonymous counter only: the stage name, never the prompt (§11.2).
+    void trackEvent("run_cancelled", {
+      stage_at_cancel: target?.stage ?? get().runStage ?? "unknown",
+    });
+    set((s) => {
+      const nextRuns = finishRun(s.trackedRuns, runId, "cancelled", Date.now());
+      const remaining = activeRuns(nextRuns);
+      const currentWasCancelled = s.runId === runId;
+      const fallback = remaining[remaining.length - 1];
+      return {
+        trackedRuns: nextRuns,
+        streaming: remaining.length > 0,
+        isRunning: remaining.length > 0,
+        runId: currentWasCancelled ? fallback?.runId ?? null : s.runId,
+        runBudget: currentWasCancelled ? null : s.runBudget,
+        activeRunMode: currentWasCancelled ? fallback?.mode ?? null : s.activeRunMode,
+        runStartedAt: currentWasCancelled ? fallback?.startedAt ?? null : s.runStartedAt,
+        focusedRunId: s.focusedRunId === runId ? fallback?.runId ?? null : s.focusedRunId,
+        agentPaused: false,
+      };
+    });
+    const [next, ...rest] = get().messageQueue;
+    if (next && canStartRun(get().trackedRuns, get().maxConcurrentRuns)) {
+      set({ messageQueue: rest });
+      void get().sendUserMessage(next.content);
+    }
+  },
+
   cancelStream: () => {
     currentAbort?.abort();
     currentAbort = null;
+    const state = get();
+    const focused = state.trackedRuns.find((run) => run.runId === state.focusedRunId);
+    const current = state.trackedRuns.find((run) => run.runId === state.runId);
+    const target = focused && !isTerminal(focused)
+      ? focused.runId
+      : current && !isTerminal(current)
+        ? current.runId
+        : activeRuns(state.trackedRuns).at(-1)?.runId
+          ?? (current ? undefined : state.runId);
+    if (target) {
+      // Preserve the historical "stop clears queued work" behavior before the
+      // per-run action can release a newly available slot.
+      set({ messageQueue: [], agentPaused: false });
+      void get().cancelRunById(target);
+      return;
+    }
+    // Legacy/non-Gateway streams have no tracked id.
     set({
       streaming: false,
       isRunning: false,
@@ -3135,6 +3274,7 @@ export const useApp = create<AppState>((set, get) => ({
       activeRunMode: null,
       agentPaused: false,
       messageQueue: [],
+      runStartedAt: null,
     });
   },
 
@@ -3149,7 +3289,10 @@ export const useApp = create<AppState>((set, get) => ({
     if (!text) return;
     // Only hold a message while a run is active; otherwise it would never be
     // released. Callers send directly when idle.
-    if (get().streaming || get().isRunning) {
+    const state = get();
+    const atCapacity = !canStartRun(state.trackedRuns, state.maxConcurrentRuns);
+    const legacyActive = state.trackedRuns.length === 0 && (state.streaming || state.isRunning);
+    if (atCapacity || legacyActive) {
       const id = `q-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
       set((s) => ({ messageQueue: [...s.messageQueue, { id, content: text }] }));
     }
@@ -3184,31 +3327,91 @@ export const useApp = create<AppState>((set, get) => ({
     if (text) void get().sendUserMessage(text);
   },
 
-  finishGatewayRun: (finishedRunId) => {
-    const current = get().runId;
-    if (finishedRunId && current && finishedRunId !== current) {
-      return;
-    }
-    const [next, ...rest] = get().messageQueue;
-    set({
-      streaming: false,
-      isRunning: false,
-      runId: null,
-      runBudget: null,
-      activeRunMode: null,
-      agentPaused: false,
-      messageQueue: rest,
+  finishGatewayRun: (finishedRunId, phase = "done") => {
+    const runId = finishedRunId ?? get().runId;
+    if (!runId) return;
+    const run = get().trackedRuns.find((item) => item.runId === runId);
+    if (run && isTerminal(run)) return;
+
+    // Counters only — mode, stage, totals. No prompt, no paths (§11.2).
+    void trackEvent("run_completed", {
+      mode: (run?.mode ?? get().activeRunMode ?? get().agentMode) as
+        | "ask"
+        | "plan"
+        | "agent",
+      stage_reached: run?.stage ?? get().runStage ?? "done",
+      token_count: run?.tokensUsed ?? 0,
+      duration_ms: run ? Date.now() - run.startedAt : 0,
+      succeeded: phase === "done",
+      recovery_count: 0,
     });
-    if (next) {
+
+    set((s) => {
+      const nextRuns = finishRun(s.trackedRuns, runId, phase, Date.now());
+      const remaining = activeRuns(nextRuns);
+      const currentFinished = s.runId === runId;
+      const fallback = remaining[remaining.length - 1];
+      return {
+        trackedRuns: nextRuns,
+        streaming: remaining.length > 0,
+        isRunning: remaining.length > 0,
+        runId: currentFinished ? fallback?.runId ?? null : s.runId,
+        runBudget: currentFinished ? null : s.runBudget,
+        activeRunMode: currentFinished ? fallback?.mode ?? null : s.activeRunMode,
+        agentPaused: false,
+        runStartedAt: currentFinished ? fallback?.startedAt ?? null : s.runStartedAt,
+        focusedRunId: s.focusedRunId === runId ? fallback?.runId ?? null : s.focusedRunId,
+      };
+    });
+
+    const [next, ...rest] = get().messageQueue;
+    if (next && canStartRun(get().trackedRuns, get().maxConcurrentRuns)) {
+      set({ messageQueue: rest });
       void get().sendUserMessage(next.content);
     }
   },
 
   updateRunBudget: (budget) => {
-    const activeRunId = get().runId;
-    if (!activeRunId || budget.runId !== activeRunId) return;
-    set({ runBudget: budget });
+    set((s) => {
+      const tracked = s.trackedRuns.find((run) => run.runId === budget.runId);
+      const currentBudget = budget.runId === s.runId ? s.runBudget : null;
+      const unchanged = tracked?.tokensUsed === budget.tokensUsed
+        && tracked?.tokenLimit === budget.tokenLimit
+        && (budget.runId !== s.runId
+          || (currentBudget?.tokensUsed === budget.tokensUsed
+            && currentBudget?.tokenLimit === budget.tokenLimit));
+      if (unchanged) return {};
+      return {
+        runBudget: budget.runId === s.runId ? budget : s.runBudget,
+        trackedRuns: s.trackedRuns.map((run) =>
+          run.runId === budget.runId
+            ? { ...run, tokensUsed: budget.tokensUsed, tokenLimit: budget.tokenLimit }
+            : run,
+        ),
+      };
+    });
   },
+
+  setRunStage: (stage, runId) => {
+    const target = runId ?? get().runId;
+    set((s) => {
+      const tracked = target
+        ? s.trackedRuns.find((run) => run.runId === target)
+        : undefined;
+      const activeUnchanged = target !== s.runId || s.runStage === stage;
+      if (activeUnchanged && (!tracked || tracked.stage === stage)) return {};
+      return {
+        runStage: target === s.runId ? stage : s.runStage,
+        trackedRuns: target
+          ? s.trackedRuns.map((run) =>
+              run.runId === target ? { ...run, stage } : run,
+            )
+          : s.trackedRuns,
+      };
+    });
+  },
+
+  focusRun: (runId) => set({ focusedRunId: runId }),
 
   commitAskStreamMessage: (runId, content, createdAt) => {
     const trimmed = content.trim();

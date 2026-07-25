@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Loader2, MoreVertical, RefreshCcw, Scissors, Trash2 } from "lucide-react";
+import { Loader2, MoreVertical, RefreshCcw, Scissors, Share2, Trash2 } from "lucide-react";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -10,6 +10,8 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { toast } from "@/components/ui/toast";
 import { useApp } from "@/lib/store";
+import { isTauri } from "@/lib/tauri-bridge";
+import { ShareSessionDialog } from "./ShareSessionDialog";
 
 /**
  * Kebab menu for the agent panel header. Surfaces the Phase-5 memory
@@ -24,6 +26,10 @@ export function AgentMenu() {
   const compactMemory = useApp((s) => s.compactMemory);
   const forgetMemory = useApp((s) => s.forgetMemory);
   const [busy, setBusy] = useState<null | "reload" | "compact" | "forget">(null);
+  const [shareOpen, setShareOpen] = useState(false);
+  // Sharing needs the Rust shell to bind a LAN port, so the entry only exists
+  // in the desktop app — never in the browser preview.
+  const canShare = isTauri();
 
   const onReload = async () => {
     if (!liveMode || busy) return;
@@ -61,6 +67,7 @@ export function AgentMenu() {
   };
 
   return (
+    <>
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
         <button
@@ -112,7 +119,24 @@ export function AgentMenu() {
           <Trash2 className="mr-2 h-3.5 w-3.5" />
           Forget memory layers
         </DropdownMenuItem>
+        {canShare && (
+          <>
+            <DropdownMenuSeparator />
+            <DropdownMenuLabel>Session</DropdownMenuLabel>
+            <DropdownMenuItem
+              onSelect={(e) => {
+                e.preventDefault();
+                setShareOpen(true);
+              }}
+            >
+              <Share2 className="mr-2 h-3.5 w-3.5" />
+              Share session…
+            </DropdownMenuItem>
+          </>
+        )}
       </DropdownMenuContent>
     </DropdownMenu>
+    {canShare && <ShareSessionDialog open={shareOpen} onOpenChange={setShareOpen} />}
+    </>
   );
 }

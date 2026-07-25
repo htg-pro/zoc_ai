@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { ArrowUp, Paperclip, ShieldCheck, Square } from "lucide-react";
+import { ArrowUp, ClipboardList, Paperclip, ShieldCheck, Square } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { useApp } from "@/lib/store";
@@ -17,6 +17,7 @@ import { getActiveSelection } from "@/lib/editor-actions";
 import { resolveSlashCommand } from "@/lib/slash-commands";
 import { detectDestructiveIntent } from "@/lib/destructive-intent";
 import { setRunMode } from "@/lib/trust";
+import { activeRuns } from "./agent-runs";
 
 const AUTONOMY_CYCLE: AutonomyLevel[] = ["Low", "Medium", "High"];
 
@@ -41,6 +42,8 @@ export function Composer() {
   const agentMode    = useApp((s) => s.agentMode);
   const setAgentMode = useApp((s) => s.setAgentMode);
   const projectRules = useApp((s) => s.projectRules);
+  const trackedRuns = useApp((s) => s.trackedRuns ?? []);
+  const maxConcurrentRuns = useApp((s) => s.maxConcurrentRuns ?? 3);
 
   const ref = useRef<HTMLTextAreaElement>(null);
   const [submitting, setSubmitting]         = useState(false);
@@ -48,9 +51,14 @@ export function Composer() {
   const [caretPos, setCaret]                = useState(0);
 
   const mention  = caretPos >= 0 && !value.startsWith("/") ? detectMentionQuery(value, caretPos) : null;
-  const runBusy  = streaming || reviewRunning || testRunning || isRunning;
-  const busy     = runBusy || submitting;
+  const activeCount = activeRuns(trackedRuns).length;
+  const legacyStreaming = trackedRuns.length === 0 && (streaming || isRunning);
+  const atCapacity = legacyStreaming || activeCount >= Math.max(1, maxConcurrentRuns);
+  const runBusy = activeCount > 0 || legacyStreaming;
+  const blocked = reviewRunning || testRunning || submitting;
   const isAsk    = agentMode === "ask";
+  const isPlan   = agentMode === "plan";
+  const isAgent  = agentMode === "agent";
   const hasText  = !!value.trim();
 
   // Part 7.1: scan the draft for destructive intent so we can warn inline and
@@ -88,7 +96,7 @@ export function Composer() {
       );
       return;
     }
-    if (busy) {
+    if (atCapacity) {
       const content = value.trim();
       queueMessage(content);
       setValidationError(null);
@@ -127,8 +135,10 @@ export function Composer() {
           </span>
           <span className="text-[11px] text-[#71717A]">
             {messageQueue.length > 0
-              ? `${messageQueue.length} message${messageQueue.length === 1 ? "" : "s"} queued — sent when run finishes`
-              : "Will be queued until the current task completes"}
+              ? `${messageQueue.length} message${messageQueue.length === 1 ? "" : "s"} queued — starts when a slot opens`
+              : legacyStreaming
+                ? "Current task is using the available run slot"
+                : `${activeCount} active · ${Math.max(0, maxConcurrentRuns - activeCount)} slot${maxConcurrentRuns - activeCount === 1 ? "" : "s"} available`}
           </span>
         </div>
       )}
@@ -225,7 +235,7 @@ export function Composer() {
               }
             }}
             placeholder={isAsk ? "Ask about your code…" : "Message the agent…"}
-            disabled={busy}
+            disabled={blocked}
             data-testid="composer-textarea"
             className="max-h-40 min-h-[44px] w-full resize-none border-0 bg-transparent px-2 pb-1 pt-2 shadow-none focus-visible:ring-0 text-[13px] text-[#EDEDF0] placeholder:text-[#3F3F46]"
           />
@@ -250,10 +260,24 @@ export function Composer() {
             </button>
             <button
               type="button"
+              onClick={() => setAgentMode("plan")}
+              className={cn(
+                "flex items-center gap-1 px-2.5 py-1 text-[11px] rounded-md font-medium transition-all",
+                isPlan
+                  ? "bg-[#3A2F0F] text-[#fbbf24] shadow-sm"
+                  : "text-[#52525B] hover:text-[#A1A1AA]",
+              )}
+              title="Plan: show the full plan and wait for approval before editing"
+            >
+              <ClipboardList className="h-3 w-3" />
+              Plan
+            </button>
+            <button
+              type="button"
               onClick={() => setAgentMode("agent")}
               className={cn(
                 "px-2.5 py-1 text-[11px] rounded-md font-medium transition-all",
-                !isAsk
+                isAgent
                   ? "bg-[#2A1F4E] text-[#9B6AF1] shadow-sm"
                   : "text-[#52525B] hover:text-[#A1A1AA]",
               )}
@@ -299,7 +323,7 @@ export function Composer() {
               className="h-6 w-6 text-[#52525B] hover:bg-[#1E1E23] hover:text-[#A1A1AA]"
               title="Attach active file"
               onClick={attachActiveFile}
-              disabled={busy}
+              disabled={blocked}
             >
               <Paperclip className="h-3.5 w-3.5" />
             </Button>
@@ -320,7 +344,7 @@ export function Composer() {
           )}
 
           <div className="ml-auto flex items-center gap-1.5">
-            {streaming && hasText && (
+            {atCapacity && hasText && (
               <button
                 type="button"
                 onClick={() => {
@@ -335,7 +359,7 @@ export function Composer() {
               </button>
             )}
 
-            {streaming ? (
+            {legacyStreaming ? (
               <button
                 type="button"
                 onClick={() => cancelStream()}
@@ -348,14 +372,14 @@ export function Composer() {
               <button
                 type="button"
                 onClick={submit}
-                disabled={!hasText || busy}
+                disabled={!hasText || blocked}
                 className={cn(
                   "flex h-7 w-7 items-center justify-center rounded-lg border transition-all",
-                  hasText && !busy
+                  hasText && !blocked
                     ? "bg-[#7C3AED] border-[#9B6AF1]/30 text-white shadow-[0_0_16px_rgba(124,58,237,0.4)] hover:bg-[#6D28D9]"
                     : "border-[#26262B] bg-[#15151A] text-[#3F3F46] cursor-not-allowed",
                 )}
-                aria-label="Send"
+                aria-label={atCapacity ? "Queue message" : "Send"}
               >
                 <ArrowUp className="h-3.5 w-3.5" />
               </button>

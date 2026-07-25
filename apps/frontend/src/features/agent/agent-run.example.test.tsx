@@ -40,6 +40,7 @@ const tauriBridgeMock = vi.hoisted(() => ({
 vi.mock("@/features/agent/gateway-client", () => ({
   postAgentRun: vi.fn(),
   postAgentDecision: vi.fn(),
+  postAgentCancel: vi.fn(),
 }));
 
 vi.mock("@/lib/tauri-bridge", async () => {
@@ -55,7 +56,7 @@ vi.mock("@/lib/tauri-bridge", async () => {
 import AgentRunFeed, { AgentRunFeedView } from "./AgentRunFeed";
 import { ApprovalRow, isRecognizedEvent } from "./rows";
 import type { AgentEventStream } from "./useAgentStream";
-import { postAgentRun, postAgentDecision } from "./gateway-client";
+import { postAgentRun, postAgentDecision, postAgentCancel } from "./gateway-client";
 import { useApp } from "@/lib/store";
 import * as agentClient from "@/lib/agent-client";
 
@@ -109,6 +110,16 @@ beforeEach(() => {
 
 afterEach(() => {
   cleanup();
+  useApp.setState({
+    trackedRuns: [],
+    focusedRunId: null,
+    runId: null,
+    streaming: false,
+    isRunning: false,
+    activeRunMode: null,
+    messageQueue: [],
+    maxConcurrentRuns: 3,
+  });
 });
 
 describe("AgentRunFeed mount/subscribe (R3.1)", () => {
@@ -448,6 +459,10 @@ describe("submit targets the Gateway, not a legacy transport (R2.1, R6.5)", () =
       baseUrl: null,
       workspaceRoot: null,
       reviewChanges: false,
+      // §12.1: Ask Mode carries the editor's active file so the gateway can
+      // answer about the code the user is looking at. `activeFile` reflects the
+      // file this suite opened earlier; there is no selection in jsdom.
+      context: { activeFile: "/src/App.tsx" },
     });
 
     vi.restoreAllMocks();
@@ -599,5 +614,95 @@ describe("ApprovalRow approve/reject and budget-continuation via /decision (R5.1
     });
     expect(screen.queryByRole("button", { name: /approve/i })).toBeNull();
     expect(screen.queryByRole("button", { name: /reject/i })).toBeNull();
+  });
+});
+
+
+describe("parallel Gateway runs (§12.3)", () => {
+  it("starts a second run without cancelling or queueing the first", async () => {
+    vi.mocked(postAgentRun).mockImplementation(async (request) => ({
+      runId: request.input.includes("second") ? "run-second" : "run-first",
+    }));
+    vi.spyOn(agentClient, "getAgentClient").mockResolvedValue({
+      memoryStats: vi.fn().mockResolvedValue({
+        context_window: 8192,
+        tokens_used: 0,
+        messages: 0,
+        summaries: 0,
+        facts: 0,
+      }),
+    } as unknown as Awaited<ReturnType<typeof agentClient.getAgentClient>>);
+    useApp.setState({
+      liveMode: true,
+      agentMode: "ask",
+      trackedRuns: [],
+      focusedRunId: null,
+      runId: null,
+      messageQueue: [],
+      maxConcurrentRuns: 3,
+      selectedModel: { provider: "mock", model: "mock-model" },
+      llamaCppStatus: null,
+      workspaceRoot: null,
+      activeSessionId: "",
+    });
+
+    await useApp.getState().sendUserMessage("first task");
+    await useApp.getState().sendUserMessage("second task");
+
+    expect(postAgentRun).toHaveBeenCalledTimes(2);
+    expect(useApp.getState().trackedRuns.map((run) => run.runId)).toEqual([
+      "run-first",
+      "run-second",
+    ]);
+    expect(useApp.getState().messageQueue).toEqual([]);
+    expect(useApp.getState().streaming).toBe(true);
+  });
+
+  it("cancels a live peer behind terminal focus and releases one queued run", async () => {
+    vi.mocked(postAgentCancel).mockResolvedValue(undefined);
+    vi.mocked(postAgentRun).mockResolvedValue({ runId: "run-queued" });
+    vi.spyOn(agentClient, "getAgentClient").mockResolvedValue({
+      memoryStats: vi.fn().mockResolvedValue({
+        context_window: 8192,
+        tokens_used: 0,
+        messages: 0,
+        summaries: 0,
+        facts: 0,
+      }),
+    } as unknown as Awaited<ReturnType<typeof agentClient.getAgentClient>>);
+    useApp.setState({
+      liveMode: true,
+      agentMode: "ask",
+      activeRunMode: "ask",
+      runId: "run-finished",
+      focusedRunId: "run-finished",
+      trackedRuns: [
+        { runId: "run-finished", mode: "ask", phase: "done", title: "done", startedAt: 1 },
+        { runId: "run-a", mode: "ask", phase: "running", title: "a", startedAt: 2 },
+        { runId: "run-b", mode: "ask", phase: "running", title: "b", startedAt: 3 },
+        { runId: "run-c", mode: "ask", phase: "running", title: "c", startedAt: 4 },
+      ],
+      messageQueue: [{ id: "queued-1", content: "queued task" }],
+      maxConcurrentRuns: 3,
+      selectedModel: { provider: "mock", model: "mock-model" },
+      llamaCppStatus: null,
+      workspaceRoot: null,
+      activeSessionId: "",
+    });
+
+    await useApp.getState().cancelRun();
+
+    expect(postAgentCancel).toHaveBeenCalledWith("run-c");
+    expect(useApp.getState().trackedRuns.find((run) => run.runId === "run-c")?.phase)
+      .toBe("cancelled");
+    expect(useApp.getState().trackedRuns.find((run) => run.runId === "run-a")?.phase)
+      .toBe("running");
+    await waitFor(() => expect(postAgentRun).toHaveBeenCalledWith(
+      expect.objectContaining({ input: "queued task" }),
+    ));
+    await waitFor(() => expect(
+      useApp.getState().trackedRuns.some((run) => run.runId === "run-queued"),
+    ).toBe(true));
+    expect(useApp.getState().messageQueue).toEqual([]);
   });
 });

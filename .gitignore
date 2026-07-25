@@ -50,10 +50,11 @@ zoc-studio-v*.zip
 *_rsa
 secrets.json
 credentials.json
-.claude/settings.local.json
-.kiro/settings/mcp.json
+.claude/
+.kiro/
+.kombai/
 
-testsprite_tests/tmp/config.json
+testsprite_tests/
 
 # Local archives / backups / large artifacts (not source)
 /Archive.zip

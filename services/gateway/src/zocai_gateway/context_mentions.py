@@ -8,6 +8,8 @@ import re
 from collections.abc import Iterable, Iterator, Mapping
 from pathlib import Path
 
+from zocai_gateway.security import log_security_event
+
 IGNORED_DIR_NAMES = frozenset(
     {
         ".git",
@@ -69,12 +71,7 @@ def expand_prompt_file_mentions(
             return match.group(0)
         rel = _display_path(root, path)
         escaped = html.escape(rel, quote=True)
-        return (
-            f"@{token}\n\n"
-            f'<zoc_context_file path="{escaped}">\n'
-            f"{snippet}\n"
-            "</zoc_context_file>"
-        )
+        return f'@{token}\n\n<zoc_context_file path="{escaped}">\n{snippet}\n</zoc_context_file>'
 
     return _MENTION_RE.sub(replace, prompt)
 
@@ -123,9 +120,23 @@ def _ref_value(ref: object, key: str) -> str | None:
 def _safe_file_path(root: Path, value: str) -> Path | None:
     raw = Path(value)
     if ".." in raw.parts:
+        log_security_event(
+            "path_traversal",
+            "blocked context-file parent traversal",
+            path=value,
+            operation="context_mention",
+            workspace=str(root),
+        )
         return None
     candidate = (raw if raw.is_absolute() else root / raw).resolve()
     if not _is_within(root, candidate):
+        log_security_event(
+            "path_traversal",
+            "blocked context file outside the workspace",
+            path=value,
+            operation="context_mention",
+            workspace=str(root),
+        )
         return None
     try:
         return candidate if candidate.is_file() else None
@@ -136,6 +147,13 @@ def _safe_file_path(root: Path, value: str) -> Path | None:
 def _resolve_mention_path(root: Path, token: str) -> Path | None:
     token_path = Path(token)
     if token_path.is_absolute() or ".." in token_path.parts:
+        log_security_event(
+            "path_traversal",
+            "blocked unsafe typed file mention",
+            path=token,
+            operation="context_mention",
+            workspace=str(root),
+        )
         return None
     if "/" in token or "\\" in token:
         return _safe_file_path(root, token)
@@ -152,9 +170,7 @@ def _iter_workspace_files(root: Path, *, max_files: int) -> Iterator[Path]:
         return None
 
     for dirpath, dirnames, filenames in os.walk(root, onerror=on_error):
-        dirnames[:] = sorted(
-            name for name in dirnames if name not in IGNORED_DIR_NAMES
-        )
+        dirnames[:] = sorted(name for name in dirnames if name not in IGNORED_DIR_NAMES)
         for name in sorted(filenames):
             path = Path(dirpath) / name
             try:

@@ -29,9 +29,7 @@ def _context() -> RunContext:
         allocation=Allocation(ModelTier.LOCAL_SLM, 4000),
         fragments=(),
         steering=SteeringPayload(),
-        token_gate=TokenGateResult(
-            fragments=(), dropped=(), token_count=0, window=4000
-        ),
+        token_gate=TokenGateResult(fragments=(), dropped=(), token_count=0, window=4000),
         mcp_tools=(),
     )
 
@@ -155,8 +153,7 @@ def test_pipeline_emits_scratchpad_before_analyze_and_injects_it(tmp_path: Path)
     scratch_index = next(
         index
         for index, event in enumerate(events)
-        if event["type"] == "thinking"
-        and event.get("gist") == "Private task analysis"
+        if event["type"] == "thinking" and event.get("gist") == "Private task analysis"
     )
     analyze_index = next(
         index
@@ -179,9 +176,7 @@ def test_pipeline_emits_recovery_before_requesting_remediation(tmp_path: Path) -
         def edit_plan(self, request: AgentRunRequest, context: RunContext) -> EditPlan:
             return EditPlan(reasoning="Run verification first.")
 
-        def run_checks(
-            self, request: AgentRunRequest, plan: EditPlan
-        ) -> tuple[int, str, str]:
+        def run_checks(self, request: AgentRunRequest, plan: EditPlan) -> tuple[int, str, str]:
             self.check_count += 1
             if self.check_count == 1:
                 return (
@@ -192,9 +187,7 @@ def test_pipeline_emits_recovery_before_requesting_remediation(tmp_path: Path) -
             return (0, "pytest", "1 passed")
 
         def remediation_plan(self, prior: EditPlan, failure: object) -> EditPlan:
-            self.recovery_was_visible = any(
-                event["type"] == "recovery-attempt" for event in events
-            )
+            self.recovery_was_visible = any(event["type"] == "recovery-attempt" for event in events)
             return EditPlan(
                 reasoning="Fix FAILED tests/test_parser.py::test_invalid - AssertionError",
                 changes=(
@@ -221,9 +214,7 @@ def test_pipeline_emits_recovery_before_requesting_remediation(tmp_path: Path) -
     assert result.stage.value == "done"
     assert brain.recovery_was_visible is True
     assert recovery["attempt"] == 1
-    assert recovery["failures"] == [
-        "tests/test_parser.py::test_invalid - AssertionError"
-    ]
+    assert recovery["failures"] == ["tests/test_parser.py::test_invalid - AssertionError"]
 
 
 # ── Task 1.7: thinking bounds, isolation, and failure modes ──────────────────
@@ -392,3 +383,37 @@ def test_structured_plan_no_provider_returns_empty_plan() -> None:
     plan = RuntimeAgentBrain().structured_plan(_no_provider_request(), _context())
     assert plan.steps == []
     assert plan.confidence == 1.0
+
+
+def test_error_closed_records_failed_hermes_outcome(tmp_path: Path) -> None:
+    calls: list[tuple[str, str]] = []
+
+    class RecordingHermes:
+        def suggest_approach(self, _task: str) -> None:
+            return None
+
+        def post_run(self, transcript: str, outcome: str) -> None:
+            calls.append((transcript, outcome))
+
+    class FailingBrain(DefaultAgentBrain):
+        def think(self, request: AgentRunRequest, context: RunContext) -> str:
+            raise RuntimeError("deliberate reasoning failure")
+
+    result = RunPipeline(
+        AgentRunRequest(prompt="fix the parser crash", mode=Mode.AGENT),
+        "hermes-failure",
+        gate=EmitGate(sink=lambda _event: None),
+        text_sink=lambda _chunk: None,
+        close=lambda: None,
+        workspace_root=tmp_path,
+        brain=FailingBrain(),
+        hermes=RecordingHermes(),  # type: ignore[arg-type]
+    ).run()
+
+    assert result.stage is Stage.ERROR_CLOSED
+    assert len(calls) == 1
+    transcript, outcome = calls[0]
+    assert outcome == "fail"
+    assert "fix the parser crash" in transcript
+    assert "The approach was" in transcript
+    assert "deliberate reasoning failure" in transcript

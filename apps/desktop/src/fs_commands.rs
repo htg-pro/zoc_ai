@@ -31,8 +31,17 @@ pub struct FileNode {
 }
 
 const IGNORED: &[&str] = &[
-    ".git", "node_modules", "target", "dist", ".venv", ".pythonlibs",
-    "__pycache__", ".next", ".cache", ".local", ".pnpm-store",
+    ".git",
+    "node_modules",
+    "target",
+    "dist",
+    ".venv",
+    ".pythonlibs",
+    "__pycache__",
+    ".next",
+    ".cache",
+    ".local",
+    ".pnpm-store",
 ];
 
 fn ignored(name: &str) -> bool {
@@ -48,14 +57,26 @@ fn list(root: &Path, depth: usize) -> std::io::Result<Vec<FileNode>> {
         let entry = entry?;
         let ft = entry.file_type()?;
         let name = entry.file_name().to_string_lossy().into_owned();
-        if ignored(&name) { continue; }
+        if ignored(&name) {
+            continue;
+        }
         let path = entry.path();
         let path_s = path.to_string_lossy().into_owned();
         if ft.is_dir() {
             let children = list(&path, depth - 1).unwrap_or_default();
-            out.push(FileNode { name, path: path_s, kind: "dir".into(), children: Some(children) });
+            out.push(FileNode {
+                name,
+                path: path_s,
+                kind: "dir".into(),
+                children: Some(children),
+            });
         } else if ft.is_file() {
-            out.push(FileNode { name, path: path_s, kind: "file".into(), children: None });
+            out.push(FileNode {
+                name,
+                path: path_s,
+                kind: "file".into(),
+                children: None,
+            });
         }
     }
     out.sort_by(|a, b| match (a.kind.as_str(), b.kind.as_str()) {
@@ -110,17 +131,20 @@ pub fn fs_watch_start<R: Runtime>(
     state.debouncer.lock().take();
 
     let app_clone = app.clone();
-    let mut debouncer = new_debouncer(Duration::from_millis(250), move |res: DebounceEventResult| {
-        if let Ok(events) = res {
-            let paths: Vec<String> = events
-                .into_iter()
-                .map(|e| e.path.to_string_lossy().into_owned())
-                .collect();
-            if !paths.is_empty() {
-                let _ = app_clone.emit("fs://changed", paths);
+    let mut debouncer = new_debouncer(
+        Duration::from_millis(250),
+        move |res: DebounceEventResult| {
+            if let Ok(events) = res {
+                let paths: Vec<String> = events
+                    .into_iter()
+                    .map(|e| e.path.to_string_lossy().into_owned())
+                    .collect();
+                if !paths.is_empty() {
+                    let _ = app_clone.emit("fs://changed", paths);
+                }
             }
-        }
-    })
+        },
+    )
     .map_err(|e| e.to_string())?;
 
     debouncer
@@ -212,11 +236,7 @@ pub fn fs_create_dir(
 
 /// Rename/move `from` → `to`. Both endpoints are validated against the
 /// workspace so neither side can escape it. `to` must not already exist.
-fn move_within(
-    workspace: &WorkspaceState,
-    from: &str,
-    to: &str,
-) -> Result<String, String> {
+fn move_within(workspace: &WorkspaceState, from: &str, to: &str) -> Result<String, String> {
     let src = ensure_within_workspace(workspace, Path::new(from))?;
     if !src.exists() {
         return Err(format!("{} does not exist", src.display()));
@@ -273,8 +293,7 @@ pub fn fs_delete(
         std::fs::remove_dir_all(&resolved)
             .map_err(|e| format!("delete dir {}: {e}", resolved.display()))
     } else {
-        std::fs::remove_file(&resolved)
-            .map_err(|e| format!("delete {}: {e}", resolved.display()))
+        std::fs::remove_file(&resolved).map_err(|e| format!("delete {}: {e}", resolved.display()))
     }
 }
 
@@ -296,7 +315,10 @@ fn copy_dir_recursive(src: &Path, dst: &Path) -> std::io::Result<()> {
 /// Compute a non-colliding "… copy" sibling path for `src`.
 fn unique_copy_path(src: &Path) -> PathBuf {
     let parent = src.parent().unwrap_or_else(|| Path::new("."));
-    let stem = src.file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default();
+    let stem = src
+        .file_stem()
+        .map(|s| s.to_string_lossy().into_owned())
+        .unwrap_or_default();
     let ext = src.extension().map(|e| e.to_string_lossy().into_owned());
     let make = |suffix: String| -> PathBuf {
         let name = match &ext {
@@ -368,7 +390,6 @@ pub fn fs_reveal(
     result.map(|_| ()).map_err(|e| format!("reveal {p}: {e}"))
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -411,7 +432,10 @@ mod tests {
         // Destination parent (the system temp dir) is outside the workspace root.
         let outside = std::env::temp_dir().join("zoc-escape-target.txt");
         let res = move_within(&ws, src.to_str().unwrap(), outside.to_str().unwrap());
-        assert!(res.is_err(), "moving outside the workspace must be rejected");
+        assert!(
+            res.is_err(),
+            "moving outside the workspace must be rejected"
+        );
         fs::remove_dir_all(&base).ok();
     }
 

@@ -29,6 +29,7 @@ import {
   modelLabel,
 } from "@/lib/status-bar";
 import { cn } from "@/lib/utils";
+import { HardwareMonitor } from "./HardwareMonitor";
 
 function useCursor(): CursorPosition | null {
   const [pos, setPos] = useState<CursorPosition | null>(getCursorPosition());
@@ -207,8 +208,10 @@ export function StatusBar() {
         )}
       </div>
 
-      {/* Right cluster: cursor / language / encoding / terminals / model / sidecar */}
+      {/* Right cluster: hardware / cursor / language / encoding / terminals / model / sidecar */}
       <div className="flex shrink-0 items-center">
+        {liveMode && <HardwareMonitor />}
+
         {dirtyCount > 0 && <Item title="Unsaved files"><span>{dirtyCount} unsaved</span></Item>}
 
         {file && (

@@ -34,7 +34,7 @@ import importlib
 import os
 import socket
 import sys
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from pathlib import Path
 
 import uvicorn
@@ -42,10 +42,12 @@ import uvicorn
 from zocai_gateway.settings import GatewaySettings
 
 __all__ = [
+    "LAZY_INDEX_FLAG",
     "READY_PREFIX",
     "WORKSPACE_ENV_VAR",
     "bind_loopback_or_configured",
     "main",
+    "resolve_lazy_index",
     "resolve_user_mcp_config_path",
     "resolve_workspace_root",
     "run_bundled_mcp_server",
@@ -60,6 +62,8 @@ READY_PREFIX = "ZOC_STUDIO_AGENT_PORT="
 WORKSPACE_ENV_VAR = "ZOC_STUDIO_WORKSPACE"
 USER_MCP_CONFIG_ENV_VAR = "ZOC_STUDIO_MCP_USER_CONFIG"
 MCP_SERVER_FLAG = "--mcp-server"
+LAZY_INDEX_FLAG = "--lazy-index"
+LAZY_INDEX_ENV_VAR = "ZOC_STUDIO_LAZY_INDEX"
 _BUNDLED_MCP_SERVERS = frozenset({"web_search", "docs", "git_history"})
 
 HELP_TEXT = """zoc-studio-agent (Zoc AI Gateway sidecar)
@@ -68,13 +72,37 @@ Start the Gateway FastAPI sidecar on a loopback (or configured) port and print
 ZOC_STUDIO_AGENT_PORT=<port> on stdout for the Tauri desktop shell to capture,
 then serve until terminated.
 
+Options:
+  --lazy-index              skip the startup workspace index; index files only
+                            when the agent first accesses them (large monorepos)
+
 Configuration is read from environment variables:
   ZOC_STUDIO_GATEWAY_HOST   bind interface (default 127.0.0.1)
   ZOC_STUDIO_GATEWAY_PORT   bind port (default 0 = OS-assigned free port)
   ZOC_STUDIO_GATEWAY_TOKEN  shared-secret credential (required for non-loopback)
   ZOC_STUDIO_WORKSPACE      optional workspace root for the memory matrix
+  ZOC_STUDIO_LAZY_INDEX     set to 1/true to imply --lazy-index
   ZOC_STUDIO_MCP_USER_CONFIG optional user-scoped mcp.json (default ~/.zoc/mcp.json)
 """
+
+#: Environment values treated as "on" for boolean flags.
+_TRUTHY = frozenset({"1", "true", "yes", "on"})
+
+
+def resolve_lazy_index(
+    args: Sequence[str] | None = None, env: Mapping[str, str] | None = None
+) -> bool:
+    """Whether the workspace index should be built lazily (§9.1).
+
+    True when ``--lazy-index`` is passed **or**
+    :data:`LAZY_INDEX_ENV_VAR` is set to a truthy value, so the desktop shell
+    can enable it without changing its argv.
+    """
+    argv = sys.argv[1:] if args is None else list(args)
+    source = os.environ if env is None else env
+    if LAZY_INDEX_FLAG in argv:
+        return True
+    return (source.get(LAZY_INDEX_ENV_VAR) or "").strip().lower() in _TRUTHY
 
 
 def resolve_workspace_root(env: Mapping[str, str] | None = None) -> Path | None:
@@ -151,10 +179,11 @@ def main() -> int:
     settings.enforce_bind_policy()  # refuse non-loopback w/o auth (R12.2)
 
     workspace_root = resolve_workspace_root()
+    lazy_index = resolve_lazy_index(args)
     sock = bind_loopback_or_configured(settings)  # OS-assigned port if 0
     port = int(sock.getsockname()[1])
 
-    return asyncio.run(_serve(settings, workspace_root, sock, port))
+    return asyncio.run(_serve(settings, workspace_root, sock, port, lazy_index))
 
 
 async def _serve(
@@ -162,6 +191,7 @@ async def _serve(
     workspace_root: Path | None,
     sock: socket.socket,
     port: int,
+    lazy_index: bool = False,
 ) -> int:
     from zocai_gateway.app import create_app
 
@@ -169,6 +199,7 @@ async def _serve(
         settings=settings,
         workspace_root=workspace_root,
         start_mcp=True,
+        lazy_index=lazy_index,
         mcp_user_config_path=resolve_user_mcp_config_path(),
     )
     config = uvicorn.Config(app, host=settings.host, port=port, log_level="info")

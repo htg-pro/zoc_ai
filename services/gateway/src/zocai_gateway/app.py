@@ -32,7 +32,9 @@ import signal
 import subprocess
 import threading
 import uuid
+from collections import deque
 from collections.abc import AsyncIterator, Mapping
+from concurrent.futures import TimeoutError as FuturesTimeoutError
 from contextlib import asynccontextmanager, suppress
 from datetime import UTC, datetime
 from pathlib import Path
@@ -59,6 +61,7 @@ from shared_schema.models import (
 from sse_starlette.sse import EventSourceResponse
 from zocai_evolution import EvolutionEngine
 
+from zocai_gateway import hardware_probe, model_runtime
 from zocai_gateway.auth import (
     STATE_SETTINGS_KEY,
     extract_credential,
@@ -76,11 +79,13 @@ from zocai_gateway.event_bus import (
     GatewayEventBus,
     WorkspaceFilesChanged,
 )
+from zocai_gateway.file_locks import FileLockRegistry
 from zocai_gateway.fsm import FSM
 from zocai_gateway.memory import reconstruction
 from zocai_gateway.memory.diary_worker import DiaryWorker
 from zocai_gateway.memory.hermes_evolution import HermesEvolution
 from zocai_gateway.memory.matrix import MemoryMatrix
+from zocai_gateway.memory.project_memory import ProjectMemoryStore
 from zocai_gateway.memory.state_wrapper import StateWrapperStore
 from zocai_gateway.mode_router import AgentRunRequest, ExecutionPath, Mode, ModeRouter
 from zocai_gateway.permissions import build_permission_gate, config_from_mapping
@@ -97,6 +102,11 @@ from zocai_gateway.run_pipeline import (
     ApplyStrategy,
     default_workspace_rag_matcher,
     execute_run,
+)
+from zocai_gateway.security import (
+    RateLimiter,
+    log_security_event,
+    validate_user_text,
 )
 from zocai_gateway.settings import GatewaySettings
 from zocai_gateway.workspace_index import WorkspaceIndexer
@@ -125,6 +135,21 @@ DecisionKind = Literal["approval", "budget-continuation", "review"]
 #: The verdict a Developer returns for a pending decision. Approvals use
 #: ``approve``/``reject``; budget-continuation prompts use ``continue``/``stop``.
 DecisionVerdict = Literal["approve", "reject", "continue", "stop", "apply", "discard"]
+
+#: Default bounded depth of a run's SSE queue (§9.2). Overridden per app by
+#: :attr:`~zocai_gateway.settings.GatewaySettings.sse_queue_maxsize`.
+DEFAULT_SSE_QUEUE_MAXSIZE = 512
+
+#: Default number of recent events retained per run for replay (§9.2).
+DEFAULT_EVENT_REPLAY_BUFFER = 1024
+
+#: How long a producing worker thread waits for a full queue to drain before it
+#: gives up on a frame. Long enough to be real backpressure, short enough that a
+#: client which vanished without closing cannot wedge a run forever.
+DEFAULT_PRODUCER_PUT_TIMEOUT_SECONDS = 30.0
+
+#: How often the hardware monitor stream emits a snapshot (§16.2).
+HARDWARE_STREAM_INTERVAL_SECONDS = 2.0
 
 
 class RunAccepted(BaseModel):
@@ -214,15 +239,31 @@ class _Run:
     payload against the Event_Contract and only enqueues conforming events, in
     FSM production order (R6.2, R6.4, R6.5). ``enqueue`` is the gate's sink and
     appends to the FIFO queue, so emission order equals production order.
+
+    The queue is **bounded** (``queue_maxsize``, §9.2). A slow or absent SSE
+    consumer therefore cannot make the gateway buffer without limit: once the
+    queue is full a producer *waits* for space, and because the pipeline runs in
+    a worker thread that wait propagates backpressure straight into the agent
+    loop. Every emitted frame is also copied into a fixed-size replay buffer so
+    a client that drops its connection can resume from a sequence number
+    instead of losing the run's history.
     """
 
     __slots__ = (
+        "_cancelled",
         "_closed",
         "_decision_condition",
         "_decision_cursors",
+        "_ever_subscribed",
+        "_history",
+        "_history_lock",
         "_lock",
         "_loop",
+        "_put_timeout",
+        "_queue_maxsize",
         "_seq",
+        "_subscriber_lock",
+        "_subscribers",
         "decisions",
         "emit_gate",
         "path",
@@ -230,10 +271,21 @@ class _Run:
         "run_id",
     )
 
-    def __init__(self, run_id: str, path: ExecutionPath, diary: DiaryMirror | None = None) -> None:
+    def __init__(
+        self,
+        run_id: str,
+        path: ExecutionPath,
+        diary: DiaryMirror | None = None,
+        *,
+        queue_maxsize: int = DEFAULT_SSE_QUEUE_MAXSIZE,
+        replay_buffer_size: int = DEFAULT_EVENT_REPLAY_BUFFER,
+        put_timeout_seconds: float = DEFAULT_PRODUCER_PUT_TIMEOUT_SECONDS,
+    ) -> None:
         self.run_id = run_id
         self.path = path
-        self.queue: asyncio.Queue[dict[str, object] | None] = asyncio.Queue()
+        self.queue: asyncio.Queue[dict[str, object] | None] = asyncio.Queue(
+            maxsize=max(1, queue_maxsize)
+        )
         self.decisions: list[DecisionRequest] = []
         self.emit_gate = EmitGate(sink=self._enqueue, diary=diary)
         self._decision_condition = threading.Condition()
@@ -248,7 +300,83 @@ class _Run:
             self._loop = None
         self._lock = threading.Lock()
         self._closed = False
+        self._cancelled = threading.Event()
         self._seq = 0
+        self._history: deque[dict[str, object]] = deque(maxlen=max(1, replay_buffer_size))
+        self._history_lock = threading.Lock()
+        self._put_timeout = put_timeout_seconds
+        self._queue_maxsize = max(1, queue_maxsize)
+        self._subscriber_lock = threading.Lock()
+        self._subscribers: set[asyncio.Queue[dict[str, object] | None]] = set()
+        self._ever_subscribed = False
+
+    @property
+    def is_closed(self) -> bool:
+        """Whether the run has emitted its close sentinel."""
+        with self._lock:
+            return self._closed
+
+    @property
+    def is_cancelled(self) -> bool:
+        """Whether a client requested cooperative cancellation."""
+        return self._cancelled.is_set()
+
+    @property
+    def subscriber_count(self) -> int:
+        """Number of live SSE consumers currently attached to this run."""
+        with self._subscriber_lock:
+            return len(self._subscribers)
+
+    def subscribe(self) -> asyncio.Queue[dict[str, object] | None]:
+        """Attach an independent bounded queue for one SSE consumer.
+
+        The first subscriber adopts ``queue`` so events emitted between run
+        acceptance and EventSource connection remain available. Later
+        subscribers receive their own queue and rebuild prior rows from the
+        replay buffer before consuming live frames.
+        """
+        with self._subscriber_lock:
+            if not self._ever_subscribed:
+                subscriber = self.queue
+                self._ever_subscribed = True
+            else:
+                subscriber = asyncio.Queue(maxsize=self._queue_maxsize)
+            self._subscribers.add(subscriber)
+        if self.is_closed and subscriber.empty():
+            subscriber.put_nowait(None)
+        return subscriber
+
+    def unsubscribe(self, subscriber: asyncio.Queue[dict[str, object] | None]) -> None:
+        """Detach one SSE consumer without affecting the run or its peers."""
+        with self._subscriber_lock:
+            self._subscribers.discard(subscriber)
+
+    def cancel(self) -> None:
+        """Request cooperative cancellation and close this run's event bus."""
+        if self.is_closed:
+            return
+        self._cancelled.set()
+        self.enqueue_error("run cancelled by user")
+        self.close()
+
+    def replay(self, since_seq: int | None = None) -> list[dict[str, object]]:
+        """Buffered events with ``seq`` greater than ``since_seq`` (§9.2).
+
+        Frames without a usable ``seq`` (there should be none, but the buffer is
+        a debugging aid as much as a protocol feature) are kept when replaying
+        from the beginning and dropped when resuming, since they cannot be
+        ordered against the cursor.
+        """
+        with self._history_lock:
+            frames = list(self._history)
+        if since_seq is None:
+            return frames
+        out: list[dict[str, object]] = []
+        for frame in frames:
+            seq = frame.get("seq")
+            if isinstance(seq, int) and seq > since_seq:
+                out.append(frame)
+        return out
 
     def _enqueue(self, event: Mapping[str, object]) -> None:
         """FIFO sink for the run's emit gate (R6.5).
@@ -256,7 +384,10 @@ class _Run:
         Pipeline work can run in a worker thread, while the SSE queue belongs
         to the FastAPI event loop. Enqueue through the captured loop when one is
         available so producers never mutate ``asyncio.Queue`` from the wrong
-        thread. The queue is unbounded, so ``put_nowait`` never blocks.
+        thread. The queue is bounded: worker-thread producers wait for capacity,
+        propagating backpressure into the run pipeline. Event-loop control paths
+        use the non-blocking fallback in :meth:`_put_one` to avoid deadlocking
+        the loop; reconnect replay covers any resulting gap.
         """
         with self._lock:
             if self._closed:
@@ -397,15 +528,67 @@ class _Run:
             self._decision_condition.notify_all()
 
     def _put(self, item: dict[str, object] | None) -> None:
-        """Put ``item`` onto the SSE queue from either loop or worker thread."""
+        """Fan a frame out to every bounded SSE subscriber (§9.2).
+
+        Before the first subscriber connects, ``queue`` remains the bounded
+        backlog used by the original single-consumer design. Once streaming has
+        begun, each EventSource has an independent queue: a LAN viewer can no
+        longer steal frames from the desktop feed, and slow consumers exert
+        bounded backpressure independently.
+        """
+        if item is not None:
+            with self._history_lock:
+                self._history.append(dict(item))
+
+        with self._subscriber_lock:
+            targets = tuple(self._subscribers) if self._ever_subscribed else (self.queue,)
+        for target in targets:
+            self._put_one(target, item)
+
+    def _put_one(
+        self,
+        target: asyncio.Queue[dict[str, object] | None],
+        item: dict[str, object] | None,
+    ) -> None:
+        """Deliver one frame to one subscriber with bounded backpressure."""
         loop = self._loop
-        if loop is not None and loop.is_running():
+        if loop is None or not loop.is_running():
             try:
-                loop.call_soon_threadsafe(self.queue.put_nowait, item)
-                return
-            except RuntimeError:
-                pass
-        self.queue.put_nowait(item)
+                target.put_nowait(item)
+            except asyncio.QueueFull:
+                logger.warning("run %s dropped a frame: subscriber queue full", self.run_id)
+            return
+
+        try:
+            running = asyncio.get_running_loop()
+        except RuntimeError:
+            running = None
+
+        if running is loop:
+            # Blocking here would deadlock the event loop. Keep the newest frame;
+            # the fixed replay buffer remains available for gap recovery.
+            try:
+                target.put_nowait(item)
+            except asyncio.QueueFull:
+                with suppress(asyncio.QueueEmpty):
+                    target.get_nowait()
+                with suppress(asyncio.QueueFull):
+                    target.put_nowait(item)
+            return
+
+        future = asyncio.run_coroutine_threadsafe(target.put(item), loop)
+        try:
+            future.result(timeout=self._put_timeout)
+        except FuturesTimeoutError:
+            future.cancel()
+            logger.warning(
+                "run %s dropped a frame: consumer stalled for %.0fs",
+                self.run_id,
+                self._put_timeout,
+            )
+        except RuntimeError:
+            # Loop closed mid-handoff (shutdown); nothing to deliver to.
+            pass
 
 
 class RunRegistry:
@@ -420,15 +603,46 @@ class RunRegistry:
     (R9.3). When ``None`` (the default), runs emit without mirroring.
     """
 
-    def __init__(self, diary: DiaryMirror | None = None) -> None:
+    def __init__(
+        self,
+        diary: DiaryMirror | None = None,
+        *,
+        queue_maxsize: int = DEFAULT_SSE_QUEUE_MAXSIZE,
+        replay_buffer_size: int = DEFAULT_EVENT_REPLAY_BUFFER,
+        max_concurrent_runs: int = 3,
+    ) -> None:
         self._runs: dict[str, _Run] = {}
         self._diary = diary
+        self._queue_maxsize = queue_maxsize
+        self._replay_buffer_size = replay_buffer_size
+        self._max_concurrent_runs = max(1, max_concurrent_runs)
+
+    @property
+    def max_concurrent_runs(self) -> int:
+        return self._max_concurrent_runs
+
+    def active(self) -> list[_Run]:
+        """Runs that have not yet closed their stream (§12.3)."""
+        return [run for run in self._runs.values() if not run.is_closed]
+
+    def active_count(self) -> int:
+        return len(self.active())
+
+    def at_capacity(self) -> bool:
+        """Whether starting another run would exceed ``max_concurrent_runs``."""
+        return self.active_count() >= self._max_concurrent_runs
 
     def create(self, path: ExecutionPath, run_id: str | None = None) -> _Run:
         run_id = run_id or uuid.uuid4().hex
         if run_id in self._runs:
             raise ValueError(f"run already exists: {run_id}")
-        run = _Run(run_id=run_id, path=path, diary=self._diary)
+        run = _Run(
+            run_id=run_id,
+            path=path,
+            diary=self._diary,
+            queue_maxsize=self._queue_maxsize,
+            replay_buffer_size=self._replay_buffer_size,
+        )
         self._runs[run_id] = run
         return run
 
@@ -666,11 +880,30 @@ class TerminalRegistry:
         self._terminals.pop(terminal_id, None)
 
 
+def _error_frame(run_id: str, message: str, seq: int = -1) -> dict[str, str]:
+    """One SSE ``error`` frame for an infrastructure (non-run) failure."""
+    return {
+        "event": "error",
+        "data": json.dumps(
+            {
+                "type": "error",
+                "seq": seq,
+                "runId": run_id,
+                "ts": datetime.now(UTC).isoformat(),
+                "message": message,
+            }
+        ),
+    }
+
+
 async def _event_stream(
     run: _Run | None,
     *,
     registry: RunRegistry | None = None,
     queue_timeout_seconds: float = 300.0,
+    heartbeat_seconds: float = 15.0,
+    client_timeout_seconds: float = 60.0,
+    since_seq: int | None = None,
 ) -> AsyncIterator[dict[str, str]]:
     """Yield SSE frames for ``run`` until its close sentinel arrives.
 
@@ -680,41 +913,122 @@ async def _event_stream(
     relays the run's FIFO queue in order: producers feed that queue exclusively
     through the run's emit gate, so the bus carries only contract-conforming
     events in FSM production order (R6.4, R6.5).
+
+    Idle handling (§9.2). A quiet stream is not a broken stream, so the
+    generator emits a heartbeat every ``heartbeat_seconds``. Only once the
+    stream has been idle for ``client_timeout_seconds`` does it emit a terminal
+    error frame and stop. **The run is not cancelled** — it keeps producing into
+    its bounded queue and replay buffer, and the client resumes with
+    ``?since_seq=N``.
+
+    ``since_seq`` replays the run's buffered history before live streaming, so a
+    reconnect rebuilds its feed without a gap.
     """
     if run is None:
         yield {"event": "ping", "data": ""}
         return
 
+    # Register before taking the replay snapshot. Frames racing with replay are
+    # also queued, then discarded below through ``replayed_through``; no frame
+    # can fall between snapshot and live subscription.
+    subscriber = run.subscribe()
+    highest_seq = since_seq
+    replayed_through: int | None = None
+    for frame in run.replay(since_seq):
+        event_type = frame.get("type")
+        seq = frame.get("seq")
+        if isinstance(seq, int):
+            highest_seq = seq if highest_seq is None else max(highest_seq, seq)
+            replayed_through = seq if replayed_through is None else max(replayed_through, seq)
+        yield {
+            "event": str(event_type) if event_type is not None else "message",
+            "data": json.dumps(frame),
+        }
+
+    # The per-frame wait is the heartbeat cadence, capped by the overall queue
+    # timeout so an explicitly shortened queue timeout still applies.
+    frame_wait = max(0.001, min(heartbeat_seconds, queue_timeout_seconds))
+    idle_seconds = 0.0
+    idle_ceiling = min(client_timeout_seconds, queue_timeout_seconds)
+
     try:
         while True:
             try:
-                item = await asyncio.wait_for(run.queue.get(), timeout=queue_timeout_seconds)
+                item = await asyncio.wait_for(subscriber.get(), timeout=frame_wait)
             except TimeoutError:
-                message = "SSE stream timed out waiting for gateway events"
-                yield {
-                    "event": "error",
-                    "data": json.dumps(
-                        {
-                            "type": "error",
-                            "seq": -1,
-                            "runId": run.run_id,
-                            "ts": datetime.now(UTC).isoformat(),
-                            "message": message,
-                        }
-                    ),
-                }
-                run.close()
-                break
+                idle_seconds += frame_wait
+                if idle_seconds >= idle_ceiling:
+                    # Give up on this *connection*, not on the run: the client
+                    # can reconnect with ?since_seq=<highest seq it saw>.
+                    yield _error_frame(
+                        run.run_id,
+                        "SSE stream idle for "
+                        f"{idle_seconds:.0f}s; reconnect with ?since_seq="
+                        f"{highest_seq if highest_seq is not None else -1} "
+                        "to resume (the run is still active)",
+                    )
+                    break
+                yield {"event": "ping", "data": ""}
+                continue
+
+            idle_seconds = 0.0
             if item is None:  # close sentinel
                 break
+            seq = item.get("seq")
+            if isinstance(seq, int):
+                # A frame can sit in the live queue *and* in the replay buffer
+                # (the buffer is written on emit, the queue is drained later).
+                # After a resume, skip anything the replay pass already sent so
+                # the client never sees the same seq twice.
+                if replayed_through is not None and seq <= replayed_through:
+                    continue
+                highest_seq = seq if highest_seq is None else max(highest_seq, seq)
             event_type = item.get("type")
             yield {
                 "event": str(event_type) if event_type is not None else "message",
                 "data": json.dumps(item),
             }
     finally:
-        if registry is not None:
+        run.unsubscribe(subscriber)
+        # Only forget a closed run after its final viewer drains the terminal
+        # sentinel. One viewer disconnecting must not invalidate another's
+        # replay/control lookup.
+        if registry is not None and run.is_closed and run.subscriber_count == 0:
             registry.remove(run.run_id)
+
+
+async def _hardware_stream(
+    *,
+    interval_seconds: float = HARDWARE_STREAM_INTERVAL_SECONDS,
+    max_events: int | None = None,
+) -> AsyncIterator[dict[str, str]]:
+    """Yield a hardware snapshot every ``interval_seconds`` (§16.2).
+
+    Each probe runs in a worker thread; a probe failure skips that tick rather
+    than terminating the stream, so a transient sysfs error does not take the
+    status-bar widget down.
+
+    ``max_events`` bounds the stream. Production passes ``None`` (stream until
+    the client disconnects); tests pass a small number so the generator
+    terminates instead of running forever.
+    """
+    emitted = 0
+    while max_events is None or emitted < max_events:
+        try:
+            metrics = model_runtime.live_inference_metrics()
+            reading = await asyncio.to_thread(
+                hardware_probe.snapshot,
+                tokens_per_second=metrics.tokens_per_second,
+                inference_active=metrics.inference_active,
+            )
+        except Exception:  # pragma: no cover - defensive probe boundary
+            logger.debug("hardware snapshot failed", exc_info=True)
+        else:
+            emitted += 1
+            yield {"event": "hardware", "data": json.dumps(reading.as_payload())}
+        if max_events is not None and emitted >= max_events:
+            return
+        await asyncio.sleep(interval_seconds)
 
 
 def create_app(
@@ -727,6 +1041,7 @@ def create_app(
     benchmarker: ModelBenchmarker | None = None,
     workspace_indexer: WorkspaceIndexer | None = None,
     drive: bool = True,
+    lazy_index: bool = False,
     start_mcp: bool = False,
     mcp_user_config_path: Path | str | None = None,
 ) -> FastAPI:
@@ -759,6 +1074,11 @@ def create_app(
         workspace_indexer: Optional session-scoped workspace index service.
         drive: When ``True`` (default) an accepted run is driven end to end
             through the composed pipeline so its events stream over the bus.
+        lazy_index: When ``True`` no workspace index is built at startup
+            (``--lazy-index``): files are indexed the first time the agent
+            accesses them, and the run-scoped RAG matcher loads only the index
+            shards a query needs (§9.1). Large monorepos start instantly at the
+            cost of a slower first retrieval.
         start_mcp: Start enabled stdio MCP definitions during application
             lifespan. The production launcher enables this; tests default off.
         mcp_user_config_path: Optional user-scoped ``mcp.json`` document merged
@@ -793,8 +1113,15 @@ def create_app(
     # Layer 5: a single Evolution_Engine records verified-run trajectories (R12).
     engine = evolution if evolution is not None else EvolutionEngine()
     active_benchmarker = benchmarker or ModelBenchmarker(BenchmarkStore())
-    active_workspace_indexer = workspace_indexer or WorkspaceIndexer(persistence=IndexPersistence())
+    active_workspace_indexer = workspace_indexer or WorkspaceIndexer(
+        persistence=IndexPersistence(), lazy=lazy_index
+    )
     event_bus = GatewayEventBus()
+    # §12.3: one registry shared by every run in this process, so concurrent
+    # runs serialise their writes per file instead of clobbering each other.
+    file_locks = FileLockRegistry()
+    # §15.1: one limiter shared by every run start, keyed by workspace.
+    run_rate_limiter = RateLimiter()
     unsubscribe_indexer = event_bus.subscribe(
         FS_CHANGED_TOPIC, active_workspace_indexer.handle_fs_changed
     )
@@ -857,7 +1184,12 @@ def create_app(
         allow_headers=["*"],
     )
 
-    registry = RunRegistry(diary=diary)
+    registry = RunRegistry(
+        diary=diary,
+        queue_maxsize=resolved_settings.sse_queue_maxsize,
+        replay_buffer_size=resolved_settings.event_replay_buffer_size,
+        max_concurrent_runs=resolved_settings.max_concurrent_runs,
+    )
     sessions = SessionRegistry()
     terminals = TerminalRegistry()
     app.state.run_registry = registry
@@ -899,7 +1231,48 @@ def create_app(
             "active_runs": registry.count(),
             "workspace_root": run_root,
             "diary_enabled": diary_path is not None,
+            # §12.3: the run switcher reads these to render its count badge and
+            # to disable "new run" once the cap is reached.
+            "running": registry.active_count(),
+            "max_concurrent_runs": registry.max_concurrent_runs,
+            "run_ids": [run.run_id for run in registry.active()],
+            "locked_files": list(file_locks.held_paths()),
         }
+
+    @app.get("/v1/hardware", dependencies=[Depends(require_admission)])
+    async def hardware() -> dict[str, object]:
+        """Detected hardware plus a local-model recommendation (§13.1).
+
+        Drives the onboarding wizard's hardware step. Probing touches sysfs and
+        may shell out to ``nvidia-smi``, so it runs in a thread to keep the event
+        loop free.
+        """
+        profile = await asyncio.to_thread(hardware_probe.probe)
+        recommendation = hardware_probe.recommend_model(profile)
+        metrics = model_runtime.live_inference_metrics()
+        live = await asyncio.to_thread(
+            hardware_probe.snapshot,
+            tokens_per_second=metrics.tokens_per_second,
+            inference_active=metrics.inference_active,
+        )
+        return {
+            "gpu_memory_gb": profile.gpu_memory_gb if profile else None,
+            "system_memory_gb": profile.system_memory_gb if profile else None,
+            "detected": profile is not None,
+            "recommendation": {
+                "model": recommendation.model,
+                "quantization": recommendation.quantization,
+                "approx_size_gb": recommendation.approx_size_gb,
+                "gpu_layers": recommendation.gpu_layers,
+                "reason": recommendation.reason,
+            },
+            "snapshot": live.as_payload(),
+        }
+
+    @app.get("/v1/hardware/stream", dependencies=[Depends(require_admission)])
+    async def hardware_stream() -> EventSourceResponse:
+        """Stream a hardware snapshot every 2 s for the status-bar widget (§16.2)."""
+        return EventSourceResponse(_hardware_stream())
 
     @app.websocket("/v1/workspace/index-progress")
     async def workspace_index_progress(websocket: WebSocket) -> None:
@@ -1307,6 +1680,54 @@ def create_app(
         R11.1, R1.9). Ask runs stream over the text-only channel (R6.6).
         """
         path = router.route(req)
+        run_root_for_limits = (
+            str(resolved_root.resolve())
+            if resolved_root is not None
+            else (req.workspace_root or run_root)
+        )
+        # §15.1: validate everything the renderer sends before it reaches a
+        # model or the filesystem. Over-length and control-character payloads are
+        # rejected here rather than deeper in the pipeline.
+        validated = validate_user_text(req.prompt, field="prompt")
+        if not validated.ok:
+            log_security_event("invalid_input", validated.reason, workspace=run_root_for_limits)
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=validated.reason,
+            )
+        if validated.text != req.prompt:
+            req = req.model_copy(update={"prompt": validated.text})
+
+        # §15.1: cap run starts per workspace so a runaway client (or a
+        # compromised renderer) cannot spend the user's tokens in a loop.
+        limit = run_rate_limiter.check(run_root_for_limits)
+        if not limit.allowed:
+            log_security_event(
+                "rate_limited",
+                f"run start rate limit exceeded ({run_rate_limiter.limit}/min)",
+                workspace=run_root_for_limits,
+            )
+            raise HTTPException(
+                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                detail=(
+                    f"rate limit exceeded: max {run_rate_limiter.limit} runs per "
+                    f"minute per workspace; retry in "
+                    f"{limit.retry_after_seconds:.0f}s"
+                ),
+                headers={"Retry-After": str(max(1, int(limit.retry_after_seconds)))},
+            )
+
+        # §12.3: several runs may execute at once, but not without limit — each
+        # holds a model context, a worker thread and an isolated workspace.
+        if registry.at_capacity():
+            raise HTTPException(
+                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                detail=(
+                    f"{registry.active_count()} runs already active "
+                    f"(limit {registry.max_concurrent_runs}); "
+                    "stop one before starting another"
+                ),
+            )
         try:
             run = registry.create(path, run_id=req.run_id)
         except ValueError as exc:
@@ -1337,15 +1758,16 @@ def create_app(
         # Injected brains (tests) keep the no-op matcher / single-pass default so
         # their deterministic runs are unchanged.
         live_run = brain is None
-        run_rag_matcher = default_workspace_rag_matcher(run_workspace_root) if live_run else None
+        run_rag_matcher = (
+            default_workspace_rag_matcher(run_workspace_root, lazy=lazy_index) if live_run else None
+        )
         run_apply_strategy = ApplyStrategy.REACT if live_run else ApplyStrategy.SINGLE_PASS
         if drive:
 
             async def drive_run() -> None:
                 mcp_loop = asyncio.get_running_loop()
-                run_permission = build_permission_gate(
-                    config_from_mapping(req.permission), run_workspace_root
-                )
+                permission_config = config_from_mapping(req.permission)
+                run_permission = build_permission_gate(permission_config, run_workspace_root)
                 try:
                     await asyncio.wait_for(
                         asyncio.to_thread(
@@ -1369,6 +1791,12 @@ def create_app(
                             mcp_host=mcp_host,
                             mcp_loop=mcp_loop,
                             check_permission=run_permission,
+                            network_allowlist=permission_config.network_allowlist,
+                            is_cancelled=lambda: run.is_cancelled,
+                            plan_only=req.mode is Mode.PLAN,
+                            file_locks=file_locks,
+                            project_memory=ProjectMemoryStore(run_workspace_root),
+                            hermes=hermes,
                         ),
                         timeout=resolved_settings.run_timeout_seconds,
                     )
@@ -1422,19 +1850,76 @@ def create_app(
         run.record_decision(req)
         return DecisionAck(run_id=req.run_id, kind=req.kind, decision=req.decision)
 
+    @app.post(
+        "/v1/agent/runs/{run_id}/cancel",
+        dependencies=[Depends(require_admission)],
+    )
+    async def cancel_agent_run(run_id: str) -> dict[str, object]:
+        """Cooperatively stop one run without disturbing concurrent peers."""
+        run = registry.get(run_id)
+        if run is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"unknown run: {run_id}",
+            )
+        run.cancel()
+        return {"runId": run_id, "cancelled": True}
+
     @app.get("/v1/agent/events", dependencies=[Depends(require_admission)])
     async def agent_events(
         run_id: str | None = Query(default=None, alias="runId"),
+        since_seq: int | None = Query(default=None, alias="since_seq", ge=-1),
     ) -> EventSourceResponse:
-        """Subscribe to the single ordered SSE telemetry bus (R6.1)."""
+        """Subscribe to the single ordered SSE telemetry bus (R6.1).
+
+        ``since_seq`` resumes a dropped connection: the run's buffered events
+        after that sequence number are replayed before live streaming continues,
+        so a reconnect rebuilds its feed without a gap (§9.2).
+        """
         run = registry.get(run_id) if run_id is not None else None
         return EventSourceResponse(
             _event_stream(
                 run,
                 registry=registry,
                 queue_timeout_seconds=resolved_settings.sse_queue_timeout_seconds,
+                heartbeat_seconds=resolved_settings.sse_heartbeat_seconds,
+                client_timeout_seconds=resolved_settings.sse_client_timeout_seconds,
+                since_seq=since_seq,
             )
         )
+
+    @app.get(
+        "/v1/agent/runs/{run_id}/events/replay",
+        dependencies=[Depends(require_admission)],
+    )
+    async def agent_events_replay(
+        run_id: str,
+        since_seq: int | None = Query(default=None, alias="since_seq", ge=-1),
+    ) -> dict[str, object]:
+        """Replay a run's buffered events without opening a live stream (§9.2).
+
+        Backed by the run's fixed-size circular buffer
+        (``event_replay_buffer_size`` frames, 1024 by default), so this is a
+        cheap, bounded catch-up call. Returns 404 for an unknown run: a run that
+        has fully closed *and* had its stream drained is forgotten, and the
+        durable history for that case lives at ``/v1/agent/diary``.
+        """
+        run = registry.get(run_id)
+        if run is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"unknown run: {run_id}",
+            )
+        events = run.replay(since_seq)
+        last = events[-1].get("seq") if events else since_seq
+        return {
+            "runId": run_id,
+            "sinceSeq": since_seq,
+            "lastSeq": last,
+            "closed": run.is_closed,
+            "count": len(events),
+            "events": events,
+        }
 
     @app.get("/v1/agent/diary", dependencies=[Depends(require_admission)])
     async def agent_diary(

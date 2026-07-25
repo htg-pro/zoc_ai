@@ -13,6 +13,7 @@ import re
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from typing import Literal
+from urllib.parse import urlparse
 
 __all__ = [
     "ActionRequest",
@@ -208,6 +209,7 @@ def build_permission_gate(
 
     def gate(kind: str, name: str, target: str) -> Decision:
         effective_name = target if kind == "terminal" else name
+        network_host = urlparse(target).hostname if name == "fetch_url" else None
         return evaluate_permission(
             config,
             ActionRequest(
@@ -217,6 +219,8 @@ def build_permission_gate(
                 destructive=(name == "delete_file")
                 or (kind == "terminal" and _destructive_command(target)),
                 read_only=name == "read_file",
+                network=name == "fetch_url",
+                host=network_host,
             ),
             workspace_root,
         )

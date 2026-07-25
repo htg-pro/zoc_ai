@@ -1,6 +1,8 @@
 import type { Message } from "@zoc-studio/shared-types";
-import { Bot } from "lucide-react";
-import { cn } from "@/lib/utils";
+import { Bot, MessageSquarePlus } from "lucide-react";
+import { useApp } from "@/lib/store";
+import { MarkdownMessage } from "./MarkdownMessage";
+import { FOLLOW_UP_PREFIX } from "./markdown";
 
 const ROLE_LABEL = { user: "You", assistant: "Zoc", system: "System", tool: "Tool" } as const;
 
@@ -65,21 +67,37 @@ export function MessageItem({ message }: { message: Message }) {
         <div className="mb-1 text-[10px] font-semibold tracking-wide text-[#52525B] uppercase">
           {ROLE_LABEL[message.role]}
         </div>
-        <div className={cn(
-          "text-[13px] leading-relaxed text-[#D4D4D8] whitespace-pre-wrap break-words",
-          isEmpty && "flex items-center gap-1",
-        )}>
-          {isEmpty ? (
-            <>
-              <span className="inline-block h-1.5 w-1.5 rounded-full bg-[#8b7cf6] animate-typing-dot [animation-delay:0ms]" />
-              <span className="inline-block h-1.5 w-1.5 rounded-full bg-[#8b7cf6] animate-typing-dot [animation-delay:160ms]" />
-              <span className="inline-block h-1.5 w-1.5 rounded-full bg-[#8b7cf6] animate-typing-dot [animation-delay:320ms]" />
-            </>
-          ) : (
-            message.content
-          )}
-        </div>
+        {isEmpty ? (
+          <div className="flex items-center gap-1 text-[13px] leading-relaxed text-[#D4D4D8]">
+            <span className="inline-block h-1.5 w-1.5 rounded-full bg-[#8b7cf6] animate-typing-dot [animation-delay:0ms]" />
+            <span className="inline-block h-1.5 w-1.5 rounded-full bg-[#8b7cf6] animate-typing-dot [animation-delay:160ms]" />
+            <span className="inline-block h-1.5 w-1.5 rounded-full bg-[#8b7cf6] animate-typing-dot [animation-delay:320ms]" />
+          </div>
+        ) : (
+          <>
+            <MarkdownMessage content={message.content} />
+            <FollowUpButton />
+          </>
+        )}
       </div>
     </div>
+  );
+}
+
+/**
+ * Pre-fills the Composer so the user can ask about the answer they just read
+ * without re-describing it (§12.1).
+ */
+function FollowUpButton() {
+  const setInput = useApp((s) => s.setInput);
+  return (
+    <button
+      type="button"
+      onClick={() => setInput(FOLLOW_UP_PREFIX)}
+      className="mt-1.5 inline-flex items-center gap-1 rounded px-1 py-0.5 text-[10.5px] text-[#71717A] transition-colors hover:bg-[#17171C] hover:text-[#C8C8CE]"
+    >
+      <MessageSquarePlus className="h-3 w-3" />
+      Follow-up
+    </button>
   );
 }

@@ -29,12 +29,18 @@ function isPermissionEvent(event: AgentEvent): event is AgentEvents.PermissionEv
 export function useAgentRunLifecycle(
   events: readonly AgentEvent[],
   enabled = true,
+  boundRunId?: string | null,
 ): void {
-  const runId = useApp((state) => state.runId);
+  const activeRunId = useApp((state) => state.runId);
+  const runId = boundRunId === undefined ? activeRunId : boundRunId;
   const agentMode = useApp((state) => state.agentMode);
   const activeRunMode = useApp((state) => state.activeRunMode);
+  const trackedMode = useApp(
+    (state) => (state.trackedRuns ?? []).find((run) => run.runId === runId)?.mode,
+  );
   const finishGatewayRun = useApp((state) => state.finishGatewayRun);
   const updateRunBudget = useApp((state) => state.updateRunBudget);
+  const setRunStage = useApp((state) => state.setRunStage);
   const commitAskStreamMessage = useApp((state) => state.commitAskStreamMessage);
 
   const auditedPermissionEvents = useRef(new Set<string>());
@@ -86,6 +92,16 @@ export function useAgentRunLifecycle(
     if (latestBudget) updateRunBudget(latestBudget);
   }, [enabled, events, runId, updateRunBudget]);
 
+  // Remember how far the run got. The event *type* is a fixed enum, so this is
+  // safe to report as a telemetry dimension (§11.2). The setter is treated as
+  // optional: stage tracking is telemetry-only, so a store that does not provide
+  // it (e.g. a narrow test double) must not break the run lifecycle.
+  useEffect(() => {
+    if (!enabled || !runId || typeof setRunStage !== "function") return;
+    const latest = [...events].reverse().find((event) => event.runId === runId);
+    if (latest?.type) setRunStage(latest.type, runId);
+  }, [enabled, events, runId, setRunStage]);
+
   useEffect(() => {
     if (!enabled || !runId) return;
     const terminal = events.find(
@@ -96,7 +112,7 @@ export function useAgentRunLifecycle(
     );
     if (!terminal) return;
 
-    const effectiveMode = activeRunMode ?? agentMode;
+    const effectiveMode = trackedMode ?? activeRunMode ?? agentMode;
     if (effectiveMode === "ask") {
       const askTokens = events.filter(
         (event): event is TokenEvent =>
@@ -105,7 +121,11 @@ export function useAgentRunLifecycle(
       const askText = askTokens.map((event) => event.text).join("");
       commitAskStreamMessage(runId, askText, askTokens[0]?.ts);
     }
-    finishGatewayRun(runId);
+    const phase = isStreamErrorEvent(terminal)
+      || (terminal.type === "done" && terminal.ok === false)
+      ? "failed"
+      : "done";
+    finishGatewayRun(runId, phase);
   }, [
     activeRunMode,
     agentMode,
@@ -114,5 +134,6 @@ export function useAgentRunLifecycle(
     events,
     finishGatewayRun,
     runId,
+    trackedMode,
   ]);
 }

@@ -27,7 +27,10 @@ pub struct CheckResult {
 /// Map an allow-listed kind to its argv. Returns None for unknown kinds.
 fn argv_for(kind: &str) -> Option<(&'static str, Vec<&'static str>)> {
     match kind {
-        "tsc" => Some(("npx", vec!["--no-install", "tsc", "--noEmit", "--pretty", "false"])),
+        "tsc" => Some((
+            "npx",
+            vec!["--no-install", "tsc", "--noEmit", "--pretty", "false"],
+        )),
         "eslint" => Some(("npx", vec!["--no-install", "eslint", ".", "-f", "stylish"])),
         "ruff" => Some(("ruff", vec!["check"])),
         "cargo" => Some(("cargo", vec!["check", "--message-format=short", "-q"])),

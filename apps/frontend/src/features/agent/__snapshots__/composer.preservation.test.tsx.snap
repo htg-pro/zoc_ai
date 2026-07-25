@@ -43,6 +43,17 @@ exports[`Composer preservation — chrome structure and tokens > preserves the C
           Ask
         </button>
         <button
+          class="flex items-center gap-1 px-2.5 py-1 text-[11px] rounded-md font-medium transition-all text-[#52525B] hover:text-[#A1A1AA]"
+          title="Plan: show the full plan and wait for approval before editing"
+          type="button"
+        >
+          <span
+            class="h-3 w-3"
+            data-icon="ClipboardList"
+          />
+          Plan
+        </button>
+        <button
           class="px-2.5 py-1 text-[11px] rounded-md font-medium transition-all bg-[#2A1F4E] text-[#9B6AF1] shadow-sm"
           title="Agent: full autonomy"
           type="button"
@@ -127,6 +138,17 @@ exports[`Composer preservation — chrome structure and tokens > preserves the C
           type="button"
         >
           Ask
+        </button>
+        <button
+          class="flex items-center gap-1 px-2.5 py-1 text-[11px] rounded-md font-medium transition-all text-[#52525B] hover:text-[#A1A1AA]"
+          title="Plan: show the full plan and wait for approval before editing"
+          type="button"
+        >
+          <span
+            class="h-3 w-3"
+            data-icon="ClipboardList"
+          />
+          Plan
         </button>
         <button
           class="px-2.5 py-1 text-[11px] rounded-md font-medium transition-all text-[#52525B] hover:text-[#A1A1AA]"

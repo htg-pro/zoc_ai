@@ -225,7 +225,12 @@ const defaultRecoverFromDiary: DiaryRecovery = async (url) => {
     return [];
   }
   const payload: unknown = await response.json();
-  return Array.isArray(payload) ? (payload as AgentEvent[]) : [];
+  if (Array.isArray(payload)) return payload as AgentEvent[];
+  if (payload && typeof payload === "object") {
+    const events = (payload as { events?: unknown }).events;
+    if (Array.isArray(events)) return events as AgentEvent[];
+  }
+  return [];
 };
 
 /**

@@ -306,6 +306,39 @@ pub struct TelemetryEvent {
     pub meta: serde_json::Value,
 }
 
+/// Rotate `telemetry.jsonl` once it exceeds this size (§11.2).
+const TELEMETRY_MAX_BYTES: u64 = 10 * 1024 * 1024;
+
+/// Path of the append-only telemetry store (`~/.zoc-studio/telemetry.jsonl`).
+pub fn telemetry_path() -> Result<PathBuf, String> {
+    let dir = dirs::home_dir()
+        .map(|h| h.join(".zoc-studio"))
+        .ok_or_else(|| "no home dir".to_string())?;
+    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    Ok(dir.join("telemetry.jsonl"))
+}
+
+/// Rotate the store to `telemetry.jsonl.1` when it grows past the size cap.
+///
+/// A single generation is kept deliberately: telemetry is disposable, and the
+/// point of the cap is to bound disk use, not to preserve history.
+fn rotate_if_needed(path: &Path) {
+    let Ok(meta) = std::fs::metadata(path) else {
+        return;
+    };
+    if meta.len() < TELEMETRY_MAX_BYTES {
+        return;
+    }
+    let rotated = path.with_extension("jsonl.1");
+    let _ = std::fs::rename(path, rotated);
+}
+
+/// Append one *local diagnostic* line to `~/.zoc-studio/logs/telemetry.log`.
+///
+/// This is the legacy, never-uploaded channel: its payloads may contain tool
+/// names, file paths and other workspace detail, so it deliberately writes to a
+/// different file from [`telemetry_event`] and is not readable by
+/// [`telemetry_drain`]. Nothing from this file can leave the machine.
 #[tauri::command]
 pub fn telemetry_log(event: TelemetryEvent) -> Result<(), String> {
     let cfg = load_config();
@@ -317,6 +350,26 @@ pub fn telemetry_log(event: TelemetryEvent) -> Result<(), String> {
         .ok_or_else(|| "no home dir".to_string())?;
     std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
     let path = dir.join("telemetry.log");
+    append_event_line(&path, &event)
+}
+
+/// Append one *anonymous usage* event to `~/.zoc-studio/telemetry.jsonl` (§11.2).
+///
+/// Only events from the closed frontend schema reach this file, and only this
+/// file is eligible for batch upload — that separation is what makes the
+/// "no code, no file names, no personal data" promise checkable.
+#[tauri::command]
+pub fn telemetry_event(event: TelemetryEvent) -> Result<(), String> {
+    let cfg = load_config();
+    if !cfg.telemetry_opt_in {
+        return Ok(());
+    }
+    let path = telemetry_path()?;
+    rotate_if_needed(&path);
+    append_event_line(&path, &event)
+}
+
+fn append_event_line(path: &Path, event: &TelemetryEvent) -> Result<(), String> {
     let line = serde_json::json!({
         "at": chrono::Utc::now().to_rfc3339(),
         "kind": event.kind,
@@ -325,10 +378,78 @@ pub fn telemetry_log(event: TelemetryEvent) -> Result<(), String> {
     let mut f = std::fs::OpenOptions::new()
         .create(true)
         .append(true)
-        .open(&path)
+        .open(path)
         .map_err(|e| e.to_string())?;
     use std::io::Write;
     writeln!(f, "{line}").map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+/// Local telemetry store stats, used to decide whether a batch upload is due.
+#[derive(Serialize, Debug, Default)]
+pub struct TelemetryStats {
+    pub opted_in: bool,
+    pub events: u64,
+    pub bytes: u64,
+    pub path: String,
+}
+
+#[tauri::command]
+pub fn telemetry_stats() -> TelemetryStats {
+    let cfg = load_config();
+    let Ok(path) = telemetry_path() else {
+        return TelemetryStats::default();
+    };
+    let bytes = std::fs::metadata(&path).map(|m| m.len()).unwrap_or(0);
+    let events = std::fs::read_to_string(&path)
+        .map(|text| text.lines().filter(|l| !l.trim().is_empty()).count() as u64)
+        .unwrap_or(0);
+    TelemetryStats {
+        opted_in: cfg.telemetry_opt_in,
+        events,
+        bytes,
+        path: path.to_string_lossy().to_string(),
+    }
+}
+
+/// Read and clear the pending events, returning them for upload.
+///
+/// Refuses when the user has not opted in, so a caller cannot obtain a payload
+/// to transmit without consent. Clearing on read is what makes the upload
+/// at-most-once; a failed upload loses that batch, which is the correct
+/// trade-off for disposable usage counters.
+#[tauri::command]
+pub fn telemetry_drain(limit: Option<usize>) -> Result<Vec<serde_json::Value>, String> {
+    let cfg = load_config();
+    if !cfg.telemetry_opt_in {
+        return Ok(Vec::new());
+    }
+    let path = telemetry_path()?;
+    let Ok(text) = std::fs::read_to_string(&path) else {
+        return Ok(Vec::new());
+    };
+    let cap = limit.unwrap_or(usize::MAX);
+    let events: Vec<serde_json::Value> = text
+        .lines()
+        .filter(|line| !line.trim().is_empty())
+        .filter_map(|line| serde_json::from_str(line).ok())
+        .take(cap)
+        .collect();
+    let _ = std::fs::remove_file(&path);
+    Ok(events)
+}
+
+/// Delete every locally stored telemetry event.
+#[tauri::command]
+pub fn telemetry_clear() -> Result<(), String> {
+    let path = telemetry_path()?;
+    if path.exists() {
+        std::fs::remove_file(&path).map_err(|e| e.to_string())?;
+    }
+    let rotated = path.with_extension("jsonl.1");
+    if rotated.exists() {
+        let _ = std::fs::remove_file(rotated);
+    }
     Ok(())
 }
 

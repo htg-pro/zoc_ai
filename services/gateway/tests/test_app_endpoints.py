@@ -338,3 +338,57 @@ def test_agent_run_uses_authoritative_sidecar_workspace(
         assert finished.wait(timeout=2)
 
     assert Path(str(captured["workspace_root"])).resolve() == authoritative.resolve()
+
+
+def test_agent_run_threads_workspace_network_allowlist(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured: dict[str, object] = {}
+    finished = threading.Event()
+
+    def fake_execute_run(*_args: object, **kwargs: object) -> None:
+        captured["network_allowlist"] = kwargs["network_allowlist"]
+        close = kwargs["close"]
+        assert callable(close)
+        close()
+        finished.set()
+
+    monkeypatch.setattr("zocai_gateway.app.execute_run", fake_execute_run)
+    app = create_app(workspace_root=tmp_path)
+    with TestClient(app) as test_client:
+        response = test_client.post(
+            "/v1/agent/run",
+            json={
+                "prompt": "fetch the public docs",
+                "mode": "agent",
+                "permission": {
+                    "trust": "trusted",
+                    "runMode": "all",
+                    "networkAllowlist": ["docs.example.com"],
+                },
+            },
+        )
+        assert response.status_code == 200
+        assert finished.wait(timeout=2)
+
+    assert captured["network_allowlist"] == ("docs.example.com",)
+
+
+def test_cancel_endpoint_stops_only_the_named_run() -> None:
+    app = create_app(drive=False)
+    local = TestClient(app)
+    first_id = local.post("/v1/agent/run", json={"prompt": "first", "mode": "ask"}).json()["runId"]
+    second_id = local.post("/v1/agent/run", json={"prompt": "second", "mode": "ask"}).json()[
+        "runId"
+    ]
+
+    response = local.post(f"/v1/agent/runs/{first_id}/cancel")
+
+    assert response.status_code == 200
+    assert response.json() == {"runId": first_id, "cancelled": True}
+    registry = app.state.run_registry
+    assert registry.get(first_id).is_cancelled is True
+    assert registry.get(first_id).is_closed is True
+    assert registry.get(second_id).is_cancelled is False
+    assert registry.get(second_id).is_closed is False

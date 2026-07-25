@@ -39,6 +39,7 @@ vi.mock("lucide-react", () => {
   return {
     __esModule: true,
     ArrowUp: icon("ArrowUp"),
+    ClipboardList: icon("ClipboardList"),
     Paperclip: icon("Paperclip"),
     ShieldCheck: icon("ShieldCheck"),
     Square: icon("Square"),
@@ -144,6 +145,17 @@ describe("Composer snapshot — control-bar structure (R1.2, R1.5, R1.6)", () =>
             Ask
           </button>
           <button
+            class="flex items-center gap-1 px-2.5 py-1 text-[11px] rounded-md font-medium transition-all text-[#52525B] hover:text-[#A1A1AA]"
+            title="Plan: show the full plan and wait for approval before editing"
+            type="button"
+          >
+            <span
+              class="h-3 w-3"
+              data-icon="ClipboardList"
+            />
+            Plan
+          </button>
+          <button
             class="px-2.5 py-1 text-[11px] rounded-md font-medium transition-all bg-[#2A1F4E] text-[#9B6AF1] shadow-sm"
             title="Agent: full autonomy"
             type="button"
@@ -197,6 +209,17 @@ describe("Composer snapshot — control-bar structure (R1.2, R1.5, R1.6)", () =>
             type="button"
           >
             Ask
+          </button>
+          <button
+            class="flex items-center gap-1 px-2.5 py-1 text-[11px] rounded-md font-medium transition-all text-[#52525B] hover:text-[#A1A1AA]"
+            title="Plan: show the full plan and wait for approval before editing"
+            type="button"
+          >
+            <span
+              class="h-3 w-3"
+              data-icon="ClipboardList"
+            />
+            Plan
           </button>
           <button
             class="px-2.5 py-1 text-[11px] rounded-md font-medium transition-all text-[#52525B] hover:text-[#A1A1AA]"

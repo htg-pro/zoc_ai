@@ -272,14 +272,20 @@ def test_agent_event_conforms_and_has_valid_discriminator(event: object) -> None
     assert discriminator == event.type  # type: ignore[attr-defined]
 
 
-def test_contract_defines_exactly_twelve_rendered_row_kinds() -> None:
-    """Guard: EventType is exactly the rendered row-registry domain."""
+def test_contract_defines_exactly_the_rendered_row_kinds() -> None:
+    """Guard: EventType is exactly the rendered row-registry domain.
+
+    Kept as an explicit literal list rather than a count so adding an event type
+    is a deliberate, reviewed change on both sides of the contract. ``plan-ready``
+    joined the set with Plan mode (§12.2).
+    """
     assert frozenset(
         {
             "intent",
             "thinking",
             "plan",
             "plan-update",
+            "plan-ready",
             "map-files",
             "read-files",
             "edit-file",
@@ -290,4 +296,4 @@ def test_contract_defines_exactly_twelve_rendered_row_kinds() -> None:
             "done",
         }
     ) == RENDERED_ROW_KINDS
-    assert len(RENDERED_ROW_KINDS) == 12
+    assert len(RENDERED_ROW_KINDS) == 13

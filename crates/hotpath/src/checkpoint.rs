@@ -84,7 +84,10 @@ mod tests {
     static COUNTER: AtomicU64 = AtomicU64::new(0);
 
     fn temp_repo() -> std::path::PathBuf {
-        let nanos = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
         let n = COUNTER.fetch_add(1, Ordering::Relaxed);
         let dir = std::env::temp_dir().join(format!("zoc-ckpt-{nanos}-{n}"));
         fs::create_dir_all(&dir).unwrap();
@@ -98,7 +101,10 @@ mod tests {
     #[test]
     fn clean_tree_returns_none() {
         let dir = temp_repo();
-        assert_eq!(git_checkpoint(&dir, "zoc: pre-run checkpoint").unwrap(), None);
+        assert_eq!(
+            git_checkpoint(&dir, "zoc: pre-run checkpoint").unwrap(),
+            None
+        );
         fs::remove_dir_all(&dir).ok();
     }
 
@@ -109,17 +115,26 @@ mod tests {
         assert!(is_dirty(&dir).unwrap());
 
         let hash = git_checkpoint(&dir, "zoc: pre-run checkpoint").unwrap();
-        assert!(hash.is_some(), "a dirty tree should produce a checkpoint commit");
+        assert!(
+            hash.is_some(),
+            "a dirty tree should produce a checkpoint commit"
+        );
 
         let subject = git(&dir, &["log", "-1", "--pretty=%s"]).unwrap();
         assert_eq!(subject.trim(), "zoc: pre-run checkpoint");
-        assert!(!is_dirty(&dir).unwrap(), "tree should be clean after the checkpoint");
+        assert!(
+            !is_dirty(&dir).unwrap(),
+            "tree should be clean after the checkpoint"
+        );
         fs::remove_dir_all(&dir).ok();
     }
 
     #[test]
     fn non_repo_returns_none() {
-        let nanos = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
         let dir = std::env::temp_dir().join(format!("zoc-nonrepo-{nanos}"));
         fs::create_dir_all(&dir).unwrap();
         assert_eq!(git_checkpoint(&dir, "x").unwrap(), None);

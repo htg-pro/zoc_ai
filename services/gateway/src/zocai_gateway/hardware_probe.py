@@ -28,7 +28,15 @@ import os
 from dataclasses import dataclass
 from typing import Protocol, runtime_checkable
 
-__all__ = ["HardwareProfile", "probe"]
+__all__ = [
+    "PROFILE_TIERS",
+    "HardwareProfile",
+    "HardwareSnapshot",
+    "ModelRecommendation",
+    "probe",
+    "recommend_model",
+    "snapshot",
+]
 
 # Binary gigabyte (1024^3). The OS reports memory and VRAM totals in bytes; we
 # convert with the same binary gigabyte the Rust crate and the allocator's tier
@@ -236,3 +244,311 @@ def _coerce_gb(value: object) -> float | None:
     if number <= 0.0 or number != number or number in (float("inf"), float("-inf")):
         return None
     return number
+
+
+# ── Live snapshot for the hardware monitor (§16.2) ───────────────────────────
+
+
+@dataclass(slots=True, frozen=True)
+class HardwareSnapshot:
+    """A point-in-time reading of the resources the status bar displays (§16.2).
+
+    Every field is optional-by-``None`` for the same reason as
+    :class:`HardwareProfile`: a value we could not read must be distinguishable
+    from a real zero, so the UI can hide a gauge instead of drawing "0%".
+    """
+
+    cpu_percent: float | None = None
+    ram_used_gb: float | None = None
+    ram_total_gb: float | None = None
+    gpu_vram_used_mb: int | None = None
+    gpu_vram_total_mb: int | None = None
+    llm_tokens_per_second: float | None = None
+    llm_inference_active: bool = False
+
+    def as_payload(self) -> dict[str, object]:
+        """Wire form for the SSE stream (camelCase-free, matching §16.2)."""
+        return {
+            "cpu_percent": self.cpu_percent,
+            "ram_used_gb": self.ram_used_gb,
+            "ram_total_gb": self.ram_total_gb,
+            "gpu_vram_used_mb": self.gpu_vram_used_mb,
+            "gpu_vram_total_mb": self.gpu_vram_total_mb,
+            "llm_tokens_per_second": self.llm_tokens_per_second,
+            "llm_inference_active": self.llm_inference_active,
+        }
+
+
+def snapshot(
+    *,
+    tokens_per_second: float | None = None,
+    inference_active: bool = False,
+) -> HardwareSnapshot:
+    """Read current CPU / RAM / VRAM utilisation.
+
+    ``tokens_per_second`` and ``inference_active`` are supplied by the caller
+    because only the run pipeline knows whether a model is currently generating;
+    this module deliberately does not reach into the model runtime.
+
+    Every probe is best-effort: an unreadable resource yields ``None`` rather
+    than raising, because a status-bar widget must never be able to fail a
+    request.
+    """
+    cpu = _detect_cpu_percent()
+    ram_total = _detect_system_memory_gb()
+    ram_used = _detect_used_memory_gb()
+    vram_total, vram_used = _detect_vram_mb()
+    return HardwareSnapshot(
+        cpu_percent=cpu,
+        ram_used_gb=ram_used,
+        ram_total_gb=ram_total,
+        gpu_vram_used_mb=vram_used,
+        gpu_vram_total_mb=vram_total,
+        llm_tokens_per_second=tokens_per_second,
+        llm_inference_active=inference_active,
+    )
+
+
+def _detect_cpu_percent() -> float | None:
+    """Instantaneous CPU utilisation percentage, or ``None``.
+
+    Uses ``psutil`` when present. The pure-Python fallback derives utilisation
+    from the 1-minute load average scaled by core count, which is a coarser but
+    still useful signal on POSIX hosts.
+    """
+    try:
+        import psutil
+
+        # interval=None returns the value since the previous call, which is what
+        # a polling caller wants (and never blocks).
+        return float(psutil.cpu_percent(interval=None))
+    except ImportError:
+        pass
+    except Exception:
+        return None
+
+    getloadavg = getattr(os, "getloadavg", None)
+    cpu_count = os.cpu_count() or 1
+    if callable(getloadavg):
+        try:
+            load = getloadavg()[0]
+        except OSError:
+            return None
+        return max(0.0, min(100.0, (float(load) / cpu_count) * 100.0))
+    return None
+
+
+def _detect_used_memory_gb() -> float | None:
+    """Used physical memory in GB, or ``None`` when undetectable."""
+    try:
+        import psutil
+
+        memory = psutil.virtual_memory()
+        return _bytes_to_gb(int(memory.total - memory.available))
+    except ImportError:
+        pass
+    except Exception:
+        return None
+
+    # Linux fallback: MemTotal - MemAvailable from /proc/meminfo.
+    try:
+        with open("/proc/meminfo", encoding="utf-8") as handle:
+            fields: dict[str, int] = {}
+            for line in handle:
+                key, _, rest = line.partition(":")
+                value = rest.strip().split(" ")[0]
+                if value.isdigit():
+                    fields[key] = int(value) * 1024
+        total = fields.get("MemTotal")
+        available = fields.get("MemAvailable")
+        if total and available is not None:
+            return _bytes_to_gb(total - available)
+    except OSError:
+        return None
+    return None
+
+
+def _detect_vram_mb() -> tuple[int | None, int | None]:
+    """``(total_mb, used_mb)`` VRAM, either element ``None`` when unreadable.
+
+    Prefers ``nvidia-smi`` (which reports *used* VRAM, the number the monitor
+    actually wants) and falls back to the DRM sysfs totals used by
+    :func:`_gpu_memory_gb_from_drm_sysfs`.
+    """
+    smi = _vram_from_nvidia_smi()
+    if smi is not None:
+        return smi
+
+    total_gb = _gpu_memory_gb_from_drm_sysfs()
+    if total_gb is None:
+        return (None, None)
+    return (int(total_gb * 1024), _drm_vram_used_mb())
+
+
+def _vram_from_nvidia_smi() -> tuple[int, int] | None:
+    """Query ``nvidia-smi`` for ``(total_mb, used_mb)`` of the first GPU."""
+    import shutil
+    import subprocess
+
+    binary = shutil.which("nvidia-smi")
+    if binary is None:
+        return None
+    try:
+        completed = subprocess.run(
+            [
+                binary,
+                "--query-gpu=memory.total,memory.used",
+                "--format=csv,noheader,nounits",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=2.0,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if completed.returncode != 0:
+        return None
+    first = completed.stdout.strip().splitlines()[:1]
+    if not first:
+        return None
+    parts = [piece.strip() for piece in first[0].split(",")]
+    if len(parts) < 2:
+        return None
+    try:
+        return (int(float(parts[0])), int(float(parts[1])))
+    except ValueError:
+        return None
+
+
+def _drm_vram_used_mb() -> int | None:
+    """Read used VRAM from DRM sysfs (amdgpu exposes this), or ``None``."""
+    drm_root = "/sys/class/drm"
+    try:
+        entries = os.listdir(drm_root)
+    except OSError:
+        return None
+    for name in entries:
+        if not name.startswith("card") or "-" in name:
+            continue
+        path = os.path.join(drm_root, name, "device", "mem_info_vram_used")
+        try:
+            with open(path, encoding="utf-8") as handle:
+                return int(handle.read().strip()) // (1024 * 1024)
+        except (OSError, ValueError):
+            continue
+    return None
+
+
+# ── Model recommendation for onboarding (§13.1) ──────────────────────────────
+
+
+@dataclass(slots=True, frozen=True)
+class ModelRecommendation:
+    """A concrete local-model suggestion for the detected hardware (§13.1)."""
+
+    model: str
+    quantization: str
+    #: Approximate download size, so the user can judge before committing.
+    approx_size_gb: float
+    reason: str
+    #: Suggested ``n_gpu_layers``; ``0`` means CPU-only.
+    gpu_layers: int
+
+
+#: Recommendation tiers, richest first. Each entry is
+#: ``(min_vram_gb, min_ram_gb, model, quant, size_gb, gpu_layers, reason)``.
+#: VRAM decides when a GPU is present; otherwise system RAM does, because a
+#: CPU-only host must still get a model it can actually load.
+PROFILE_TIERS: tuple[tuple[float, float, str, str, float, int, str], ...] = (
+    (
+        20.0,
+        16.0,
+        "Qwen2.5-Coder-32B-Instruct",
+        "Q4_K_M",
+        19.0,
+        999,
+        "20 GB+ of VRAM fits a 32B coder model fully on the GPU.",
+    ),
+    (
+        10.0,
+        16.0,
+        "Qwen2.5-Coder-14B-Instruct",
+        "Q4_K_M",
+        9.0,
+        999,
+        "10 GB+ of VRAM fits a 14B coder model fully on the GPU.",
+    ),
+    (
+        6.0,
+        8.0,
+        "Qwen2.5-Coder-7B-Instruct",
+        "Q4_K_M",
+        4.7,
+        999,
+        "6 GB+ of VRAM fits a 7B coder model fully on the GPU.",
+    ),
+    (
+        4.0,
+        8.0,
+        "Qwen2.5-Coder-7B-Instruct",
+        "Q4_K_S",
+        4.1,
+        24,
+        "4 GB of VRAM fits most of a 7B model; the rest runs on the CPU.",
+    ),
+    (
+        0.0,
+        16.0,
+        "Qwen2.5-Coder-7B-Instruct",
+        "Q4_K_M",
+        4.7,
+        0,
+        "No GPU detected, but 16 GB+ of RAM runs a 7B model on the CPU.",
+    ),
+    (
+        0.0,
+        8.0,
+        "Llama-3.1-8B-Instruct",
+        "Q4_K_M",
+        4.9,
+        0,
+        "8 GB of RAM runs an 8B model on the CPU — slower, but it fits.",
+    ),
+)
+
+#: Fallback for a machine below every tier (or one we could not measure).
+_SMALLEST_MODEL = ModelRecommendation(
+    model="Qwen2.5-Coder-1.5B-Instruct",
+    quantization="Q4_K_M",
+    approx_size_gb=1.1,
+    gpu_layers=0,
+    reason=(
+        "Limited or undetectable memory, so this starts with the smallest "
+        "coder model. A cloud model will feel much faster here."
+    ),
+)
+
+
+def recommend_model(profile: HardwareProfile | None) -> ModelRecommendation:
+    """Pick a local model for ``profile`` (§13.1).
+
+    Returns the smallest model when ``profile`` is ``None`` — an unmeasurable
+    machine gets a conservative suggestion rather than an optimistic one that
+    would fail to load.
+    """
+    if profile is None:
+        return _SMALLEST_MODEL
+    vram = profile.gpu_memory_gb or 0.0
+    ram = profile.system_memory_gb or 0.0
+
+    for min_vram, min_ram, model, quant, size, layers, reason in PROFILE_TIERS:
+        if vram >= min_vram and ram >= min_ram and (min_vram == 0.0 or vram > 0.0):
+            return ModelRecommendation(
+                model=model,
+                quantization=quant,
+                approx_size_gb=size,
+                gpu_layers=layers,
+                reason=reason,
+            )
+    return _SMALLEST_MODEL

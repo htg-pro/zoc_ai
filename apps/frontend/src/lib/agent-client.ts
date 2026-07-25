@@ -17,6 +17,7 @@
  * inline-edit, providers, settings, indexer, terminal, memory, permissions,
  * tools) and the slash-command list/run path the surviving UI still uses.
  */
+import type { HardwareInfo } from "@/features/onboarding/wizard-steps";
 import type {
   AgentEvent,
   CheckpointInfo,
@@ -151,6 +152,15 @@ export interface AgentClient {
   listTools(): Promise<ToolDescriptor[]>;
   listProviders(): Promise<ProviderDescriptor[]>;
   discoverModels(baseUrl: string, apiKey: string | null): Promise<DiscoveredModel[]>;
+  /** Detected hardware plus a local-model recommendation (§13.1). */
+  hardware(): Promise<HardwareInfo>;
+  /**
+   * Trailing Session_Diary events, optionally filtered to one run (§16.1).
+   *
+   * This is the durable source the trace viewer reads for a *finished* run,
+   * whose live SSE stream has already closed.
+   */
+  diary(runId?: string): Promise<Record<string, unknown>[]>;
   getSettings(): Promise<SettingsSnapshot>;
   updateSettings(req: UpdateSettingsRequest): Promise<SettingsSnapshot>;
   indexStatus(sessionId: string): Promise<IndexStatus>;
@@ -455,6 +465,13 @@ function makeClient(port: number): AgentClient {
         body: JSON.stringify({ base_url: baseUrl, api_key: apiKey }),
       });
       return res?.models ?? [];
+    },
+    hardware: () => jsonFetch<HardwareInfo>(`${v1}/hardware`),
+    diary: async (runId) => {
+      const query = runId ? `?runId=${encodeURIComponent(runId)}` : "";
+      return (
+        (await jsonFetch<Record<string, unknown>[]>(`${v1}/agent/diary${query}`)) ?? []
+      );
     },
     getSettings: () => jsonFetch<SettingsSnapshot>(`${v1}/settings`),
     updateSettings: (req) =>

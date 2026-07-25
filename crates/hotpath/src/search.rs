@@ -37,7 +37,9 @@ pub fn search<P: AsRef<Path>>(
                 continue;
             }
         }
-        let Ok(text) = fs::read_to_string(path) else { continue };
+        let Ok(text) = fs::read_to_string(path) else {
+            continue;
+        };
         for (idx, line) in text.lines().enumerate() {
             if re.is_match(line) {
                 matches.push(Match {
@@ -386,7 +388,11 @@ mod tests {
     #[test]
     fn grep_groups_by_file_with_columns() {
         let td = tempdir().unwrap();
-        fs::write(td.path().join("a.ts"), "let foo = 1;\nlet bar = foo + foo;\n").unwrap();
+        fs::write(
+            td.path().join("a.ts"),
+            "let foo = 1;\nlet bar = foo + foo;\n",
+        )
+        .unwrap();
         let res = grep(td.path(), &opts("foo"), None).unwrap();
         assert_eq!(res.files.len(), 1);
         assert_eq!(res.total, 3);

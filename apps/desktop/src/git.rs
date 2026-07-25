@@ -118,10 +118,7 @@ fn label_for(x: char, y: char) -> String {
 }
 
 fn is_conflict(x: char, y: char) -> bool {
-    matches!(
-        (x, y),
-        ('D', 'D') | ('A', 'A') | ('U', _) | (_, 'U')
-    )
+    matches!((x, y), ('D', 'D') | ('A', 'A') | ('U', _) | (_, 'U'))
 }
 
 fn parse_branch_header(line: &str, status: &mut GitStatus) {
@@ -473,9 +470,18 @@ mod tests {
         let s = parse_status(raw);
         assert_eq!(s.branch.as_deref(), Some("main"));
         // added.ts (staged), both.ts (staged side)
-        assert_eq!(s.staged.iter().map(|e| e.path.as_str()).collect::<Vec<_>>(), vec!["added.ts", "both.ts"]);
+        assert_eq!(
+            s.staged.iter().map(|e| e.path.as_str()).collect::<Vec<_>>(),
+            vec!["added.ts", "both.ts"]
+        );
         // worktree.ts + both.ts (worktree side)
-        assert_eq!(s.unstaged.iter().map(|e| e.path.as_str()).collect::<Vec<_>>(), vec!["worktree.ts", "both.ts"]);
+        assert_eq!(
+            s.unstaged
+                .iter()
+                .map(|e| e.path.as_str())
+                .collect::<Vec<_>>(),
+            vec!["worktree.ts", "both.ts"]
+        );
         assert_eq!(s.untracked.len(), 1);
         assert_eq!(s.untracked[0].path, "new.ts");
         assert_eq!(s.conflicts.len(), 1);

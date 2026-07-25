@@ -28,6 +28,8 @@ up.
 
 from __future__ import annotations
 
+import hashlib
+import logging
 import math
 import os
 import re
@@ -43,6 +45,7 @@ from zocai_gateway.model_interface import ModelTier
 __all__ = [
     "MAX_FRAGMENTS",
     "RELEVANCE_THRESHOLD",
+    "SHARD_COUNT",
     "BM25Index",
     "FragmentSource",
     "InjectedContext",
@@ -53,12 +56,16 @@ __all__ = [
     "RagMatcher",
     "ScanHook",
     "Scorer",
+    "ShardFragmentLoader",
+    "ShardStats",
+    "ShardedFragmentIndex",
     "WorkspaceRagMatcher",
     "cosine_sim",
     "default_scorer",
     "hybrid_rank",
     "hybrid_search",
     "rrf",
+    "shard_for_path",
 ]
 
 # Minimum relevance for a fragment to be retained, on a 0.0-1.0 scale (R8.1).
@@ -66,6 +73,14 @@ RELEVANCE_THRESHOLD = 0.7
 
 # Maximum number of fragments the matcher ever returns (R8.1).
 MAX_FRAGMENTS = 50
+
+# Number of shards the fragment/embedding index is split into (§9.1). Files are
+# assigned by ``hash(path) mod SHARD_COUNT``, so a search that can narrow its
+# candidate set to a handful of paths only materialises the shards those paths
+# live in instead of the whole index.
+SHARD_COUNT = 64
+
+logger = logging.getLogger(__name__)
 
 # Tokens used both for scoring and for the lightweight dependency scan.
 _TOKEN_RE = re.compile(r"[A-Za-z0-9_]+")
@@ -373,6 +388,223 @@ def hybrid_search(
     return [chunks[index] for index, _score in ranked]
 
 
+# ── Sharded, lazily-loaded fragment index (§9.1) ─────────────────────────────
+
+#: Materialises the fragments for the paths belonging to a single shard. This is
+#: the seam the on-disk / embedding-backed store binds to; the workspace matcher
+#: supplies a reader that loads file text from disk.
+ShardFragmentLoader = Callable[[Sequence[str]], Sequence["RagFragment"]]
+
+
+def shard_for_path(path: str, shard_count: int = SHARD_COUNT) -> int:
+    """Return the shard id owning ``path`` (§9.1).
+
+    Uses BLAKE2b rather than :func:`hash` because ``hash`` of a ``str`` is
+    salted per process (``PYTHONHASHSEED``): a salted assignment would move
+    files between shards on every restart, invalidating any persisted shard and
+    making the mapping untestable. BLAKE2b keeps the assignment stable across
+    processes and platforms while spreading paths evenly.
+    """
+    if shard_count <= 0:
+        raise ValueError("shard_count must be positive")
+    digest = hashlib.blake2b(path.encode("utf-8", "surrogatepass"), digest_size=8)
+    return int.from_bytes(digest.digest(), "big") % shard_count
+
+
+@dataclass(frozen=True, slots=True)
+class ShardStats:
+    """Occupancy snapshot of a :class:`ShardedFragmentIndex`.
+
+    :attr:`resident_shards` is the number of shards currently materialised in
+    memory — the figure that makes the ~64x reduction observable: a search
+    narrowed to one shard leaves ``resident_shards == 1`` instead of 64.
+    """
+
+    shard_count: int
+    registered_paths: int
+    populated_shards: int
+    resident_shards: int
+    resident_fragments: int
+    shard_loads: int
+
+
+class ShardedFragmentIndex:
+    """A fragment index split into ``shard_count`` independently loaded shards.
+
+    Membership (which path lives in which shard) is cheap and always resident:
+    it is derived from the path itself via :func:`shard_for_path`, so
+    registering 100k paths costs only the path strings. Fragment *content* is
+    the expensive part, and it is loaded per shard, on demand, by the injected
+    :data:`ShardFragmentLoader`.
+
+    :meth:`search` is the point of the design: given candidate paths it loads
+    only the shards those paths hash into. With 64 shards, a query narrowed to
+    a few files touches one or two shards, so resident memory is roughly
+    ``1/64`` of the full index (§9.1).
+
+    ``max_resident_shards`` bounds how many shards stay materialised; the
+    least-recently-used shard is evicted past that point, so long-lived
+    processes cannot accumulate the whole index one narrow query at a time.
+    """
+
+    def __init__(
+        self,
+        *,
+        loader: ShardFragmentLoader,
+        shard_count: int = SHARD_COUNT,
+        max_resident_shards: int | None = None,
+    ) -> None:
+        if shard_count <= 0:
+            raise ValueError("shard_count must be positive")
+        if max_resident_shards is not None and max_resident_shards <= 0:
+            raise ValueError("max_resident_shards must be positive when set")
+        self._loader = loader
+        self._shard_count = shard_count
+        self._max_resident_shards = max_resident_shards
+        self._membership: dict[int, dict[str, None]] = {}
+        self._resident: dict[int, tuple[RagFragment, ...]] = {}
+        self._recency: list[int] = []
+        self._shard_loads = 0
+
+    @property
+    def shard_count(self) -> int:
+        return self._shard_count
+
+    def register(self, paths: Iterable[str]) -> None:
+        """Record ``paths`` as index members without loading their content.
+
+        This is the lazy-index entry point: enumeration is O(paths) in memory
+        and performs no reads, so a 100k-file monorepo can be "indexed" at
+        startup and only pay for content when a shard is actually searched.
+        """
+        for path in paths:
+            bucket = self._membership.setdefault(
+                shard_for_path(path, self._shard_count), {}
+            )
+            bucket.setdefault(path, None)
+
+    def paths_in_shard(self, shard_id: int) -> tuple[str, ...]:
+        """Registered paths belonging to ``shard_id`` (sorted, deterministic)."""
+        return tuple(sorted(self._membership.get(shard_id, {})))
+
+    def shard_ids_for(self, paths: Iterable[str]) -> tuple[int, ...]:
+        """Sorted shard ids that ``paths`` hash into."""
+        return tuple(sorted({shard_for_path(p, self._shard_count) for p in paths}))
+
+    def is_resident(self, shard_id: int) -> bool:
+        return shard_id in self._resident
+
+    def load_shard(self, shard_id: int) -> tuple[RagFragment, ...]:
+        """Materialise ``shard_id``, reusing an already-resident copy.
+
+        A loader failure yields an empty shard rather than raising: one
+        unreadable file must not make retrieval fail for the whole workspace.
+        """
+        resident = self._resident.get(shard_id)
+        if resident is not None:
+            self._touch(shard_id)
+            return resident
+
+        paths = self.paths_in_shard(shard_id)
+        if not paths:
+            return ()
+        try:
+            fragments = tuple(self._loader(paths))
+        except Exception:  # pragma: no cover - defensive loader boundary
+            logger.warning("shard %d failed to load", shard_id, exc_info=True)
+            fragments = ()
+        self._shard_loads += 1
+        self._resident[shard_id] = fragments
+        self._touch(shard_id)
+        self._enforce_residency_cap()
+        return fragments
+
+    def fragments_for_paths(self, paths: Iterable[str]) -> tuple[RagFragment, ...]:
+        """Fragments for ``paths``, loading only the shards they live in."""
+        wanted = {str(p) for p in paths}
+        if not wanted:
+            return ()
+        out: list[RagFragment] = []
+        for shard_id in self.shard_ids_for(wanted):
+            out.extend(f for f in self.load_shard(shard_id) if f.path in wanted)
+        out.sort(key=lambda fragment: fragment.path)
+        return tuple(out)
+
+    def search(
+        self,
+        query: str,
+        *,
+        candidate_paths: Iterable[str] | None = None,
+        scorer: Scorer = default_scorer,
+        threshold: float = RELEVANCE_THRESHOLD,
+        max_fragments: int = MAX_FRAGMENTS,
+    ) -> tuple[RagFragment, ...]:
+        """Score the candidate shards' fragments against ``query`` (§9.1).
+
+        ``candidate_paths`` is the narrowing signal: only the shards those paths
+        hash into are loaded. Passing ``None`` searches every populated shard,
+        which is the correct-but-expensive fallback used when nothing narrows
+        the query.
+        """
+        if candidate_paths is None:
+            shard_ids = tuple(sorted(self._membership))
+            wanted: set[str] | None = None
+        else:
+            wanted = {str(p) for p in candidate_paths}
+            if not wanted:
+                return ()
+            shard_ids = self.shard_ids_for(wanted)
+
+        scored: list[RagFragment] = []
+        for shard_id in shard_ids:
+            for fragment in self.load_shard(shard_id):
+                if wanted is not None and fragment.path not in wanted:
+                    continue
+                score = _clamp_unit(scorer(query, fragment.content))
+                if score >= threshold:
+                    scored.append(
+                        RagFragment(
+                            path=fragment.path,
+                            content=fragment.content,
+                            score=score,
+                            source=fragment.source,
+                        )
+                    )
+        scored.sort(key=lambda fragment: (-fragment.score, fragment.path))
+        return tuple(scored[:max_fragments])
+
+    def evict(self, shard_id: int) -> None:
+        self._resident.pop(shard_id, None)
+        if shard_id in self._recency:
+            self._recency.remove(shard_id)
+
+    def evict_all(self) -> None:
+        self._resident.clear()
+        self._recency.clear()
+
+    def stats(self) -> ShardStats:
+        return ShardStats(
+            shard_count=self._shard_count,
+            registered_paths=sum(len(bucket) for bucket in self._membership.values()),
+            populated_shards=len(self._membership),
+            resident_shards=len(self._resident),
+            resident_fragments=sum(len(f) for f in self._resident.values()),
+            shard_loads=self._shard_loads,
+        )
+
+    def _touch(self, shard_id: int) -> None:
+        if shard_id in self._recency:
+            self._recency.remove(shard_id)
+        self._recency.append(shard_id)
+
+    def _enforce_residency_cap(self) -> None:
+        cap = self._max_resident_shards
+        if cap is None:
+            return
+        while len(self._resident) > cap and self._recency:
+            self.evict(self._recency[0])
+
+
 class WorkspaceRagMatcher:
     """Scans for relevant fragments and shapes them per model tier.
 
@@ -392,6 +624,9 @@ class WorkspaceRagMatcher:
         scorer: Scorer = default_scorer,
         threshold: float = RELEVANCE_THRESHOLD,
         max_fragments: int = MAX_FRAGMENTS,
+        lazy: bool = False,
+        shard_count: int = SHARD_COUNT,
+        max_resident_shards: int | None = 8,
     ) -> None:
         """Create a matcher.
 
@@ -404,6 +639,13 @@ class WorkspaceRagMatcher:
         :param scorer: Per-fragment scorer used when no ``scan_hook`` is bound.
         :param threshold: Minimum retained relevance (defaults to ``0.7``).
         :param max_fragments: Hard cap on returned fragments (defaults to 50).
+        :param lazy: When true, :meth:`extract` performs no eager read pass.
+            Paths are enumerated once into a :class:`ShardedFragmentIndex` and
+            file content is read only for the shards a query actually needs
+            (§9.1, the ``--lazy-index`` posture).
+        :param shard_count: Number of shards used in lazy mode.
+        :param max_resident_shards: How many shards may stay materialised in
+            lazy mode before the least-recently-used one is evicted.
         """
         self._folders = tuple(folders)
         self._open_buffers = tuple(open_buffers)
@@ -411,14 +653,140 @@ class WorkspaceRagMatcher:
         self._scorer = scorer
         self._threshold = threshold
         self._max_fragments = max_fragments
+        self.lazy = lazy
+        self._shard_count = shard_count
+        self._shard_index: ShardedFragmentIndex | None = (
+            ShardedFragmentIndex(
+                loader=self._load_shard_fragments,
+                shard_count=shard_count,
+                max_resident_shards=max_resident_shards,
+            )
+            if lazy
+            else None
+        )
+        self._shards_registered = False
 
     # -- protocol entrypoint ---------------------------------------------
 
     def extract(self, query: str) -> tuple[RagFragment, ...]:
-        """Scan the configured folders/buffers for ``query`` (R8.1)."""
+        """Scan the configured folders/buffers for ``query`` (R8.1).
+
+        In lazy mode this routes through the sharded index so only the shards
+        holding candidate paths are read (§9.1); otherwise it performs the
+        original eager scan.
+        """
+        if self._shard_index is not None:
+            return self._extract_sharded(query)
         return self.scan(
             query, folders=self._folders, open_buffers=self._open_buffers
         )
+
+    # -- lazy / sharded retrieval (§9.1) ----------------------------------
+
+    @property
+    def shard_index(self) -> ShardedFragmentIndex | None:
+        """The sharded index backing lazy mode, or ``None`` when eager."""
+        return self._shard_index
+
+    def register_paths(self, paths: Iterable[str]) -> None:
+        """Add ``paths`` to the lazy shard index without reading them.
+
+        Used when the agent touches a file the initial enumeration missed (a
+        freshly created file), so it becomes retrievable on the next query.
+        No-op when the matcher is eager.
+        """
+        if self._shard_index is not None:
+            self._shard_index.register(paths)
+
+    def _extract_sharded(self, query: str) -> tuple[RagFragment, ...]:
+        index = self._shard_index
+        assert index is not None  # guarded by the caller
+        self._ensure_shards_registered()
+
+        candidates = self._narrow_candidates(query, index)
+        fragments = index.search(
+            query,
+            candidate_paths=candidates,
+            scorer=self._scorer,
+            threshold=self._threshold,
+            max_fragments=self._max_fragments,
+        )
+        # Open buffers are always in play: they may hold unsaved edits that no
+        # shard on disk reflects, and they are cheap (already in memory).
+        buffer_hits = self._score_buffers(query)
+        merged = list(fragments) + [
+            f for f in buffer_hits if all(f.path != kept.path for kept in fragments)
+        ]
+        merged.sort(key=lambda fragment: (-fragment.score, fragment.path))
+        return tuple(merged[: self._max_fragments])
+
+    def _ensure_shards_registered(self) -> None:
+        """Enumerate workspace paths into shards once, without reading them."""
+        index = self._shard_index
+        if index is None or self._shards_registered:
+            return
+        for folder in self._folders:
+            index.register(str(p) for p in _iter_text_files(folder))
+        self._shards_registered = True
+
+    def _narrow_candidates(
+        self, query: str, index: ShardedFragmentIndex
+    ) -> tuple[str, ...] | None:
+        """Pick the candidate paths whose shards are worth loading.
+
+        The narrowing signal is path-name overlap with the query's tokens
+        (``"fix the rag matcher"`` → paths containing ``rag`` or ``matcher``).
+        When nothing matches we return ``None``, which makes the search fall
+        back to every populated shard — correct, just not cheap. This keeps
+        recall identical to the eager scan while making the common, specific
+        query touch one or two shards.
+        """
+        tokens = {t for t in _tokenize(query) if len(t) >= 3}
+        if not tokens:
+            return None
+        matches = [
+            path
+            for shard_id in range(index.shard_count)
+            for path in index.paths_in_shard(shard_id)
+            if tokens & set(_tokenize(path))
+        ]
+        return tuple(matches) if matches else None
+
+    def _load_shard_fragments(self, paths: Sequence[str]) -> list[RagFragment]:
+        """Read one shard's files into unscored fragments (the shard loader)."""
+        loaded: list[RagFragment] = []
+        for path in paths:
+            content = _read_text(Path(path))
+            if content is None:
+                continue
+            loaded.append(
+                RagFragment(
+                    path=path,
+                    content=content,
+                    score=0.0,
+                    source=FragmentSource.FOLDER,
+                )
+            )
+        return loaded
+
+    def _score_buffers(self, query: str) -> tuple[RagFragment, ...]:
+        """Score the in-memory open buffers, independent of any shard."""
+        if not self._open_buffers:
+            return ()
+        candidates = [(b.path, b.content) for b in self._open_buffers]
+        scores = self._score(query, candidates)
+        out = [
+            RagFragment(
+                path=path,
+                content=content,
+                score=_clamp_unit(raw),
+                source=FragmentSource.BUFFER,
+            )
+            for (path, content), raw in zip(candidates, scores, strict=True)
+            if _clamp_unit(raw) >= self._threshold
+        ]
+        out.sort(key=lambda fragment: (-fragment.score, fragment.path))
+        return tuple(out)
 
     # -- scanning ---------------------------------------------------------
 

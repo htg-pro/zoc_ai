@@ -13,10 +13,12 @@ import {
   Folder,
   FolderOpen,
   FolderPlus,
+  MoreHorizontal,
   Pencil,
   RefreshCw,
   Trash2,
 } from "lucide-react";
+import { useVirtualizer } from "@tanstack/react-virtual";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Button } from "@/components/ui/button";
 import {
@@ -39,6 +41,14 @@ import {
 } from "@/lib/tauri-bridge";
 import { basename, isWithin, sepOf } from "@/lib/paths";
 import { cn } from "@/lib/utils";
+import {
+  ROW_HEIGHT,
+  flattenTree,
+  indentFor,
+  revealMore,
+  type EditState,
+  type TreeRow,
+} from "./file-tree-rows";
 
 function fileIcon(name: string, isDir: boolean) {
   if (isDir) return null;
@@ -160,11 +170,6 @@ function MockTreeNode({
   );
 }
 
-type EditState =
-  | { kind: "rename"; path: string }
-  | { kind: "newfile" | "newfolder"; dir: string }
-  | null;
-
 interface NodeHandlers {
   onOpen: (path: string) => void;
   onToggle: (path: string) => void | Promise<void>;
@@ -260,10 +265,12 @@ function LiveFileTree({ root }: { root: string }) {
 
   const [expanded, setExpanded] = useState<Record<string, boolean>>({ [root]: true });
   const [children, setChildren] = useState<Record<string, LiveFileNode[]>>({});
+  const [limits, setLimits] = useState<Record<string, number>>({});
   const [version, setVersion] = useState(0);
   const [menu, setMenu] = useState<{ node: LiveFileNode | null; x: number; y: number } | null>(null);
   const [edit, setEdit] = useState<EditState>(null);
   const [confirmDelete, setConfirmDelete] = useState<LiveFileNode | null>(null);
+  const scrollRef = useRef<HTMLDivElement>(null);
 
   const refresh = useCallback(async (path: string) => {
     const nodes = await fsListDir(path, 1);
@@ -345,8 +352,22 @@ function LiveFileTree({ root }: { root: string }) {
     setEdit({ kind, dir: target });
   };
 
-  const rootChildren = children[root] ?? [];
-  const rootCreate = edit && edit.kind !== "rename" && edit.dir === root ? edit : null;
+  const rows = useMemo(
+    () => flattenTree({ root, children, expanded, limits, edit }),
+    [root, children, expanded, limits, edit],
+  );
+
+  const virtualizer = useVirtualizer({
+    count: rows.length,
+    getScrollElement: () => scrollRef.current,
+    estimateSize: () => ROW_HEIGHT,
+    overscan: 12,
+    getItemKey: (index) => rows[index]?.key ?? index,
+  });
+
+  const loadMore = useCallback((dir: string) => {
+    setLimits((current) => revealMore(current, dir));
+  }, []);
 
   return (
     <div className="flex h-full min-h-0 flex-col">
@@ -356,43 +377,50 @@ function LiveFileTree({ root }: { root: string }) {
         onRefresh={() => void refreshAll()}
         onCollapseAll={() => setExpanded({ [root]: true })}
       />
-      <ScrollArea className="h-full min-h-0">
-        <div
-          className="px-1 py-1 text-sm"
-          onContextMenu={(e) => handlers.onMenu(e, null)}
-          onDragOver={(e) => e.preventDefault()}
-          onDrop={(e) => {
-            const from = e.dataTransfer.getData("text/zoc-path");
-            if (from) handlers.onMove(from, root);
-          }}
-        >
-          {rootCreate && (
-            <InlineInput
-              kind={rootCreate.kind}
-              depth={0}
-              onSubmit={handlers.onSubmitEdit}
-              onCancel={handlers.onCancelEdit}
-            />
-          )}
-          {rootChildren.map((n) => (
-            <LiveTreeNode
-              key={n.path}
-              node={n}
-              depth={0}
-              expanded={expanded}
-              children_={children}
-              handlers={handlers}
-              activeFile={activeFile}
-              edit={edit}
-            />
-          ))}
-          {rootChildren.length === 0 && !rootCreate && (
-            <div className="px-2 py-6 text-center text-[11px] text-muted-foreground">
-              Empty folder. Use the toolbar to create a file or folder.
-            </div>
-          )}
-        </div>
-      </ScrollArea>
+      {/*
+        A plain scroll container rather than the shadcn ScrollArea: the
+        virtualizer must own the scroll element to map scrollTop → row range,
+        and ScrollArea nests its own viewport node in between.
+      */}
+      <div
+        ref={scrollRef}
+        data-testid="file-tree-viewport"
+        className="h-full min-h-0 flex-1 overflow-y-auto overflow-x-hidden px-1 py-1 text-sm"
+        onContextMenu={(e) => handlers.onMenu(e, null)}
+        onDragOver={(e) => e.preventDefault()}
+        onDrop={(e) => {
+          const from = e.dataTransfer.getData("text/zoc-path");
+          if (from) handlers.onMove(from, root);
+        }}
+      >
+        {rows.length === 0 ? (
+          <div className="px-2 py-6 text-center text-[11px] text-muted-foreground">
+            Empty folder. Use the toolbar to create a file or folder.
+          </div>
+        ) : (
+          <div className="relative w-full" style={{ height: virtualizer.getTotalSize() }}>
+            {virtualizer.getVirtualItems().map((item) => {
+              const row = rows[item.index];
+              if (!row) return null;
+              return (
+                <div
+                  key={item.key}
+                  className="absolute left-0 top-0 w-full"
+                  style={{ height: item.size, transform: `translateY(${item.start}px)` }}
+                >
+                  <TreeRowView
+                    row={row}
+                    handlers={handlers}
+                    activeFile={activeFile}
+                    expanded={expanded}
+                    onLoadMore={loadMore}
+                  />
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
 
       {menu && (
         <NodeContextMenu
@@ -457,37 +485,97 @@ function LiveFileTree({ root }: { root: string }) {
   );
 }
 
-interface LiveNodeProps {
-  node: LiveFileNode;
-  depth: number;
-  expanded: Record<string, boolean>;
-  children_: Record<string, LiveFileNode[]>;
+/**
+ * Render one flat row. Nothing here recurses: nesting is expressed purely by
+ * `row.depth` (indentation), which is what lets the virtualizer mount only the
+ * handful of rows inside the viewport.
+ */
+function TreeRowView({
+  row,
+  handlers,
+  activeFile,
+  expanded,
+  onLoadMore,
+}: {
+  row: TreeRow;
   handlers: NodeHandlers;
   activeFile: string | null;
-  edit: EditState;
-}
-
-function LiveTreeNode({ node, depth, expanded, children_, handlers, activeFile, edit }: LiveNodeProps) {
-  const indent = useMemo(() => ({ paddingLeft: `${depth * 12 + 6}px` }), [depth]);
-  const renaming = edit?.kind === "rename" && edit.path === node.path;
-
-  if (renaming) {
+  expanded: Record<string, boolean>;
+  onLoadMore: (dir: string) => void;
+}) {
+  if (row.kind === "input") {
     return (
       <InlineInput
-        kind={node.kind === "dir" ? "newfolder" : "newfile"}
-        depth={depth}
-        initial={node.name}
+        kind={row.inputKind}
+        depth={row.depth}
         onSubmit={handlers.onSubmitEdit}
         onCancel={handlers.onCancelEdit}
       />
     );
   }
 
-  if (node.kind === "dir") {
-    const isOpen = !!expanded[node.path];
-    const creatingHere = edit && edit.kind !== "rename" && edit.dir === node.path ? edit : null;
+  if (row.kind === "rename") {
     return (
-      <div
+      <InlineInput
+        kind={row.node.kind === "dir" ? "newfolder" : "newfile"}
+        depth={row.depth}
+        initial={row.node.name}
+        onSubmit={handlers.onSubmitEdit}
+        onCancel={handlers.onCancelEdit}
+      />
+    );
+  }
+
+  if (row.kind === "load-more") {
+    const remaining = row.total - row.shown;
+    return (
+      <button
+        type="button"
+        onClick={() => onLoadMore(row.dir)}
+        className="flex w-full items-center gap-1.5 rounded py-0.5 text-left text-[11px] text-muted-foreground hover:bg-accent/60 hover:text-foreground"
+        style={{ paddingLeft: `${indentFor(row.depth)}px` }}
+      >
+        <MoreHorizontal className="h-3.5 w-3.5" />
+        <span className="truncate">
+          Load more… ({row.shown.toLocaleString()} of {row.total.toLocaleString()},{" "}
+          {remaining.toLocaleString()} hidden)
+        </span>
+      </button>
+    );
+  }
+
+  return (
+    <LiveTreeRow
+      node={row.node}
+      depth={row.depth}
+      isOpen={!!expanded[row.node.path]}
+      handlers={handlers}
+      activeFile={activeFile}
+    />
+  );
+}
+
+function LiveTreeRow({
+  node,
+  depth,
+  isOpen,
+  handlers,
+  activeFile,
+}: {
+  node: LiveFileNode;
+  depth: number;
+  isOpen: boolean;
+  handlers: NodeHandlers;
+  activeFile: string | null;
+}) {
+  const indent = useMemo(() => ({ paddingLeft: `${indentFor(depth)}px` }), [depth]);
+
+  if (node.kind === "dir") {
+    return (
+      <button
+        type="button"
+        draggable
+        onDragStart={(e) => e.dataTransfer.setData("text/zoc-path", node.path)}
         onDragOver={(e) => {
           e.preventDefault();
           e.stopPropagation();
@@ -497,48 +585,23 @@ function LiveTreeNode({ node, depth, expanded, children_, handlers, activeFile, 
           const from = e.dataTransfer.getData("text/zoc-path");
           if (from) handlers.onMove(from, node.path);
         }}
+        onClick={() => handlers.onToggle(node.path)}
+        onContextMenu={(e) => handlers.onMenu(e, node)}
+        aria-expanded={isOpen}
+        className="flex w-full items-center gap-1 rounded py-0.5 text-left text-xs text-sidebar-foreground/90 hover:bg-accent/60"
+        style={indent}
       >
-        <button
-          type="button"
-          draggable
-          onDragStart={(e) => e.dataTransfer.setData("text/zoc-path", node.path)}
-          onClick={() => handlers.onToggle(node.path)}
-          onContextMenu={(e) => handlers.onMenu(e, node)}
-          className="flex w-full items-center gap-1 rounded py-0.5 text-left text-xs text-sidebar-foreground/90 hover:bg-accent/60"
-          style={indent}
-        >
-          <ChevronRight className={cn("h-3 w-3 transition-transform", isOpen && "rotate-90")} />
-          {isOpen ? (
-            <FolderOpen className="h-3.5 w-3.5 text-primary/80" />
-          ) : (
-            <Folder className="h-3.5 w-3.5 text-muted-foreground" />
-          )}
-          <span className="truncate">{node.name}</span>
-        </button>
-        {isOpen && creatingHere && (
-          <InlineInput
-            kind={creatingHere.kind}
-            depth={depth + 1}
-            onSubmit={handlers.onSubmitEdit}
-            onCancel={handlers.onCancelEdit}
-          />
+        <ChevronRight className={cn("h-3 w-3 transition-transform", isOpen && "rotate-90")} />
+        {isOpen ? (
+          <FolderOpen className="h-3.5 w-3.5 text-primary/80" />
+        ) : (
+          <Folder className="h-3.5 w-3.5 text-muted-foreground" />
         )}
-        {isOpen &&
-          (children_[node.path] ?? []).map((child) => (
-            <LiveTreeNode
-              key={child.path}
-              node={child}
-              depth={depth + 1}
-              expanded={expanded}
-              children_={children_}
-              handlers={handlers}
-              activeFile={activeFile}
-              edit={edit}
-            />
-          ))}
-      </div>
+        <span className="truncate">{node.name}</span>
+      </button>
     );
   }
+
   const active = activeFile === node.path;
   return (
     <button

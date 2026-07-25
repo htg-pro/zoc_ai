@@ -21,7 +21,7 @@ import {
 
 function Consumer({ label }: { label: string }) {
   const stream = useAgentStreamContext();
-  return <span>{label}:{stream?.status ?? "missing"}</span>;
+  return <span>{label}:{stream?.status ?? "missing"}:{stream?.events.length ?? 0}</span>;
 }
 
 beforeEach(() => {
@@ -29,14 +29,23 @@ beforeEach(() => {
   resetAgentEditBridgeForTests();
   mocks.useAgentStream.mockReset();
   mocks.useAgentStream.mockReturnValue({ events: [], status: "open" });
+  window.history.replaceState({}, "", "/");
   useApp.setState({
     runId: "shared-run",
+    focusedRunId: "shared-run",
+    trackedRuns: [{
+      runId: "shared-run",
+      mode: "agent",
+      phase: "running",
+      title: "Shared run",
+      startedAt: 1,
+    }],
     agentMode: "agent",
     activeRunMode: "agent",
   });
 });
 
-test("one provider subscription serves multiple consumers", () => {
+test("one provider subscription serves multiple consumers", async () => {
   render(
     <AgentStreamProvider>
       <Consumer label="feed" />
@@ -44,17 +53,25 @@ test("one provider subscription serves multiple consumers", () => {
     </AgentStreamProvider>,
   );
 
-  expect(screen.getByText("feed:open")).toBeTruthy();
-  expect(screen.getByText("terminal:open")).toBeTruthy();
-  expect(mocks.useAgentStream).toHaveBeenCalledTimes(1);
+  await waitFor(() => expect(screen.getByText("feed:open:0")).toBeTruthy());
+  expect(screen.getByText("terminal:open:0")).toBeTruthy();
   expect(mocks.useAgentStream).toHaveBeenCalledWith({
     runId: "shared-run",
     enabled: true,
   });
 });
 
-test("finalizes a run even when the Agent feed is not mounted", () => {
-  useApp.setState({ runId: "hidden-panel-run" });
+test("finalizes a run even when the Agent feed is not mounted", async () => {
+  useApp.setState({
+    runId: "hidden-panel-run",
+    trackedRuns: [{
+      runId: "hidden-panel-run",
+      mode: "agent",
+      phase: "running",
+      title: "Hidden panel run",
+      startedAt: 1,
+    }],
+  });
   mocks.useAgentStream.mockReturnValue({
     events: [
       {
@@ -74,8 +91,8 @@ test("finalizes a run even when the Agent feed is not mounted", () => {
     </AgentStreamProvider>,
   );
 
-  expect(screen.getByText("terminal:closed")).toBeTruthy();
-  expect(useApp.getState().runId).toBeNull();
+  await waitFor(() => expect(useApp.getState().runId).toBeNull());
+  expect(useApp.getState().trackedRuns[0]?.phase).toBe("done");
 });
 
 test("records run-scoped permission events once in the security audit", () => {
@@ -159,4 +176,56 @@ test("dispatches staged approved edits when post-commit summary arrives", async 
     }),
   );
   unregister();
+});
+
+
+test("opens one stream per concurrent run and aggregates their events", async () => {
+  useApp.setState({
+    runId: "run-b",
+    trackedRuns: [
+      { runId: "run-a", mode: "agent", phase: "running", title: "A", startedAt: 1 },
+      { runId: "run-b", mode: "ask", phase: "running", title: "B", startedAt: 2 },
+    ],
+  });
+  mocks.useAgentStream.mockImplementation(({ runId }: { runId?: string | null }) => ({
+    events: runId
+      ? [{ type: "token", seq: 1, runId, ts: "2026-01-01T00:00:00.000Z", text: runId }]
+      : [],
+    status: "open",
+  }));
+
+  render(
+    <AgentStreamProvider>
+      <Consumer label="feed" />
+    </AgentStreamProvider>,
+  );
+
+  await waitFor(() => expect(screen.getByText("feed:open:2")).toBeTruthy());
+  const subscribedRunIds = new Set(
+    mocks.useAgentStream.mock.calls.map(([options]) => options.runId),
+  );
+  expect(subscribedRunIds).toEqual(new Set(["run-a", "run-b"]));
+});
+
+test("shared viewers use the host origin and token on live and replay routes", async () => {
+  window.history.replaceState({}, "", "/?token=secret%20token&runId=shared-run");
+  useApp.setState({ runId: null, trackedRuns: [], focusedRunId: null });
+
+  render(
+    <AgentStreamProvider>
+      <Consumer label="viewer" />
+    </AgentStreamProvider>,
+  );
+
+  const options = mocks.useAgentStream.mock.calls.find(
+    ([candidate]) => candidate.runId === "shared-run",
+  )?.[0];
+  expect(options).toBeDefined();
+  expect(options!).toMatchObject({
+    runId: "shared-run",
+    enabled: true,
+    eventsUrl: "/v1/agent/events?token=secret%20token",
+    diaryUrl: "/v1/agent/runs/shared-run/events/replay?token=secret%20token",
+  });
+  await expect(options!.resolveBaseUrl?.()).resolves.toBe(window.location.origin);
 });

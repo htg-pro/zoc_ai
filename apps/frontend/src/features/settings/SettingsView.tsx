@@ -3,6 +3,7 @@ import {
   Blocks,
   Cpu,
   Database,
+  HeartPulse,
   Info,
   KeyRound,
   Keyboard,
@@ -12,6 +13,7 @@ import {
   Search,
   ShieldAlert,
   ShieldCheck,
+  ShieldOff,
   SlidersHorizontal,
   UserCog,
 } from "lucide-react";
@@ -30,6 +32,8 @@ import { McpSection } from "./sections/Mcp";
 import { ExtensionsSection } from "./sections/Extensions";
 import { TrustSection } from "./sections/Trust";
 import { AuditLogSection } from "./sections/AuditLog";
+import { DiagnosticsSection } from "./sections/Diagnostics";
+import { PrivacySection } from "./sections/Privacy";
 import { AboutSection } from "./sections/About";
 import { cn } from "@/lib/utils";
 
@@ -41,6 +45,8 @@ type Tab =
   | "permissions"
   | "trust"
   | "audit-log"
+  | "diagnostics"
+  | "privacy"
   | "appearance"
   | "keybindings"
   | "profiles"
@@ -56,6 +62,8 @@ const TABS: { key: Tab; label: string; Icon: typeof Cpu }[] = [
   { key: "permissions", label: "Permissions", Icon: ShieldCheck },
   { key: "trust", label: "Trust & Safety", Icon: ShieldAlert },
   { key: "audit-log", label: "Audit Log", Icon: ScrollText },
+  { key: "diagnostics", label: "Diagnostics", Icon: HeartPulse },
+  { key: "privacy", label: "Privacy", Icon: ShieldOff },
   { key: "appearance", label: "Appearance", Icon: Palette },
   { key: "keybindings", label: "Keybindings", Icon: Keyboard },
   { key: "profiles", label: "Profiles", Icon: UserCog },
@@ -124,6 +132,8 @@ export function SettingsView() {
           {tab === "permissions" && <PermissionsSection />}
           {tab === "trust" && <TrustSection />}
           {tab === "audit-log" && <AuditLogSection />}
+          {tab === "diagnostics" && <DiagnosticsSection />}
+          {tab === "privacy" && <PrivacySection />}
           {tab === "appearance" && <AppearanceSection />}
           {tab === "keybindings" && <KeybindingsSection />}
           {tab === "profiles" && <ProfilesSection />}

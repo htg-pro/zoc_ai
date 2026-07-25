@@ -9,6 +9,7 @@ import {
   FileText,
   Loader2,
   RotateCcw,
+  Square,
   Terminal,
   TestTube2,
   XCircle,
@@ -30,6 +31,7 @@ import {
 import { useApp } from "@/lib/store";
 import { postAgentDecision } from "./gateway-client";
 import { cn } from "@/lib/utils";
+import { isTerminal, type TrackedRun } from "./agent-runs";
 import type {
   RunTrace,
   TraceActivity,
@@ -50,6 +52,12 @@ type SideBySideLine = {
 
 interface RunTraceCardProps {
   trace: RunTrace;
+  run?: TrackedRun;
+  focused?: boolean;
+  collapsed?: boolean;
+  readOnly?: boolean;
+  onFocus?: (runId: string) => void;
+  onStop?: (runId: string) => void | Promise<void>;
 }
 
 const STAGES = [
@@ -61,15 +69,26 @@ const STAGES = [
   { id: "summary", label: "Summary" },
 ];
 
-export function RunTraceCard({ trace }: RunTraceCardProps): JSX.Element {
+export function RunTraceCard({
+  trace,
+  run,
+  focused = false,
+  collapsed = false,
+  readOnly = false,
+  onFocus,
+  onStop,
+}: RunTraceCardProps): JSX.Element {
   const isDone   = trace.status === "done";
   const isFailed = trace.status === "failed";
   const isPaused = trace.status === "paused";
   const isReview = trace.status === "awaiting_review";
   const isActive = !isDone && !isFailed && !isPaused && !isReview;
-  const checkpointCommit = useApp((s) => s.agentRunCheckpoints[trace.runId]);
+  const checkpointCommit = useApp((s) => (s.agentRunCheckpoints ?? {})[trace.runId]);
   const restoreAgentRunCheckpoint = useApp((s) => s.restoreAgentRunCheckpoint);
   const [restorePending, setRestorePending] = useState(false);
+  const [expanded, setExpanded] = useState(!collapsed);
+
+  useEffect(() => setExpanded(!collapsed), [collapsed]);
 
   const accentColor = isDone
     ? "var(--zoc-success)"
@@ -81,8 +100,13 @@ export function RunTraceCard({ trace }: RunTraceCardProps): JSX.Element {
 
   return (
     <section
-      className="relative overflow-hidden rounded-xl border border-[#1E1E23] bg-[#0F0F14] shadow-sm animate-fade-row"
+      className={cn(
+        "relative overflow-hidden rounded-xl border bg-[#0F0F14] shadow-sm animate-fade-row",
+        focused ? "border-[#7C3AED]/70 ring-1 ring-[#7C3AED]/25" : "border-[#1E1E23]",
+      )}
       data-testid="run-trace-card"
+      data-run-id={trace.runId}
+      data-focused={focused ? "true" : "false"}
       data-run-status={trace.status}
     >
       {/* left accent bar */}
@@ -93,7 +117,13 @@ export function RunTraceCard({ trace }: RunTraceCardProps): JSX.Element {
       />
 
       {/* Header */}
-      <div className="flex min-w-0 items-center gap-3 px-4 py-2.5 pl-5 border-b border-[#1E1E23]">
+      <div
+        className={cn(
+          "flex min-w-0 items-center gap-3 px-4 py-2.5 pl-5",
+          expanded && "border-b border-[#1E1E23]",
+        )}
+        onClick={() => onFocus?.(trace.runId)}
+      >
         <div className="flex min-w-0 flex-1 items-center gap-2">
           {isActive ? (
             <span className="relative flex h-2 w-2 shrink-0">
@@ -104,18 +134,45 @@ export function RunTraceCard({ trace }: RunTraceCardProps): JSX.Element {
             <span className="h-2 w-2 rounded-full shrink-0" style={{ backgroundColor: accentColor }} />
           )}
           <div className="min-w-0">
-            <span className="text-[13px] font-semibold text-[#FAFAFA]">Agent run</span>
-            <span className="ml-2 text-[11px] text-[#71717A]">{statusLabel(trace)}</span>
+            <span className="block max-w-[260px] truncate text-[13px] font-semibold text-[#FAFAFA]">
+              {run?.title || trace.prompt || "Agent run"}
+            </span>
+            <span className="text-[11px] text-[#71717A]">
+              {run?.mode ?? "agent"} · {statusLabel(trace)}
+            </span>
           </div>
         </div>
-        {checkpointCommit && (
+        {run?.tokenLimit ? (
+          <span
+            className="shrink-0 rounded-md border border-[#26262B] bg-[#15151A] px-2 py-0.5 font-mono text-[10px] text-[#71717A]"
+            title={`${(run.tokensUsed ?? 0).toLocaleString()} of ${run.tokenLimit.toLocaleString()} tokens`}
+          >
+            {(run.tokensUsed ?? 0).toLocaleString()} / {run.tokenLimit.toLocaleString()} tok
+          </span>
+        ) : null}
+        {!readOnly && run && !isTerminal(run) && onStop ? (
+          <button
+            type="button"
+            className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-lg border border-[var(--zoc-error)]/30 bg-[var(--zoc-error)]/10 text-[var(--zoc-error)] hover:bg-[var(--zoc-error)]/20"
+            aria-label={`Stop ${run.title || run.runId}`}
+            title="Stop this run"
+            onClick={(event) => {
+              event.stopPropagation();
+              void onStop(run.runId);
+            }}
+          >
+            <Square className="h-3 w-3 fill-current" />
+          </button>
+        ) : null}
+        {!readOnly && checkpointCommit && (
           <button
             type="button"
             className="inline-flex h-7 shrink-0 items-center gap-1.5 rounded-lg border border-[#26262B] bg-[#15151A] px-2.5 text-[11px] font-medium text-[#C8C8CE] transition-colors hover:bg-[#1E1E23] disabled:cursor-not-allowed disabled:opacity-50"
             data-testid="restore-checkpoint-button"
             disabled={restorePending}
             title={`Restore checkpoint ${checkpointCommit.slice(0, 8)}`}
-            onClick={() => {
+            onClick={(event) => {
+              event.stopPropagation();
               setRestorePending(true);
               void restoreAgentRunCheckpoint(trace.runId).finally(() => setRestorePending(false));
             }}
@@ -133,20 +190,34 @@ export function RunTraceCard({ trace }: RunTraceCardProps): JSX.Element {
             checkpoint
           </span>
         )}
+        <button
+          type="button"
+          className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded text-[#71717A] hover:bg-[#1E1E23] hover:text-[#D4D4D8]"
+          aria-label={expanded ? "Collapse run" : "Expand run"}
+          onClick={(event) => {
+            event.stopPropagation();
+            setExpanded((value) => !value);
+            onFocus?.(trace.runId);
+          }}
+        >
+          <ChevronRight className={cn("h-3.5 w-3.5 transition-transform", expanded && "rotate-90")} />
+        </button>
       </div>
 
-      <div className="flex flex-col gap-3 px-4 py-3 pl-5">
+      {expanded && <div className="flex flex-col gap-3 px-4 py-3 pl-5">
         <StageStepper activeStage={trace.stage} status={trace.status} />
         {trace.planItems.length > 0 && <TodoSection items={trace.planItems} />}
         {trace.activities.length > 0 && <ActivitySection activities={trace.activities} />}
         {trace.testResults && <TestResultsPanel result={trace.testResults} />}
-        {trace.review && <ReviewChangesRow runId={trace.runId} review={trace.review} />}
+        {trace.review && (
+          <ReviewChangesRow runId={trace.runId} review={trace.review} readOnly={readOnly} />
+        )}
         {trace.error && (
           <div className="rounded-lg border border-[var(--zoc-error)]/35 bg-[var(--zoc-error)]/8 px-3 py-2 text-[12px] text-[var(--zoc-error)]">
             {trace.error}
           </div>
         )}
-      </div>
+      </div>}
     </section>
   );
 }
@@ -357,9 +428,11 @@ function ActivityRow({ activity }: { activity: TraceActivity }): JSX.Element {
 function ReviewChangesRow({
   runId,
   review,
+  readOnly,
 }: {
   runId: string;
   review: TraceReview;
+  readOnly: boolean;
 }): JSX.Element {
   const allPaths = useMemo(() => review.files.map((f) => f.path), [review.files]);
   const [selected, setSelected] = useState<Set<string>>(() => new Set(allPaths));
@@ -388,6 +461,7 @@ function ReviewChangesRow({
   const disabled = pending !== null;
 
   async function decide(decision: "apply" | "discard", paths = [...selected]): Promise<void> {
+    if (readOnly) return;
     setError(null);
     setPending(decision);
     if (decision === "apply") {
@@ -460,7 +534,9 @@ function ReviewChangesRow({
               <span className="truncate">Review file changes</span>
             </DialogTitle>
             <DialogDescription className="text-[12px] text-[#71717A]">
-              Only accepted files are written to disk.
+              {readOnly
+                ? "Shared session preview — no files can be accepted or written."
+                : "Only accepted files are written to disk."}
             </DialogDescription>
           </DialogHeader>
 
@@ -481,7 +557,7 @@ function ReviewChangesRow({
                 <button
                   type="button"
                   className="rounded-lg border border-[#26262B] bg-[#15151A] px-2.5 py-1.5 text-[11.5px] text-[#C8C8CE] hover:bg-[#1E1E23] disabled:opacity-40"
-                  disabled={disabled}
+                  disabled={disabled || readOnly}
                   onClick={() => setSelected(new Set(allPaths))}
                 >
                   Select all
@@ -489,7 +565,7 @@ function ReviewChangesRow({
                 <button
                   type="button"
                   className="rounded-lg border border-[#26262B] bg-[#15151A] px-2.5 py-1.5 text-[11.5px] text-[#C8C8CE] hover:bg-[#1E1E23] disabled:opacity-40"
-                  disabled={disabled}
+                  disabled={disabled || readOnly}
                   onClick={() => setSelected(new Set())}
                 >
                   Clear
@@ -503,7 +579,7 @@ function ReviewChangesRow({
                   key={file.path}
                   file={file}
                   checked={selected.has(file.path)}
-                  disabled={disabled}
+                  disabled={disabled || readOnly}
                   onCheckedChange={(checked) => {
                     setSelected((prev) => {
                       const next = new Set(prev);
@@ -518,6 +594,9 @@ function ReviewChangesRow({
           </div>
 
           <DialogFooter className="border-t border-[#1E1E23] bg-[#101015] px-4 py-3">
+            {readOnly ? (
+              <span className="text-[11.5px] text-[#71717A]">Read-only shared session</span>
+            ) : <>
             <button
               type="button"
               className="rounded-lg border border-[var(--zoc-error)]/35 bg-[var(--zoc-error)]/10 px-3 py-1.5 text-[11.5px] font-medium text-[var(--zoc-error)] transition-colors hover:bg-[var(--zoc-error)]/18 disabled:cursor-not-allowed disabled:opacity-40"
@@ -544,6 +623,7 @@ function ReviewChangesRow({
                 ? "Applying…"
                 : `Accept selected (${selectedCount})`}
             </button>
+            </>}
           </DialogFooter>
         </DialogContent>
       </Dialog>

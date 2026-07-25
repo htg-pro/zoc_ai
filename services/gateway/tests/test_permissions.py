@@ -115,3 +115,22 @@ def test_permission_gate_marks_reads_and_destructive_shell_commands() -> None:
 
     assert gate("fs", "read_file", "src/a.py").effect == "allow"
     assert gate("terminal", "run_shell", "rm -rf build").effect == "prompt"
+
+
+def test_permission_gate_marks_fetch_url_as_network_access() -> None:
+    gate = build_permission_gate(
+        PermissionConfig(
+            trust="trusted",
+            run_mode="all",
+            network_allowlist=("api.example.com",),
+        )
+    )
+    assert (
+        gate(
+            "agent_tool",
+            "fetch_url",
+            "https://api.example.com/v1/models",
+        ).effect
+        == "allow"
+    )
+    assert gate("agent_tool", "fetch_url", "https://evil.test/data").effect == "prompt"

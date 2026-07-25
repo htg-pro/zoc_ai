@@ -10,6 +10,7 @@ mod llama_server;
 mod patch;
 mod search_commands;
 mod secrets;
+mod share;
 mod sidecar;
 mod workspace;
 
@@ -17,6 +18,7 @@ use std::sync::Arc;
 
 use crate::fs_commands::WatcherState;
 use crate::llama_server::LlamaServerSupervisor;
+use crate::share::ShareState;
 use crate::sidecar::{AgentStatus, AgentSupervisor};
 use crate::workspace::WorkspaceState;
 
@@ -43,6 +45,7 @@ pub fn run() {
     let watcher: Arc<WatcherState> = Arc::new(WatcherState::default());
     let workspace: Arc<WorkspaceState> = Arc::new(WorkspaceState::default());
     let llama_server: Arc<LlamaServerSupervisor> = Arc::new(LlamaServerSupervisor::default());
+    let share: Arc<ShareState> = Arc::new(ShareState::default());
     // Seed the in-memory workspace state from any persisted desktop.json so
     // FS commands work immediately after boot, even before the UI explicitly
     // pushes a workspace root via `set_workspace_root`.
@@ -60,10 +63,17 @@ pub fn run() {
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_single_instance::init(|_app, _argv, _cwd| {}))
+        // §11.3: auto-update. The updater is inert until `plugins.updater.active`
+        // is true *and* a minisign `pubkey` is configured in tauri.conf.json, so
+        // registering it unconditionally is safe — `check()` simply reports that
+        // updates are unavailable, which the frontend treats as "up to date".
+        .plugin(tauri_plugin_updater::Builder::new().build())
+        .plugin(tauri_plugin_process::init())
         .manage(supervisor.clone())
         .manage(watcher.clone())
         .manage(workspace.clone())
         .manage(llama_server.clone())
+        .manage(share.clone())
         .setup({
             let supervisor = supervisor.clone();
             move |app| {
@@ -75,10 +85,13 @@ pub fn run() {
         .on_window_event({
             let supervisor = supervisor.clone();
             let llama_server = llama_server.clone();
+            let share = share.clone();
             move |_window, event| {
                 if let tauri::WindowEvent::Destroyed = event {
                     supervisor.shutdown();
                     llama_server.shutdown();
+                    // Never leave a LAN listener behind after the window closes.
+                    share.stop();
                 }
             }
         })
@@ -129,9 +142,19 @@ pub fn run() {
             workspace::legacy_detect,
             workspace::legacy_import,
             workspace::telemetry_log,
+            workspace::telemetry_event,
+            workspace::telemetry_stats,
+            workspace::telemetry_drain,
+            workspace::telemetry_clear,
             llama_server::llamacpp_load,
             llama_server::llamacpp_unload,
             llama_server::llamacpp_status,
+            share::share_session,
+            share::share_session_stop,
+            share::share_session_status,
+            sidecar::agent_crash_reports,
+            sidecar::agent_crash_reports_clear,
+            sidecar::agent_restart,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

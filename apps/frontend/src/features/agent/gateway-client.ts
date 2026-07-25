@@ -31,7 +31,13 @@ import type {
 } from "@zoc-studio/shared-types";
 
 /** The two execution modes the Composer's Ask/Agent toggle selects. */
-export type AgentMode = "ask" | "agent";
+/**
+ * Conversation modes (§12.2).
+ *
+ * `plan` runs the same stages as `agent` but stops for approval after the plan
+ * is produced, so nothing is written until the user says so.
+ */
+export type AgentMode = "ask" | "plan" | "agent";
 
 /**
  * A run request issued from the Composer. `input` is the (already trimmed,
@@ -53,6 +59,16 @@ export interface AgentRunRequest {
   topK?: number | null;
   repeatPenalty?: number | null;
   maxTokens?: number | null;
+  /** Editor context consumed by context-aware Ask Mode (§12.1). */
+  context?: EditorRunContext | null;
+}
+
+/** Mirrors the gateway's `RequestContext` (§12.1). */
+export interface EditorRunContext {
+  activeFile?: string | null;
+  selection?: string | null;
+  cursorLine?: number | null;
+  language?: string | null;
 }
 
 export interface ContextFileRef {
@@ -158,6 +174,7 @@ export async function postAgentRun(req: AgentRunRequest): Promise<AgentRunHandle
     permission: getTrustConfig(req.workspaceRoot),
     runId: req.runId ?? null,
     context_files: req.contextFiles ?? [],
+    context: req.context ?? null,
     model: req.model ?? null,
     provider: req.provider ?? null,
     api_key: req.apiKey ?? null,
@@ -189,6 +206,11 @@ export async function postAgentDecision(req: AgentDecisionRequest): Promise<void
     decision: req.decision,
     acceptedPaths: req.acceptedPaths ?? [],
   });
+}
+
+/** Cooperatively stop one Gateway run without disturbing concurrent peers. */
+export async function postAgentCancel(runId: string): Promise<void> {
+  await postJson<void>(`/v1/agent/runs/${encodeURIComponent(runId)}/cancel`, {});
 }
 
 /** Run the gateway-owned fixed suite against the active local model. */

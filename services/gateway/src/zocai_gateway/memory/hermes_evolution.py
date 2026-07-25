@@ -31,7 +31,9 @@ load-bearing here; the genetic search is intentionally deferred behind the seam.
 from __future__ import annotations
 
 import json
+import logging
 import os
+import re
 import threading
 import time
 from collections.abc import Callable, Mapping, Sequence
@@ -44,6 +46,7 @@ from typing import Any, Protocol, runtime_checkable
 from zocai_gateway.memory.matrix import MemoryMatrix
 
 __all__ = [
+    "APPROACH_WEIGHTS_FILE",
     "DEFAULT_IDLE_SECONDS",
     "DEFAULT_POLL_INTERVAL",
     "DeterministicGepaStub",
@@ -51,7 +54,73 @@ __all__ = [
     "GepaStep",
     "HermesEvolution",
     "Trace",
+    "classify_task",
+    "extract_approach",
 ]
+
+logger = logging.getLogger(__name__)
+
+#: Persisted approach weights, relative to the matrix's hermes_evolution dir.
+#: JSON rather than a pickle: this file steers future prompts, so it must be
+#: readable (and safely loadable) by a human and by a future version of the app.
+APPROACH_WEIGHTS_FILE = "approach_weights.json"
+
+#: Task-type buckets, matched in order. Coarse on purpose: the point is to group
+#: *similar* work, and too many buckets means every task is its own bucket with
+#: no history to learn from.
+_TASK_PATTERNS: tuple[tuple[str, tuple[str, ...]], ...] = (
+    ("test", ("test", "spec", "pytest", "vitest", "coverage")),
+    ("bugfix", ("fix", "bug", "regression", "crash", "error", "broken")),
+    ("refactor", ("refactor", "rename", "extract", "restructure", "clean up")),
+    ("docs", ("document", "docs", "readme", "comment", "docstring")),
+    ("dependency", ("upgrade", "dependency", "package", "version", "bump")),
+    ("performance", ("performance", "slow", "optimi", "latency", "memory leak")),
+    ("feature", ("add", "implement", "create", "build", "support")),
+)
+
+#: Sentences that read like a description of *how* the work was done.
+_APPROACH_MARKERS = (
+    "approach",
+    "strategy",
+    "by ",
+    "first ",
+    "then ",
+    "instead of",
+    "used ",
+)
+
+
+def classify_task(text: str) -> str:
+    """Bucket ``text`` into a coarse task type (§14.2).
+
+    Returns ``"general"`` when nothing matches, so every run still contributes
+    to *some* bucket rather than being silently discarded.
+    """
+    lowered = (text or "").lower()
+    for task_type, keywords in _TASK_PATTERNS:
+        if any(keyword in lowered for keyword in keywords):
+            return task_type
+    return "general"
+
+
+def extract_approach(transcript: str) -> str:
+    """Summarise *how* a run proceeded, as a single short phrase (§14.2).
+
+    Picks the first sentence that reads like a description of method. Returns
+    ``""`` when the transcript has nothing method-like to say — recording an
+    arbitrary sentence would teach the model noise.
+    """
+    text = (transcript or "").strip()
+    if not text:
+        return ""
+    for sentence in re.split(r"(?<=[.!?])\s+|\n+", text):
+        candidate = sentence.strip()
+        if len(candidate) < 12 or len(candidate) > 220:
+            continue
+        lowered = candidate.lower()
+        if any(marker in lowered for marker in _APPROACH_MARKERS):
+            return candidate
+    return ""
 
 #: A run must have been over for at least this many seconds before the loop is
 #: allowed to evolve (R9.7: "no Agent_Mode run has been active for at least 60
@@ -210,6 +279,104 @@ class HermesEvolution:
         self._started = False
 
     # -- Activity reporting (non-blocking, R9.7) ---------------------------
+
+    # -- long-term approach learning (§14.2) ---------------------------------
+
+    def post_run(self, run_transcript: str, outcome: str) -> None:
+        """Record what worked (or did not) for this kind of task (§14.2).
+
+        Extracts a ``(task_type, approach, outcome)`` tuple from the transcript
+        and folds it into a persisted weight table
+        (``<matrix>/hermes_evolution/approach_weights.json``). "Weights" here are
+        success/failure counts per ``(task_type, approach)`` — a transparent,
+        inspectable model rather than an opaque pickle, which matters because
+        this file steers future prompts and a user should be able to read it.
+
+        Never raises: learning is strictly optional to a run's success.
+        """
+        try:
+            task_type = classify_task(run_transcript)
+            approach = extract_approach(run_transcript)
+            if not approach:
+                return
+            table = self._load_approach_weights()
+            bucket = table.setdefault(task_type, {})
+            entry = bucket.setdefault(approach, {"success": 0, "fail": 0})
+            key = "success" if outcome == "success" else "fail"
+            entry[key] = int(entry.get(key, 0)) + 1
+            self._save_approach_weights(table)
+        except Exception:  # pragma: no cover - defensive learning boundary
+            logger.debug("post_run learning failed", exc_info=True)
+
+    def suggest_approach(self, task_description: str) -> dict[str, object] | None:
+        """The historically most successful approach for this task type (§14.2).
+
+        Returns ``None`` when there is no history for the task type — an honest
+        "no opinion" rather than a guess, because injecting a fabricated
+        "past experience" into the prompt would be worse than injecting nothing.
+        """
+        try:
+            table = self._load_approach_weights()
+        except Exception:  # pragma: no cover - defensive store boundary
+            return None
+        bucket = table.get(classify_task(task_description))
+        if not bucket:
+            return None
+
+        def score(item: tuple[str, dict[str, int]]) -> tuple[float, int]:
+            _approach, counts = item
+            success = int(counts.get("success", 0))
+            fail = int(counts.get("fail", 0))
+            total = success + fail
+            # Wilson-ish: require evidence, not a single lucky run.
+            rate = success / total if total else 0.0
+            return (-(rate * min(1.0, total / 3.0)), -total)
+
+        best_approach, counts = sorted(bucket.items(), key=score)[0]
+        success = int(counts.get("success", 0))
+        fail = int(counts.get("fail", 0))
+        if success == 0:
+            return None
+        return {
+            "approach": best_approach,
+            "successes": success,
+            "failures": fail,
+            "task_type": classify_task(task_description),
+        }
+
+    def _approach_weights_path(self) -> Path:
+        return self._matrix.hermes_evolution_dir / APPROACH_WEIGHTS_FILE
+
+    def _load_approach_weights(self) -> dict[str, dict[str, dict[str, int]]]:
+        path = self._approach_weights_path()
+        try:
+            raw = json.loads(path.read_text(encoding="utf-8"))
+        except (FileNotFoundError, json.JSONDecodeError, OSError):
+            return {}
+        if not isinstance(raw, dict):
+            return {}
+        table: dict[str, dict[str, dict[str, int]]] = {}
+        for task_type, approaches in raw.items():
+            if not isinstance(approaches, dict):
+                continue
+            cleaned: dict[str, dict[str, int]] = {}
+            for approach, counts in approaches.items():
+                if not isinstance(counts, dict):
+                    continue
+                cleaned[str(approach)] = {
+                    "success": int(counts.get("success", 0) or 0),
+                    "fail": int(counts.get("fail", 0) or 0),
+                }
+            if cleaned:
+                table[str(task_type)] = cleaned
+        return table
+
+    def _save_approach_weights(
+        self, table: dict[str, dict[str, dict[str, int]]]
+    ) -> None:
+        path = self._approach_weights_path()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        self._atomic_write(path, json.dumps(table, indent=2, sort_keys=True))
 
     def begin_run(self) -> None:
         """Mark an Agent_Mode run as active (suppresses evolution).

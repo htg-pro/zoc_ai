@@ -1,11 +1,14 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { GitCommit as GitCommitIcon, History, RotateCcw } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { toast } from "@/components/ui/toast";
 import { useApp } from "@/lib/store";
+import { getAgentClient } from "@/lib/agent-client";
+import { useAgentStreamContext } from "@/features/agent/agent-stream-context";
 import { buildTimeline, type TimelineEntry } from "@/lib/timeline";
 import type { GitCommit } from "@/lib/tauri-bridge";
 import { cn } from "@/lib/utils";
+import { RunTracePanel } from "./RunTracePanel";
 
 function relativeTime(ts: number): string {
   if (!ts) return "";
@@ -21,11 +24,107 @@ function relativeTime(ts: number): string {
 }
 
 /**
- * Timeline side view (develop.md Side Panel → Timeline). Merges Git commit
- * history with agent checkpoints into one time-sorted feed; checkpoints can be
- * restored in place.
+ * Timeline side view. Two tabs:
+ *
+ * - **History** — Git commits merged with agent checkpoints into one time-sorted
+ *   feed; checkpoints can be restored in place.
+ * - **Run trace** — the execution trace of the selected run (§16.1), read from
+ *   the live event stream while a run is active and from the durable
+ *   Session_Diary once it has finished.
  */
 export function TimelinePanel() {
+  const [tab, setTab] = useState<"history" | "trace">("history");
+  return (
+    <div className="flex h-full min-h-0 flex-col">
+      <div className="flex shrink-0 items-center gap-1 border-b border-border px-1 py-1">
+        <TabButton active={tab === "history"} onClick={() => setTab("history")}>
+          History
+        </TabButton>
+        <TabButton active={tab === "trace"} onClick={() => setTab("trace")}>
+          Run trace
+        </TabButton>
+      </div>
+      <div className="min-h-0 flex-1">
+        {tab === "history" ? <HistoryFeed /> : <RunTraceTab />}
+      </div>
+    </div>
+  );
+}
+
+function TabButton({
+  active,
+  onClick,
+  children,
+}: {
+  active: boolean;
+  onClick: () => void;
+  children: React.ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      aria-pressed={active}
+      className={cn(
+        "rounded px-2 py-0.5 text-[11px] transition-colors",
+        active ? "bg-accent text-foreground" : "text-muted-foreground hover:bg-accent/50",
+      )}
+    >
+      {children}
+    </button>
+  );
+}
+
+/**
+ * Trace tab data source.
+ *
+ * Prefers the live stream for the active run (no round trip, updates as the run
+ * progresses) and falls back to the diary for a finished one, which is the only
+ * place a closed run's events still exist.
+ */
+function RunTraceTab() {
+  const activeRunId = useApp((s) => s.runId);
+  const focusedRunId = useApp((s) => s.focusedRunId);
+  const stream = useAgentStreamContext();
+  const runId = focusedRunId ?? activeRunId ?? "";
+  const [diary, setDiary] = useState<Record<string, unknown>[]>([]);
+
+  const liveEvents = useMemo(
+    () =>
+      (stream?.events ?? []).filter(
+        (event) => !runId || (event as { runId?: string }).runId === runId,
+      ) as unknown as Record<string, unknown>[],
+    [stream?.events, runId],
+  );
+
+  useEffect(() => {
+    if (!runId || liveEvents.length > 0) return;
+    let cancelled = false;
+    void getAgentClient()
+      .then((client) => client.diary(runId))
+      .then((entries) => {
+        if (!cancelled) setDiary(entries);
+      })
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, [runId, liveEvents.length]);
+
+  if (!runId) {
+    return (
+      <div className="flex h-full items-center justify-center px-4 text-center text-xs text-muted-foreground">
+        Start a run to see its trace.
+      </div>
+    );
+  }
+
+  return (
+    <RunTracePanel runId={runId} events={liveEvents.length > 0 ? liveEvents : diary} />
+  );
+}
+
+function HistoryFeed() {
   const checkpoints = useApp((s) => s.checkpoints);
   const loadCheckpoints = useApp((s) => s.loadCheckpoints);
   const loadGitLog = useApp((s) => s.loadGitLog);

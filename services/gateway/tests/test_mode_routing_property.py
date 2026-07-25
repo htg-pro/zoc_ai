@@ -12,15 +12,20 @@ path with the FSM initialized at INTAKE.
 Strategy
 --------
 We drive the real :class:`ModeRouter.route` across the full mode domain
-(:class:`Mode.ASK` / :class:`Mode.AGENT`) paired with arbitrary prompt text,
-so routing is verified independent of prompt content. For every drawn request
-we assert the exhaustive routing contract:
+(:class:`Mode.ASK` / :class:`Mode.PLAN` / :class:`Mode.AGENT`) paired with
+arbitrary prompt text, so routing is verified independent of prompt content. For
+every drawn request we assert the exhaustive routing contract:
 
 * ``mode = "ask"`` → an :class:`AskPath` that is read-only, skips the planner,
   and carries a :class:`ReadOnlyToolset` (R2.1);
 * ``mode = "agent"`` → an :class:`AgentPath` that is not read-only, runs the
   planner, carries a :class:`FullToolset`, and has its FSM initialized at
-  :attr:`Stage.INTAKE` (R3.1).
+  :attr:`Stage.INTAKE` (R3.1);
+* ``mode = "plan"`` → the same :class:`AgentPath` initial conditions, but with
+  ``plan_only`` set so the pipeline stops for approval after ``PLAN_EDITS``
+  (§12.2). Plan mode deliberately keeps the *full* toolset: approval resumes the
+  same run, and the guarantee comes from the pipeline gate rather than from
+  removing capabilities.
 """
 
 from __future__ import annotations
@@ -66,10 +71,16 @@ def test_mode_routing_maps_mode_to_path_and_initial_conditions(
     else:
         # R3.1: Agent path, not read-only, planner runs, full toolset, FSM at INTAKE.
         assert isinstance(path, AgentPath)
-        assert path.mode is Mode.AGENT
         assert path.skip_planner is False
         assert path.is_read_only is False
         assert isinstance(path.toolset, FullToolset)
         assert isinstance(path.fsm, FSM)
         assert path.fsm.initial is Stage.INTAKE
         assert path.fsm.current is Stage.INTAKE
+        # §12.2: only Plan mode arms the post-PLAN_EDITS approval gate.
+        if mode is Mode.PLAN:
+            assert path.mode is Mode.PLAN
+            assert path.plan_only is True
+        else:
+            assert path.mode is Mode.AGENT
+            assert path.plan_only is False

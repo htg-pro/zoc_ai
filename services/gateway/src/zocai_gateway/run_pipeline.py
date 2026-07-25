@@ -44,7 +44,7 @@ import re
 import shutil
 import tempfile
 import time
-from collections.abc import Awaitable, Callable, Mapping
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from enum import Enum
@@ -60,6 +60,8 @@ from shared_schema.agent_events import (
     PermissionEvent,
     PermissionKind,
     PlanEvent,
+    PlanReadyEvent,
+    PlanReadyStep,
     PlanUpdateEvent,
     ReadFileRef,
     ReadFilesEvent,
@@ -125,10 +127,20 @@ from zocai_gateway.context.steering_compiler import (
     runtime_file_selector,
     select_map_files,
 )
-from zocai_gateway.context.token_gate import TokenGateResult, estimate_tokens, fit_fragments
+from zocai_gateway.context.token_gate import (
+    TokenGateResult,
+    estimate_tokens,
+    fit_fragments,
+    sanitize_file_content,
+)
 from zocai_gateway.context_mentions import expand_prompt_file_mentions
 from zocai_gateway.edits import EditCoordinator, EditPlan, PlannedChange
 from zocai_gateway.emit_gate import EmitGate
+from zocai_gateway.file_locks import (
+    DEFAULT_LOCK_TIMEOUT_SECONDS,
+    FileLockRegistry,
+    LockAcquisition,
+)
 from zocai_gateway.fsm import FSM, EmitSink
 from zocai_gateway.hardware_probe import HardwareProfile
 from zocai_gateway.hot_swap import HotSwapCoordinator, HotSwapResult, ModelLoader
@@ -136,6 +148,7 @@ from zocai_gateway.intent_event import (
     DEFAULT_INTENT_TEXT,
     allocation_stage_event_factory,
 )
+from zocai_gateway.memory.hermes_evolution import HermesEvolution
 from zocai_gateway.memory.matrix import (
     CompressionError,
     ConversationMemory,
@@ -144,6 +157,13 @@ from zocai_gateway.memory.matrix import (
     Role,
     runtime_summarizer,
     tokenizer_kind_for_tier,
+)
+from zocai_gateway.memory.project_memory import (
+    FactExtractionPrompt,
+    ProjectMemoryStore,
+    parse_extracted_facts,
+    render_memory_prompt,
+    top_facts,
 )
 from zocai_gateway.memory.state_wrapper import (
     Diff,
@@ -179,6 +199,7 @@ from zocai_gateway.project_tests import (
 )
 from zocai_gateway.react import McpDispatch, PermissionGate, ReActExecutor, ToolModelFn
 from zocai_gateway.remediation import RemediationLoop
+from zocai_gateway.security import log_security_event
 from zocai_gateway.stages import Stage
 from zocai_gateway.toolsets import FullToolset
 from zocai_gateway.verification import parse_verify_result
@@ -255,14 +276,20 @@ def default_model_loader(tier: ModelTier) -> ModelInterface:
     return _TIER_MODELS[tier]()
 
 
-def default_workspace_rag_matcher(workspace_root: Path | str) -> WorkspaceRagMatcher:
+def default_workspace_rag_matcher(
+    workspace_root: Path | str, *, lazy: bool = False
+) -> WorkspaceRagMatcher:
     """A workspace-scanning RAG_Matcher rooted at ``workspace_root`` (R8.1).
 
     Provided as the real-matcher factory the pipeline can be given; the default
     pipeline uses the no-op :class:`NullRagMatcher` so a synchronous run never
     blocks on scanning a large tree.
+
+    With ``lazy=True`` (the ``--lazy-index`` posture, §9.1) the matcher skips
+    the eager read pass entirely: workspace paths are enumerated into a
+    64-shard index and file content is read only for the shards a query needs.
     """
-    return WorkspaceRagMatcher(folders=(Path(workspace_root),))
+    return WorkspaceRagMatcher(folders=(Path(workspace_root),), lazy=lazy)
 
 
 @dataclass(frozen=True, slots=True)
@@ -684,6 +711,10 @@ def _estimate_edit_plan_tokens(plan: EditPlan) -> int:
     return sum(estimate_tokens(part) for part in parts)
 
 
+class RunCancelled(Exception):
+    """Raised at a safe pipeline boundary after a client stops one run."""
+
+
 @dataclass(frozen=True, slots=True)
 class RunResult:
     """The terminal outcome of driving a run through the pipeline.
@@ -762,6 +793,12 @@ def _validation_from_checks(checks: list[tuple[str, int]]) -> ReviewValidation:
 def _safe_relative_path(raw_path: str) -> Path:
     rel = Path(raw_path)
     if rel.is_absolute() or ".." in rel.parts:
+        log_security_event(
+            "path_traversal",
+            "blocked unsafe review path",
+            path=raw_path,
+            operation="review_apply",
+        )
         raise ValueError(f"unsafe review path: {raw_path!r}")
     return rel
 
@@ -776,6 +813,47 @@ def _edit_step_label(action: str, file: str, rationale: str) -> str:
     prefix = f"{action.capitalize()} {file}"
     trimmed = rationale.strip()
     return f"{prefix}: {trimmed}" if trimmed else prefix
+
+
+# ── Plan mode approval gate (§12.2) ──────────────────────────────────────────
+
+#: How long a Plan-mode run waits for the user's approve/reject. Generous
+#: because a human is reading a diff; bounded so an abandoned run cannot pin a
+#: worker thread forever.
+_PLAN_APPROVAL_TIMEOUT_SECONDS = 1800.0
+
+
+@dataclass(frozen=True, slots=True)
+class _PlanGate:
+    """Outcome of the Plan-mode approval gate.
+
+    ``accepted_paths`` is ``None`` when the user approved the plan as-is and a
+    tuple of workspace-relative paths when they deselected individual steps.
+    """
+
+    approved: bool
+    accepted_paths: tuple[str, ...] | None
+
+
+def _restrict_plan_to_paths(
+    structured_plan: AgentPlan,
+    plan: EditPlan,
+    accepted: tuple[str, ...],
+) -> tuple[AgentPlan, EditPlan]:
+    """Drop every plan step and change whose file was not accepted (§12.2).
+
+    Unchecking a step in the review UI must *remove* it, not merely hide it, so
+    the filtering happens on the plan the executor receives. Path comparison is
+    normalised on separators because the plan is workspace-relative POSIX while a
+    client may echo back either form.
+    """
+    wanted = {path.replace("\\", "/") for path in accepted}
+    steps = [step for step in structured_plan.steps if step.file.replace("\\", "/") in wanted]
+    changes = [change for change in plan.changes if change.path.replace("\\", "/") in wanted]
+    return (
+        structured_plan.model_copy(update={"steps": steps}),
+        replace(plan, changes=tuple(changes)),
+    )
 
 
 # ── APPLY_EDITS strategy seam (Req 8, R3.7-R3.9) ─────────────────────────────
@@ -977,6 +1055,12 @@ class RunPipeline:
         mcp_host: MCPHost | None = None,
         mcp_loop: asyncio.AbstractEventLoop | None = None,
         check_permission: PermissionGate | None = None,
+        network_allowlist: Sequence[str] | None = None,
+        is_cancelled: Callable[[], bool] | None = None,
+        plan_only: bool = False,
+        file_locks: FileLockRegistry | None = None,
+        project_memory: ProjectMemoryStore | None = None,
+        hermes: HermesEvolution | None = None,
     ) -> None:
         self.run_id = run_id
         self.source_workspace_root = Path(workspace_root).resolve()
@@ -1001,6 +1085,20 @@ class RunPipeline:
         self._mcp_host = mcp_host
         self._mcp_loop = mcp_loop
         self._check_permission = check_permission
+        self._network_allowlist = (
+            tuple(network_allowlist) if network_allowlist is not None else None
+        )
+        self._is_cancelled = is_cancelled or (lambda: False)
+        # §12.2: Plan mode stops for approval after PLAN_EDITS. Also true when
+        # the request itself selected `mode="plan"`, so the flag survives a
+        # caller that forgot to pass it explicitly.
+        self.plan_only = plan_only or request.mode is Mode.PLAN
+        # §12.3: with several runs in flight, writes are serialised per file.
+        self._file_locks = file_locks
+        self._held_locks: tuple[str, ...] = ()
+        # §14.1 persistent project memory; §14.2 long-term approach learning.
+        self._project_memory = project_memory
+        self._hermes = hermes
         self._workspace_indexer = workspace_indexer
         self._index_session_id = index_session_id or request.run_id or run_id
         self._hybrid_candidate_source = hybrid_candidate_source
@@ -1051,7 +1149,12 @@ class RunPipeline:
             if self._mcp_host is not None
             else None
         )
-        self.toolset = FullToolset(self.workspace_root, mcp=mcp_seam)
+        self.toolset = FullToolset(
+            self.workspace_root,
+            mcp=mcp_seam,
+            network_allowlist=self._network_allowlist,
+            run_id=self.run_id,
+        )
         self._mcp_dispatch = self._make_mcp_dispatch()
         self.fs_read = FSReadAdapter(self.workspace_root)
         self.shell_spawner = ShellSpawner(self.path.mode, self.workspace_root)
@@ -1095,6 +1198,9 @@ class RunPipeline:
 
     def cleanup(self) -> None:
         """Remove the isolated workspace after the run has reached a terminal state."""
+        # §12.3: drop any per-file write locks first, so a waiting run is
+        # unblocked even if the workspace teardown below fails.
+        self._release_write_locks()
         root = self._isolated_workspace_root
         if root is None:
             return
@@ -1177,6 +1283,295 @@ class RunPipeline:
                 truncated=False,
             )
         )
+
+    # -- per-file write locks (§12.3) ---------------------------------------
+
+    @staticmethod
+    def _planned_write_paths(structured_plan: AgentPlan, plan: EditPlan) -> tuple[str, ...]:
+        """Every workspace path this run intends to write.
+
+        Drawn from both the structured plan (what the model said it would do)
+        and the concrete change list (what will actually be written), because a
+        remediation pass can add a change the structured plan never mentioned.
+        """
+        paths = {step.file for step in structured_plan.steps}
+        paths.update(change.path for change in plan.changes)
+        return tuple(sorted(p for p in paths if p))
+
+    def _acquire_write_locks(self, paths: tuple[str, ...]) -> LockAcquisition:
+        """Take the per-file write locks, or explain why we cannot (§12.3).
+
+        With no registry configured (single-run deployments and most tests) this
+        is a no-op success, so behaviour is unchanged unless concurrency is
+        actually enabled.
+        """
+        if self._file_locks is None or not paths:
+            return LockAcquisition(acquired=True)
+
+        result = self._file_locks.acquire(self.run_id, paths, timeout=DEFAULT_LOCK_TIMEOUT_SECONDS)
+        if result.acquired:
+            self._held_locks = result.paths
+            return result
+
+        blocked = ", ".join(result.blocked_paths)
+        logger.info(
+            "run %s blocked on files held by %s: %s",
+            self.run_id,
+            ", ".join(result.blocked_by) or "another run",
+            blocked,
+        )
+        self._emit(
+            ApprovalEvent(
+                seq=0,
+                run_id=self.run_id,
+                ts=_now(),
+                prompt=(
+                    "Another run is still writing "
+                    f"{blocked}. Waited "
+                    f"{DEFAULT_LOCK_TIMEOUT_SECONDS:g}s without getting access, so "
+                    "this run paused instead of overwriting it. Retry once the "
+                    "other run finishes."
+                ),
+            )
+        )
+        return result
+
+    def _release_write_locks(self) -> None:
+        """Release anything this run still holds (idempotent)."""
+        if self._file_locks is None:
+            return
+        self._file_locks.release_run(self.run_id)
+        self._held_locks = ()
+
+    def _await_plan_approval(self, structured_plan: AgentPlan, plan: EditPlan) -> _PlanGate:
+        """Emit the plan and block until the user approves or rejects (§12.2).
+
+        Emits a ``plan-ready`` event carrying every step (with a diff preview
+        where one exists) followed by an ``approval`` event that names the
+        decision being asked for. Then waits for a control-channel ``approval``
+        decision.
+
+        Fails **closed**: no waiter configured, or no answer within the timeout,
+        means "not approved", so a Plan-mode run can never silently apply.
+        """
+        diffs = {change.path: change.diff for change in plan.changes if change.diff}
+        steps = [
+            PlanReadyStep(
+                file=step.file,
+                action=step.action,
+                rationale=step.rationale,
+                diff=diffs.get(step.file),
+            )
+            for step in structured_plan.steps
+        ]
+        files = {step.file for step in structured_plan.steps}
+        self._emit(
+            PlanReadyEvent(
+                seq=0,
+                run_id=self.run_id,
+                ts=_now(),
+                steps=steps,
+                verification_command=structured_plan.verification_command,
+                confidence=structured_plan.confidence,
+                file_count=len(files),
+            )
+        )
+        self._emit(
+            ApprovalEvent(
+                seq=0,
+                run_id=self.run_id,
+                ts=_now(),
+                prompt=(
+                    f"Ready to apply {len(steps)} change"
+                    f"{'' if len(steps) == 1 else 's'} to {len(files)} file"
+                    f"{'' if len(files) == 1 else 's'}. "
+                    "Approve to execute, reject to cancel."
+                ),
+            )
+        )
+
+        waiter = self._wait_for_approval_decision
+        if waiter is None:
+            logger.info("run %s plan not approved: no decision channel", self.run_id)
+            return _PlanGate(approved=False, accepted_paths=None)
+        decision = waiter(_PLAN_APPROVAL_TIMEOUT_SECONDS)
+        if decision is None or getattr(decision, "decision", None) != "approve":
+            return _PlanGate(approved=False, accepted_paths=None)
+        # `acceptedPaths` carries the user's per-step selection; an empty list
+        # means "everything", matching the decision endpoint's contract.
+        raw_paths = list(getattr(decision, "accepted_paths", ()) or ())
+        return _PlanGate(
+            approved=True,
+            accepted_paths=tuple(raw_paths) if raw_paths else None,
+        )
+
+    # -- persistent project memory (§14.1) + evolution (§14.2) --------------
+
+    def memory_prompt_section(self) -> str:
+        """The "Known facts about this project" block for INTAKE (§14.1).
+
+        Returns ``""`` when memory is disabled or empty, so the prompt gains
+        nothing on a project the agent has never seen.
+        """
+        store = self._project_memory
+        if store is None:
+            return ""
+        try:
+            memory = store.load()
+        except Exception:  # pragma: no cover - defensive store boundary
+            logger.debug("project memory unreadable", exc_info=True)
+            return ""
+        return render_memory_prompt(top_facts(memory, query=self.request.prompt))
+
+    def approach_prompt_section(self) -> str:
+        """The "Based on past experience…" block for INTAKE (§14.2).
+
+        Sourced from :class:`HermesEvolution`'s learned task/approach history.
+        Absent history yields ``""`` rather than a hedged sentence.
+        """
+        hermes = self._hermes
+        if hermes is None:
+            return ""
+        try:
+            suggestion = hermes.suggest_approach(self.request.prompt)
+        except Exception:  # pragma: no cover - defensive learning boundary
+            logger.debug("approach suggestion failed", exc_info=True)
+            return ""
+        if not suggestion:
+            return ""
+        approach = str(suggestion.get("approach", "")).strip()
+        if not approach:
+            return ""
+        return f"Based on past experience, this type of task works best when: {approach}"
+
+    def _learning_transcript(
+        self,
+        detail: str,
+        *,
+        succeeded: bool,
+        applied: Sequence[Diff] = (),
+        checks: Sequence[tuple[str, int]] = (),
+    ) -> str:
+        """Build the compact task/approach/outcome record Hermes consumes."""
+        lines = [f"Task: {self.request.prompt}"]
+        if applied or checks:
+            lines.append(
+                "The approach was to apply the generated workspace plan and "
+                "verify it with the configured checks."
+            )
+        else:
+            lines.append(
+                "The approach was to analyze the request through the staged agent pipeline."
+            )
+        if applied:
+            lines.append(
+                "Changed files: " + ", ".join(str(diff.path) for diff in applied if diff.path)
+            )
+        if checks:
+            lines.append(
+                "Checks: " + ", ".join(f"{command} (exit {code})" for command, code in checks)
+            )
+        lines.append(f"Outcome: {'success' if succeeded else 'fail'}. {detail}")
+        return "\n".join(lines)
+
+    def _remember_failure(
+        self,
+        reason: str,
+        *,
+        applied: Sequence[Diff] = (),
+        checks: Sequence[tuple[str, int]] = (),
+        tokens_used: int = 0,
+    ) -> None:
+        """Teach Hermes about every ERROR_CLOSED outcome (§14.2)."""
+        transcript = self._learning_transcript(
+            reason,
+            succeeded=False,
+            applied=applied,
+            checks=checks,
+        )
+        self._remember_run(
+            applied,
+            transcript,
+            succeeded=False,
+            tokens_used=tokens_used,
+        )
+
+    def _remember_run(
+        self,
+        applied: Sequence[Diff],
+        summary: str,
+        *,
+        succeeded: bool,
+        tokens_used: int = 0,
+    ) -> None:
+        """Persist what this run taught us (§14.1, §14.2).
+
+        Best-effort throughout: memory is an optimisation, so a failure here is
+        logged and swallowed rather than turning a successful run into an error.
+        """
+        transcript = summary or ""
+        store = self._project_memory
+        # Part 14.1 updates project facts only after a successful run. Hermes,
+        # below, learns from both success and ERROR_CLOSED outcomes.
+        if store is not None and succeeded:
+            try:
+                memory = store.load()
+                store.record_run(memory, tokens_used=tokens_used)
+                if succeeded and transcript:
+                    facts = self._extract_facts(transcript)
+                    store.merge_facts(memory, facts, run_id=self.run_id)
+                for diff in applied:
+                    path = getattr(diff, "path", None)
+                    if path:
+                        store.record_file_summary(
+                            memory,
+                            str(path),
+                            self._summarize_file(str(path), transcript),
+                            run_id=self.run_id,
+                        )
+                store.save(memory)
+            except Exception:  # pragma: no cover - defensive store boundary
+                logger.debug("project memory update failed", exc_info=True)
+
+        hermes = self._hermes
+        if hermes is not None:
+            try:
+                hermes.post_run(transcript, "success" if succeeded else "fail")
+            except Exception:  # pragma: no cover - defensive learning boundary
+                logger.debug("evolution post_run failed", exc_info=True)
+
+    def _extract_facts(self, transcript: str) -> list[str]:
+        """Ask the model for up to five facts about the codebase (§14.1).
+
+        Falls back to no facts when no provider is configured: inventing facts
+        from a heuristic would poison memory with statements no model ever made.
+        """
+        if not self._provider_configured():
+            return []
+        try:
+            raw = self._run_short_completion(
+                f"{FactExtractionPrompt}\n\nTranscript:\n{transcript[:6000]}"
+            )
+        except Exception:  # pragma: no cover - defensive model boundary
+            logger.debug("fact extraction failed", exc_info=True)
+            return []
+        return parse_extracted_facts(raw)
+
+    def _summarize_file(self, path: str, transcript: str) -> str:
+        """One-sentence description of a written file (§14.1).
+
+        Derived from the run summary rather than a second model call: the summary
+        already describes what changed, and a per-file model call would multiply
+        the cost of every run by the number of files touched.
+        """
+        for line in transcript.splitlines():
+            if path in line and len(line.strip()) > len(path) + 4:
+                return line.strip()
+        return f"Modified during run {self.run_id}."
+
+    def _run_short_completion(self, prompt: str) -> str:
+        """Run a small, non-streaming completion for internal bookkeeping."""
+        return self.brain.ask_response(prompt, None)  # type: ignore[arg-type]
 
     def _emit_plan(self, plan: EditPlan, structured_plan: AgentPlan | None = None) -> None:
         has_changes = plan.has_changes
@@ -1346,7 +1741,16 @@ class RunPipeline:
             verdict = self._wait_for_approval_decision(_PERMISSION_DECISION_TIMEOUT_SECONDS)
             if verdict is not None and getattr(verdict, "decision", None) == "approve":
                 return None
-        return f"permission {decision.effect}: {kind} {name!r} for {target!r} — {decision.reason}"
+        detail = f"permission {decision.effect}: {kind} {name!r} for {target!r} — {decision.reason}"
+        log_security_event(
+            "permission_denied",
+            detail,
+            run_id=self.run_id,
+            action_kind=kind,
+            tool=name,
+            target=target or None,
+        )
+        return detail
 
     def _run_post_write_tests(self) -> ProjectTestResult | None:
         detected = detect_project_test_command(self.workspace_root)
@@ -1486,9 +1890,24 @@ class RunPipeline:
 
     def run(self) -> RunResult:
         """Drive the routed run to a terminal outcome and close the stream."""
-        if isinstance(self.path, AskPath):
-            return self._run_ask(self.path)
-        return self._run_agent()
+        try:
+            self._check_cancelled()
+            if isinstance(self.path, AskPath):
+                return self._run_ask(self.path)
+            return self._run_agent()
+        except RunCancelled:
+            self._close()
+            return RunResult(
+                mode=self.path.mode,
+                run_id=self.run_id,
+                stage=Stage.ERROR_CLOSED,
+                stages=(Stage.ERROR_CLOSED,),
+            )
+
+    def _check_cancelled(self) -> None:
+        """Stop at a side-effect boundary when this run alone was cancelled."""
+        if self._is_cancelled():
+            raise RunCancelled(f"run {self.run_id} cancelled")
 
     # -- Ask Mode (text-only channel, R6.6) ---------------------------------
 
@@ -1506,6 +1925,7 @@ class RunPipeline:
             workspace_root=self.workspace_root,
             rag_matcher=self.rag_matcher,
         )
+        self._check_cancelled()
         if isinstance(result, AskResponse):
             text = result.text
         elif isinstance(result, (SwitchToAgentMessage, AskError)):
@@ -1551,6 +1971,7 @@ class RunPipeline:
         return self.brain.ask_response(prompt, context)
 
     def _emit_ask_token(self, chunk: str) -> None:
+        self._check_cancelled()
         if not chunk:
             return
         self._ask_streamed = True
@@ -1613,7 +2034,10 @@ class RunPipeline:
         def read_file(path: str) -> str:
             content = self.toolset.read_file(path)
             read_paths.append(path)
-            return content
+            # §15.1: workspace files are untrusted input. Fence anything that
+            # tries to impersonate a system instruction before it reaches the
+            # model, and audit the detection.
+            return sanitize_file_content(content, path)
 
         payload = build_read_files_payload(
             event.read_list,
@@ -1623,11 +2047,18 @@ class RunPipeline:
         return payload, tuple(read_paths)
 
     def _new_conversation_memory(self, context: RunContext) -> ConversationMemory:
+        # §14.1/§14.2: prepend what we already know about this project and which
+        # approach has worked before, so the agent carries continuity across
+        # sessions instead of starting cold every run.
+        system_parts = ["You are Zoc Agent, a workspace-confined coding assistant."]
+        for section in (self.memory_prompt_section(), self.approach_prompt_section()):
+            if section:
+                system_parts.append(section)
         return ConversationMemory(
             messages=[
                 Message(
                     Role.SYSTEM,
-                    "You are Zoc Agent, a workspace-confined coding assistant.",
+                    "\n\n".join(system_parts),
                     Stage.INTAKE.value,
                 ),
                 Message(Role.USER, self.request.prompt, Stage.INTAKE.value),
@@ -1684,9 +2115,11 @@ class RunPipeline:
             )
             context = self._build_context(allocation)
         except AllocationAborted as exc:
+            reason = f"{type(exc).__name__}: {exc}"
             fsm = FSM(initial=Stage.INTAKE, run_id=self.run_id, emit=self._emit)
-            fsm.fail(f"{type(exc).__name__}: {exc}")
+            fsm.fail(reason)
             stages.append(Stage.ERROR_CLOSED)
+            self._remember_failure(reason)
             self._close()
             return RunResult(
                 mode=Mode.AGENT,
@@ -1695,6 +2128,8 @@ class RunPipeline:
                 stages=tuple(stages),
                 allocation=None,
             )
+
+        self._check_cancelled()
 
         # R1.9: the INTAKE stage entry emits the IntentEvent carrying the tier,
         # window, and any fallback reason as the run's first event.
@@ -1718,6 +2153,7 @@ class RunPipeline:
             logger.exception("run %s failed during private thinking", self.run_id)
             fsm.fail(reason)
             stages.append(Stage.ERROR_CLOSED)
+            self._remember_failure(reason)
             self._close()
             return RunResult(
                 mode=Mode.AGENT,
@@ -1726,6 +2162,7 @@ class RunPipeline:
                 stages=tuple(stages),
                 allocation=allocation,
             )
+        self._check_cancelled()
         if scratchpad:
             memory.messages.append(Message(Role.ASSISTANT, scratchpad, Stage.ANALYZE.value))
             context = replace(context, scratchpad=scratchpad)
@@ -1744,6 +2181,7 @@ class RunPipeline:
             logger.exception("run %s failed during MAP_FILES", self.run_id)
             fsm.fail(reason)
             stages.append(Stage.ERROR_CLOSED)
+            self._remember_failure(reason)
             self._close()
             return RunResult(
                 mode=Mode.AGENT,
@@ -1752,6 +2190,7 @@ class RunPipeline:
                 stages=tuple(stages),
                 allocation=allocation,
             )
+        self._check_cancelled()
         self._emit(
             MapFilesContractEvent(
                 seq=0,
@@ -1779,6 +2218,7 @@ class RunPipeline:
         stages.append(fsm.advance())  # MAP_FILES → READ_FILES
         read_payload, read_paths = self._read_selected_files(map_event)
         context = replace(context, read_files_payload=read_payload)
+        self._check_cancelled()
         if read_payload:
             memory.messages.append(Message(Role.TOOL_RESULT, read_payload, Stage.READ_FILES.value))
         context = self._context_with_memory(context, memory)
@@ -1848,6 +2288,7 @@ class RunPipeline:
         the recovery ceiling (R4.4) freezes the loop and serializes state to
         the State_Wrapper for a hot-swap instead of looping forever (R11.1).
         """
+        self._check_cancelled()
         try:
             self._maybe_compress(memory, allocation.context_window)
             context = self._context_with_memory(context, memory)
@@ -1887,6 +2328,7 @@ class RunPipeline:
             logger.exception("run %s failed while planning edits", self.run_id)
             fsm.fail(reason)
             stages.append(Stage.ERROR_CLOSED)
+            self._remember_failure(reason, tokens_used=tokens_used)
             self._close()
             return RunResult(
                 mode=Mode.AGENT,
@@ -1895,8 +2337,51 @@ class RunPipeline:
                 stages=tuple(stages),
                 allocation=allocation,
             )
+        self._check_cancelled()
         tokens_used += _estimate_edit_plan_tokens(plan)
         self._emit_budget(context, orchestrator, tokens_used)
+
+        # §12.2 Plan mode: the plan is complete, so stop here. Emit the whole
+        # plan for review and wait for an explicit approval before *anything*
+        # touches the workspace. A rejection ends the run without applying.
+        if self.plan_only:
+            gate = self._await_plan_approval(structured_plan, plan)
+            self._check_cancelled()
+            if not gate.approved:
+                self._emit_plan(plan, structured_plan)
+                fsm.plan_complete(has_changes=False)  # PLAN_EDITS → SUMMARY-ish
+                self._close()
+                return RunResult(
+                    mode=Mode.PLAN,
+                    run_id=self.run_id,
+                    stage=Stage.PLAN_EDITS,
+                    stages=tuple(stages),
+                    allocation=allocation,
+                )
+            # Approved: honour any per-step deselection before applying.
+            if gate.accepted_paths is not None:
+                structured_plan, plan = _restrict_plan_to_paths(
+                    structured_plan, plan, gate.accepted_paths
+                )
+
+        # §12.3: claim the files this run intends to write before applying, so a
+        # concurrent run cannot interleave writes into the same file. Contention
+        # surfaces as an approval prompt rather than a silent wait.
+        lock_paths = self._planned_write_paths(structured_plan, plan)
+        lock_result = self._acquire_write_locks(lock_paths)
+        self._check_cancelled()
+        if not lock_result.acquired:
+            self._close()
+            return RunResult(
+                mode=Mode.AGENT,
+                run_id=self.run_id,
+                stage=Stage.PAUSED,
+                stages=tuple((*stages, Stage.PAUSED)),
+                allocation=allocation,
+                paused=True,
+                deferred=True,
+            )
+
         applied: list[Diff] = []
         checks: list[tuple[str, int]] = []
         remediating = False
@@ -1904,6 +2389,7 @@ class RunPipeline:
         # The loop can only re-enter PLAN_EDITS as many times as the recovery
         # budget allows; the guard is a hard backstop against a runaway planner.
         for _ in range(orchestrator.budget.ERROR_CEILING + 1):
+            self._check_cancelled()
             wrote_code = False
             self._emit_plan(plan, structured_plan)
             edits.plan_edits(plan)  # collapsible thinking event (R3.6)
@@ -1948,7 +2434,9 @@ class RunPipeline:
                         ),
                         authorize_tool=self._authorize_tool,
                     )
+                self._check_cancelled()
                 result = executor.apply()
+                self._check_cancelled()
                 applied.extend(result.applied)  # edit-file events already emitted (R3.7)
                 wrote_code = result.wrote_code
                 if result.paused:
@@ -1966,8 +2454,15 @@ class RunPipeline:
                     )
                 if result.failed:
                     # R3.9: apply failed → unrecoverable terminal error close.
-                    fsm.fail(result.error or "apply failed")
+                    reason = result.error or "apply failed"
+                    fsm.fail(reason)
                     stages.append(Stage.ERROR_CLOSED)
+                    self._remember_failure(
+                        reason,
+                        applied=applied,
+                        checks=checks,
+                        tokens_used=tokens_used,
+                    )
                     self._close()
                     return RunResult(
                         mode=Mode.AGENT,
@@ -1981,6 +2476,7 @@ class RunPipeline:
             else:
                 stages.append(fsm.plan_complete(has_changes=False))  # R3.8
 
+            self._check_cancelled()
             self._emit_plan_update("validate", "active")
             try:
                 test_result = self._run_post_write_tests() if wrote_code else None
@@ -1994,6 +2490,12 @@ class RunPipeline:
                 logger.exception("run %s failed while running checks", self.run_id)
                 fsm.fail(reason)
                 stages.append(Stage.ERROR_CLOSED)
+                self._remember_failure(
+                    reason,
+                    applied=applied,
+                    checks=checks,
+                    tokens_used=tokens_used,
+                )
                 self._close()
                 return RunResult(
                     mode=Mode.AGENT,
@@ -2002,6 +2504,7 @@ class RunPipeline:
                     stages=tuple(stages),
                     allocation=allocation,
                 )
+            self._check_cancelled()
             checks.append((command, exit_code))
             memory.messages.append(
                 Message(
@@ -2031,16 +2534,24 @@ class RunPipeline:
                 if self.request.review_changes and applied:
                     self._emit_review(applied, checks)
                 try:
+                    self._check_cancelled()
                     summary = (
                         self._review_and_maybe_apply(applied)
                         if self.request.review_changes
                         else "Completed the requested agent run."
                     )
+                    self._check_cancelled()
                 except Exception as exc:
                     reason = f"review apply failed: {type(exc).__name__}: {exc}"
                     logger.exception("run %s failed while applying review", self.run_id)
                     fsm.fail(reason)
                     stages.append(Stage.ERROR_CLOSED)
+                    self._remember_failure(
+                        reason,
+                        applied=applied,
+                        checks=checks,
+                        tokens_used=tokens_used,
+                    )
                     self._close()
                     return RunResult(
                         mode=Mode.AGENT,
@@ -2054,6 +2565,19 @@ class RunPipeline:
                 stages.append(fsm.advance())  # SUMMARY → DONE (R3.4)
                 self._close()
                 self._record_evolution(stages, applied, checks, reached_done=True)
+                # §14.1/§14.2: learn from the finished run before returning.
+                transcript = self._learning_transcript(
+                    summary,
+                    succeeded=True,
+                    applied=applied,
+                    checks=checks,
+                )
+                self._remember_run(
+                    applied,
+                    transcript,
+                    succeeded=True,
+                    tokens_used=tokens_used,
+                )
                 return RunResult(
                     mode=Mode.AGENT,
                     run_id=self.run_id,
@@ -2212,6 +2736,12 @@ def execute_run(
     mcp_host: MCPHost | None = None,
     mcp_loop: asyncio.AbstractEventLoop | None = None,
     check_permission: PermissionGate | None = None,
+    network_allowlist: Sequence[str] | None = None,
+    is_cancelled: Callable[[], bool] | None = None,
+    plan_only: bool = False,
+    file_locks: FileLockRegistry | None = None,
+    project_memory: ProjectMemoryStore | None = None,
+    hermes: HermesEvolution | None = None,
 ) -> RunResult:
     """Build a :class:`RunPipeline` for ``request`` and drive it to completion.
 
@@ -2252,6 +2782,12 @@ def execute_run(
             mcp_host=mcp_host,
             mcp_loop=mcp_loop,
             check_permission=check_permission,
+            network_allowlist=network_allowlist,
+            is_cancelled=is_cancelled,
+            plan_only=plan_only,
+            file_locks=file_locks,
+            project_memory=project_memory,
+            hermes=hermes,
         )
         try:
             return pipeline.run()

@@ -56,16 +56,10 @@ pub fn run(spec: &PtySpec, timeout: Option<Duration>) -> Result<(String, Option<
         })
         .context("openpty")?;
 
-    let mut child = pair
-        .slave
-        .spawn_command(build_cmd(spec))
-        .context("spawn")?;
+    let mut child = pair.slave.spawn_command(build_cmd(spec)).context("spawn")?;
     drop(pair.slave);
 
-    let mut reader = pair
-        .master
-        .try_clone_reader()
-        .context("clone_reader")?;
+    let mut reader = pair.master.try_clone_reader().context("clone_reader")?;
 
     // Spawn a reader thread to avoid blocking indefinitely
     let (tx, rx) = mpsc::channel::<Result<Vec<u8>, std::io::Error>>();
@@ -201,22 +195,13 @@ pub fn spawn_streaming(spec: &PtySpec) -> Result<Option<i32>> {
         })
         .context("openpty")?;
 
-    let mut child = pair
-        .slave
-        .spawn_command(build_cmd(spec))
-        .context("spawn")?;
+    let mut child = pair.slave.spawn_command(build_cmd(spec)).context("spawn")?;
     drop(pair.slave);
 
     let pid = child.process_id();
-    println!(
-        "{}",
-        serde_json::to_string(&PtyEvent::Started { pid })?
-    );
+    println!("{}", serde_json::to_string(&PtyEvent::Started { pid })?);
 
-    let mut reader = pair
-        .master
-        .try_clone_reader()
-        .context("clone_reader")?;
+    let mut reader = pair.master.try_clone_reader().context("clone_reader")?;
 
     // Spawn a reader thread
     let (tx, rx) = mpsc::channel::<Result<Vec<u8>, std::io::Error>>();

@@ -61,6 +61,7 @@ from zocai_gateway.model_runtime import (
 from zocai_gateway.orchestrator import Orchestrator
 from zocai_gateway.permissions import Decision
 from zocai_gateway.plan import AgentPlan
+from zocai_gateway.security import log_security_event
 from zocai_gateway.stages import Stage
 from zocai_gateway.toolsets import FullToolset, ReadOnlyViolation
 
@@ -92,7 +93,8 @@ ReAct_System_Prompt = (
     "of your previous tool call (your latest observation) to decide what to do "
     "next.\n"
     "Use the available tools — write_file, make_dir, delete_file, move_file, "
-    "run_shell, and read_file — to carry out the plan; all paths are relative "
+    "run_shell, read_file, and fetch_url — to carry out the plan; all file "
+    "paths are relative "
     "to the workspace root.\n"
     "When every step is complete, respond with plain text only and issue no "
     "further tool call.\n"
@@ -146,6 +148,18 @@ TOOL_SPECS: tuple[ToolSpec, ...] = (
             "type": "object",
             "properties": {"argv": {"type": "array", "items": _STRING}},
             "required": ["argv"],
+        },
+    ),
+    ToolSpec(
+        name="fetch_url",
+        description=(
+            "Fetch a public http/https URL through the workspace network "
+            "allowlist. Private and loopback addresses are always blocked."
+        ),
+        parameters={
+            "type": "object",
+            "properties": {"url": _STRING},
+            "required": ["url"],
         },
     ),
 )
@@ -432,6 +446,7 @@ class ReActExecutor:
     def _dispatch(self, call: ToolCall) -> _DispatchResult:
         """Route ``call`` through the FullToolset only, catching failures (R9.4/9.5/9.6)."""
         name = call.name
+        permission_approved = False
         # Part 7.1: every tool is evaluated, including reads and MCP calls.
         # Emit the full policy decision before execution so the frontend audit
         # log observes allows, denials, and prompts with one ordered run id.
@@ -469,16 +484,26 @@ class ReActExecutor:
                         verdict is not None and getattr(verdict, "decision", None) == "approve"
                     )
                 if not approved:
+                    detail = (
+                        f"permission {decision.effect}: {kind} {tool_name!r} "
+                        f"for {target!r} — {decision.reason}"
+                    )
+                    log_security_event(
+                        "permission_denied",
+                        detail,
+                        run_id=self.run_id,
+                        action_kind=kind,
+                        tool=tool_name,
+                        target=target or None,
+                    )
                     return _DispatchResult(
                         observation=ToolObservation(
                             call.id,
                             ok=False,
-                            content=(
-                                f"permission {decision.effect}: {kind} {tool_name!r} "
-                                f"for {target!r} — {decision.reason}"
-                            ),
+                            content=detail,
                         )
                     )
+                permission_approved = True
 
         if self.mcp_call is not None and name in self._mcp_names:
             ok, content = self.mcp_call(name, call.arguments)  # aggregated MCP tool (Part 4)
@@ -497,6 +522,8 @@ class ReActExecutor:
             return self._dispatch_move(call)
         if name == "run_shell":
             return self._dispatch_shell(call)
+        if name == "fetch_url":
+            return self._dispatch_fetch(call, allow_unlisted=permission_approved)
         return _DispatchResult(
             observation=ToolObservation(call.id, ok=False, content=f"unknown tool: {name!r}")
         )
@@ -668,6 +695,65 @@ class ReActExecutor:
             event=event,
         )
 
+    def _dispatch_fetch(
+        self,
+        call: ToolCall,
+        *,
+        allow_unlisted: bool,
+    ) -> _DispatchResult:
+        """Run the only network-capable native tool under §15.2 controls."""
+        url = _arg_str(call.arguments, "url")
+        result = self.toolset.fetch_url(url, allow_unlisted=allow_unlisted)
+        if result.needs_approval and not allow_unlisted:
+            approved = False
+            if self.wait_for_permission is not None:
+                self.emit(
+                    ApprovalEvent(
+                        seq=0,
+                        run_id=self.run_id,
+                        ts=_now(),
+                        prompt=(
+                            f"{result.error} Approve fetching {url!r} once, "
+                            "or reject to keep network access blocked."
+                        ),
+                    )
+                )
+                verdict = self.wait_for_permission(PERMISSION_DECISION_TIMEOUT)
+                approved = verdict is not None and getattr(verdict, "decision", None) == "approve"
+            if approved:
+                result = self.toolset.fetch_url(url, allow_unlisted=True)
+            else:
+                log_security_event(
+                    "permission_denied",
+                    result.error or "network host was not approved",
+                    run_id=self.run_id,
+                    action_kind="agent_tool",
+                    tool="fetch_url",
+                    target=url or None,
+                )
+
+        if not result.ok:
+            return _DispatchResult(
+                observation=ToolObservation(
+                    call.id,
+                    ok=False,
+                    content=result.error or "fetch failed",
+                )
+            )
+
+        headers = "\n".join(f"{key}: {value}" for key, value in sorted(result.headers.items()))
+        prefix = f"HTTP {result.status}"
+        if headers:
+            prefix = f"{prefix}\n{headers}"
+        suffix = "\n[response truncated at 1 MiB]" if result.truncated else ""
+        return _DispatchResult(
+            observation=ToolObservation(
+                call.id,
+                ok=True,
+                content=_clip(f"{prefix}\n\n{result.body}{suffix}"),
+            )
+        )
+
     # -- step satisfaction (R5.6, R8.5) -------------------------------------
 
     def _satisfied_by(self, actions: Sequence[str], path: str) -> tuple[int, ...]:
@@ -775,6 +861,8 @@ def _permission_request(call: ToolCall, *, is_mcp: bool = False) -> tuple[Permis
         return "mcp", call.name, call.name
     if call.name == "run_shell":
         return "terminal", call.name, " ".join(_arg_list(call.arguments, "argv"))
+    if call.name == "fetch_url":
+        return "agent_tool", call.name, _arg_str(call.arguments, "url")
     if call.name == "move_file":
         return "fs", call.name, _arg_str(call.arguments, "dst")
     return "fs", call.name, _arg_str(call.arguments, "path")

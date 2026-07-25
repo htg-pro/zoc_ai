@@ -34,9 +34,7 @@ fn map_event(kind: &EventKind, paths: &[PathBuf]) -> Vec<FsEvent> {
             let path = pb.display().to_string();
             match kind {
                 EventKind::Create(_) => FsEvent::Created { path },
-                EventKind::Modify(notify::event::ModifyKind::Name(_)) => {
-                    FsEvent::Renamed { path }
-                }
+                EventKind::Modify(notify::event::ModifyKind::Name(_)) => FsEvent::Renamed { path },
                 EventKind::Modify(_) => FsEvent::Modified { path },
                 EventKind::Remove(_) => FsEvent::Removed { path },
                 other => FsEvent::Other {
@@ -52,11 +50,10 @@ fn map_event(kind: &EventKind, paths: &[PathBuf]) -> Vec<FsEvent> {
 /// is set, exits after that long (useful for tests and short-lived probes).
 pub fn run<P: AsRef<Path>>(root: P, duration: Option<Duration>) -> Result<()> {
     let (tx, rx) = channel();
-    let mut watcher =
-        recommended_watcher(move |res| {
-            let _ = tx.send(res);
-        })
-        .context("create watcher")?;
+    let mut watcher = recommended_watcher(move |res| {
+        let _ = tx.send(res);
+    })
+    .context("create watcher")?;
     watcher
         .watch(root.as_ref(), RecursiveMode::Recursive)
         .context("watch")?;

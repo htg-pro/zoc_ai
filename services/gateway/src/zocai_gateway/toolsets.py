@@ -21,20 +21,49 @@ switch-to-Agent handling are wired in task 4.2.
 from __future__ import annotations
 
 import subprocess
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Protocol
+from urllib.error import HTTPError, URLError
+from urllib.request import Request, urlopen
+
+from zocai_gateway.net_guard import (
+    FETCH_TIMEOUT_SECONDS,
+    MAX_RESPONSE_BYTES,
+    check_command,
+    check_url,
+    strip_sensitive_headers,
+)
+from zocai_gateway.security import log_security_event
 
 if TYPE_CHECKING:  # additive MCP seam types (no runtime import cycle)
     from zocai_gateway.context.mcp_host.models import McpToolRecord, ToolCallOutcome
 
 __all__ = [
+    "FetchResult",
     "FullToolset",
     "McpCallSeam",
     "ReadOnlyToolset",
     "ReadOnlyViolation",
     "Toolset",
 ]
+
+
+@dataclass(frozen=True, slots=True)
+class FetchResult:
+    """The outcome of a guarded :meth:`FullToolset.fetch_url` call (§15.2)."""
+
+    ok: bool
+    status: int = 0
+    headers: Mapping[str, str] = field(default_factory=dict)
+    body: str = ""
+    #: True when the response hit the size cap and was cut short.
+    truncated: bool = False
+    error: str = ""
+    #: True when the host is not allowlisted, so the caller should ask the user.
+    needs_approval: bool = False
+    url: str = ""
 
 
 class McpCallSeam(Protocol):
@@ -76,8 +105,14 @@ class Toolset:
     is rejected.
     """
 
-    def __init__(self, workspace_root: Path | str = ".") -> None:
+    def __init__(
+        self,
+        workspace_root: Path | str = ".",
+        *,
+        run_id: str = "",
+    ) -> None:
         self.workspace_root: Path = Path(workspace_root).resolve()
+        self.run_id = run_id
 
     def _resolve_within_workspace(self, rel_path: Path | str, operation: str) -> Path:
         """Resolve ``rel_path`` and assert it stays inside the workspace.
@@ -88,6 +123,14 @@ class Toolset:
         """
         candidate = (self.workspace_root / Path(rel_path)).resolve()
         if candidate != self.workspace_root and self.workspace_root not in candidate.parents:
+            log_security_event(
+                "path_traversal",
+                f"blocked {operation} outside the workspace",
+                path=str(rel_path),
+                operation=operation,
+                workspace=str(self.workspace_root),
+                run_id=self.run_id or None,
+            )
             raise ReadOnlyViolation(operation)
         return candidate
 
@@ -114,9 +157,22 @@ class FullToolset(Toolset):
     ``workspace_root``.
     """
 
-    def __init__(self, workspace_root: Path | str = ".", *, mcp: McpCallSeam | None = None) -> None:
-        super().__init__(workspace_root)
+    def __init__(
+        self,
+        workspace_root: Path | str = ".",
+        *,
+        mcp: McpCallSeam | None = None,
+        network_allowlist: Iterable[str] | None = None,
+        run_id: str = "",
+    ) -> None:
+        super().__init__(workspace_root, run_id=run_id)
         self._mcp = mcp
+        # ``None`` means no workspace permission policy was supplied (legacy
+        # direct callers). An empty tuple is a real policy that allows no hosts
+        # until the user explicitly approves one.
+        self._network_allowlist = (
+            tuple(network_allowlist) if network_allowlist is not None else None
+        )
 
     def mcp_tools(self) -> list[McpToolRecord]:
         """Aggregated MCP tools exposed to the model, or ``[]`` when no host is
@@ -179,9 +235,7 @@ class FullToolset(Toolset):
         source = self._resolve_within_workspace(src_rel, "move_file")
         destination = self._resolve_within_workspace(dst_rel, "move_file")
         if destination.exists():
-            raise FileExistsError(
-                f"move destination already exists: {destination.name!r}"
-            )
+            raise FileExistsError(f"move destination already exists: {destination.name!r}")
         destination.parent.mkdir(parents=True, exist_ok=True)
         source.rename(destination)
 
@@ -191,11 +245,82 @@ class FullToolset(Toolset):
         Accepts an argument vector (``argv``) rather than a command string so
         the command is executed without a shell, avoiding injection (R3.5,
         R8.9). The process runs with ``cwd`` set to the workspace root.
+
+        §15.2: network clients are refused before the process is spawned. The
+        agent must go through :meth:`fetch_url`, which enforces the address-space
+        and allowlist rules and is audited; an unaudited ``curl`` would bypass
+        both. The refusal is returned as a failed
+        :class:`~subprocess.CompletedProcess` rather than raised, so the calling
+        tool loop reports it like any other command failure.
         """
+        command = " ".join(argv)
+        screened = check_command(command, run_id=self.run_id)
+        if not screened.allowed:
+            return subprocess.CompletedProcess(
+                args=argv, returncode=126, stdout="", stderr=screened.reason
+            )
         return subprocess.run(
             argv,
             cwd=self.workspace_root,
             capture_output=True,
             text=True,
             check=False,
+        )
+
+    def fetch_url(
+        self,
+        url: str,
+        *,
+        allowlist: Iterable[str] | None = None,
+        allow_unlisted: bool = False,
+        timeout: float = FETCH_TIMEOUT_SECONDS,
+        max_bytes: int = MAX_RESPONSE_BYTES,
+    ) -> FetchResult:
+        """Fetch ``url`` under the §15.2 network restrictions.
+
+        Enforced, in order: http/https only, no private/loopback/link-local
+        targets (checked against *resolved* addresses, so a hostname cannot be
+        used to reach an internal service), the workspace allowlist, a
+        ``timeout``-second ceiling, and a ``max_bytes`` response cap. Session and
+        credential headers are stripped from the result.
+
+        A host that is merely not allowlisted comes back with
+        ``needs_approval=True`` so the caller can raise a ``decision_required``
+        instead of failing outright; every other refusal is terminal.
+        """
+        configured_allowlist = (
+            tuple(allowlist) if allowlist is not None else self._network_allowlist
+        )
+        verdict = check_url(
+            url,
+            allowlist=configured_allowlist or (),
+            enforce_allowlist=(False if allow_unlisted else configured_allowlist is not None),
+            run_id=self.run_id,
+        )
+        if not verdict.allowed:
+            return FetchResult(
+                ok=False,
+                error=verdict.reason,
+                needs_approval=verdict.needs_approval,
+                url=url,
+            )
+
+        request = Request(url, headers={"User-Agent": "zoc-studio-agent"})
+        try:
+            with urlopen(request, timeout=timeout) as response:
+                body = response.read(max_bytes + 1)
+                headers = strip_sensitive_headers(dict(response.headers.items()))
+                status = int(getattr(response, "status", 0) or 0)
+        except (URLError, HTTPError, OSError, ValueError) as exc:
+            return FetchResult(ok=False, error=f"fetch failed: {exc}", url=url)
+
+        truncated = len(body) > max_bytes
+        text = body[:max_bytes].decode("utf-8", errors="replace")
+        return FetchResult(
+            ok=True,
+            status=status,
+            headers=headers,
+            body=text,
+            truncated=truncated,
+            url=url,
         )

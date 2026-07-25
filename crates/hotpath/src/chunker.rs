@@ -13,7 +13,7 @@ use std::fs;
 use std::path::Path;
 use std::sync::OnceLock;
 
-#[derive(Serialize, Debug)]
+#[derive(Serialize, Debug, Clone, PartialEq, Eq)]
 pub struct Chunk {
     pub file: String,
     pub start_line: usize,
@@ -54,12 +54,23 @@ fn extract_symbol(line: &str) -> Option<String> {
 }
 
 pub fn chunk_file<P: AsRef<Path>>(path: P, target_lines: Option<usize>) -> Result<Vec<Chunk>> {
-    let target = target_lines.unwrap_or(DEFAULT_TARGET_LINES).max(4);
     let text = fs::read_to_string(&path)?;
-    let path_str = path.as_ref().display().to_string();
+    Ok(chunk_text(
+        &path.as_ref().display().to_string(),
+        &text,
+        target_lines,
+    ))
+}
+
+/// Chunk already-loaded text, labelling every chunk with `path_str`.
+///
+/// Split out of [`chunk_file`] so the parallel indexer can chunk content it
+/// already holds (e.g. from the LRU read cache) without a second disk read.
+pub fn chunk_text(path_str: &str, text: &str, target_lines: Option<usize>) -> Vec<Chunk> {
+    let target = target_lines.unwrap_or(DEFAULT_TARGET_LINES).max(4);
     let lines: Vec<&str> = text.lines().collect();
     if lines.is_empty() {
-        return Ok(Vec::new());
+        return Vec::new();
     }
     let mut chunks = Vec::new();
     let mut i = 0usize;
@@ -68,7 +79,7 @@ pub fn chunk_file<P: AsRef<Path>>(path: P, target_lines: Option<usize>) -> Resul
         let slice = &lines[i..end];
         let symbol = slice.iter().find_map(|l| extract_symbol(l));
         chunks.push(Chunk {
-            file: path_str.clone(),
+            file: path_str.to_string(),
             start_line: i + 1,
             end_line: end,
             symbol,
@@ -76,7 +87,7 @@ pub fn chunk_file<P: AsRef<Path>>(path: P, target_lines: Option<usize>) -> Resul
         });
         i = end;
     }
-    Ok(chunks)
+    chunks
 }
 
 #[cfg(test)]

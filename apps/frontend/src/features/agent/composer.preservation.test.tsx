@@ -36,6 +36,7 @@ vi.mock("lucide-react", () => {
   };
   return {
     ArrowUp: makeIcon("ArrowUp"),
+    ClipboardList: makeIcon("ClipboardList"),
     Paperclip: makeIcon("Paperclip"),
     ShieldCheck: makeIcon("ShieldCheck"),
     Square: makeIcon("Square"),

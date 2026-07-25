@@ -7,9 +7,9 @@
 
 use anyhow::Result;
 use clap::{Parser, Subcommand};
-use zoc_studio_hotpath::{chunker, fs_watch, indexer, patch, pty, search, VERSION};
 use serde::Serialize;
 use std::time::Duration;
+use zoc_studio_hotpath::{chunker, fs_watch, indexer, patch, pty, search, VERSION};
 
 #[derive(Parser, Debug)]
 #[command(name = "zoc-studio-hotpath", version = VERSION)]
@@ -76,6 +76,27 @@ enum IndexCmd {
         #[arg(long)]
         max: Option<usize>,
     },
+    /// Read + chunk a whole tree in parallel, streaming progress JSON lines.
+    ///
+    /// Emits `{"event":"progress","indexed":N,"total":M}` lines while working
+    /// and finishes with the usual `{"ok":true,"data":…}` object.
+    Build {
+        path: String,
+        #[arg(long)]
+        max: Option<usize>,
+        #[arg(long)]
+        target_lines: Option<usize>,
+        /// Skip files larger than this many bytes (default 1 MiB).
+        #[arg(long)]
+        max_file_bytes: Option<u64>,
+        /// Read and cache files without emitting chunk payloads.
+        #[arg(long, default_value_t = false)]
+        no_chunks: bool,
+    },
+    /// Read one file through the LRU cache.
+    Read { path: String },
+    /// Report LRU read-cache occupancy and hit/miss counters.
+    CacheStats,
 }
 
 #[derive(Subcommand, Debug)]
@@ -143,8 +164,7 @@ fn ok<T: Serialize>(data: T) -> Result<()> {
 fn main() -> Result<()> {
     tracing_subscriber::fmt()
         .with_env_filter(
-            tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| "warn".into()),
+            tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| "warn".into()),
         )
         .init();
 
@@ -154,6 +174,47 @@ fn main() -> Result<()> {
         Cmd::Index { sub } => match sub {
             IndexCmd::Count { path } => ok(indexer::count_files(&path)?)?,
             IndexCmd::Walk { path, max } => ok(indexer::walk(&path, max)?)?,
+            IndexCmd::Build {
+                path,
+                max,
+                target_lines,
+                max_file_bytes,
+                no_chunks,
+            } => {
+                let opts = indexer::IndexOptions {
+                    max_files: max,
+                    target_lines,
+                    max_file_bytes: max_file_bytes.unwrap_or(indexer::MAX_INDEXED_FILE_BYTES),
+                    emit_chunks: !no_chunks,
+                };
+                // Progress is forwarded on a dedicated thread so the rayon
+                // workers never block on stdout.
+                let (tx, rx) = std::sync::mpsc::channel::<indexer::IndexProgress>();
+                let printer = std::thread::spawn(move || {
+                    for event in rx {
+                        if let Ok(line) = serde_json::to_string(&serde_json::json!({
+                            "event": "progress",
+                            "indexed": event.indexed,
+                            "total": event.total,
+                        })) {
+                            println!("{line}");
+                        }
+                    }
+                });
+                let outcome = indexer::index_workspace(&path, opts, Some(&tx));
+                drop(tx);
+                let _ = printer.join();
+                ok(outcome?)?
+            }
+            IndexCmd::Read { path } => {
+                let content = indexer::read_cached(&path)?;
+                ok(serde_json::json!({
+                    "path": path,
+                    "bytes": content.len(),
+                    "content": &*content,
+                }))?
+            }
+            IndexCmd::CacheStats => ok(indexer::cache_stats())?,
         },
         Cmd::Watch { sub } => match sub {
             WatchCmd::Probe { path } => ok(fs_watch::probe(&path)?)?,
@@ -194,8 +255,7 @@ fn main() -> Result<()> {
                     cols,
                     rows,
                 };
-                let (stdout, code) =
-                    pty::run(&spec, timeout_ms.map(Duration::from_millis))?;
+                let (stdout, code) = pty::run(&spec, timeout_ms.map(Duration::from_millis))?;
                 ok(serde_json::json!({ "stdout": stdout, "exit_code": code }))?
             }
             PtyCmd::Spawn {
@@ -217,11 +277,10 @@ fn main() -> Result<()> {
         },
         Cmd::ApplyPatch { file, diff, fuzz } => {
             use std::io::Read;
-            
+
             // Read the original file
-            let original = std::fs::read_to_string(&file)
-                .unwrap_or_default();
-            
+            let original = std::fs::read_to_string(&file).unwrap_or_default();
+
             // Read diff from arg or stdin
             let diff_content = if let Some(d) = diff {
                 d
@@ -230,13 +289,13 @@ fn main() -> Result<()> {
                 std::io::stdin().read_to_string(&mut buf)?;
                 buf
             };
-            
+
             // Apply the patch
             let result = patch::apply_unified_fuzzy(&original, &diff_content, fuzz);
-            
+
             // Output JSON result
             ok(result)?
-        },
+        }
     }
     Ok(())
 }

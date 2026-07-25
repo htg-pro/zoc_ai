@@ -1,16 +1,21 @@
-import { Component, useState, useEffect, type ErrorInfo, type ReactNode } from "react";
+import { Component, useState, useEffect, useMemo, type ErrorInfo, type ReactNode } from "react";
 import { FilePenLine, Pause, Play, Square, Zap } from "lucide-react";
 import { useApp } from "@/lib/store";
 import { cn } from "@/lib/utils";
 import { formatElapsed } from "@/lib/format-elapsed";
 import { controlAvailability } from "@/lib/run-machine";
 import { AgentMenu } from "./AgentMenu";
+import { AgentCrashBanner } from "./AgentCrashBanner";
+import { AgentRunSwitcher } from "./AgentRunSwitcher";
 import { RunRegion } from "./RunRegion";
 import { Composer } from "./Composer";
 import { ContextBar } from "./ContextBar";
 import { ContextLimitDialog } from "./ContextLimitDialog";
 import { ModelPicker } from "./ModelPicker";
+import { ViewerBanner } from "./ShareSessionDialog";
 import { TokenBudgetMeter } from "./TokenBudgetMeter";
+import { activeRuns, isTerminal } from "./agent-runs";
+import { currentViewerContext } from "./share-session";
 
 export function AgentPanel() {
   const contextStatus   = useApp((s) => s.contextStatus);
@@ -19,8 +24,8 @@ export function AgentPanel() {
   const activeRunMode   = useApp((s) => s.activeRunMode);
   const reviewRunning   = useApp((s) => s.reviewRunning);
   const testRunning     = useApp((s) => s.testGenRunning || s.testRunRunning);
-  const runActive       = streaming || reviewRunning || testRunning;
   const cancelStream    = useApp((s) => s.cancelStream);
+  const cancelRunById   = useApp((s) => s.cancelRunById);
   const selectedModel   = useApp((s) => s.selectedModel);
   const autonomy        = useApp((s) => s.autonomy);
   const agentPaused     = useApp((s) => s.agentPaused);
@@ -29,6 +34,21 @@ export function AgentPanel() {
   const resumeAgent     = useApp((s) => s.resumeAgent);
   const workspaceRoot    = useApp((s) => s.workspaceRoot);
   const openInstructions = useApp((s) => s.openProjectInstructions);
+  const trackedRuns       = useApp((s) => s.trackedRuns ?? []);
+  const focusedRunId      = useApp((s) => s.focusedRunId ?? null);
+  const maxConcurrentRuns = useApp((s) => s.maxConcurrentRuns ?? 3);
+  const focusRun          = useApp((s) => s.focusRun);
+  const viewer             = useMemo(currentViewerContext, []);
+  const activeTrackedRuns  = activeRuns(trackedRuns);
+  const focusedRun         = trackedRuns.find((run) => run.runId === focusedRunId)
+    ?? activeTrackedRuns[activeTrackedRuns.length - 1];
+  const runActive          = activeTrackedRuns.length > 0
+    || (trackedRuns.length === 0 && streaming)
+    || reviewRunning
+    || testRunning;
+  const stopRunId          = focusedRun && !isTerminal(focusedRun)
+    ? focusedRun.runId
+    : activeTrackedRuns[activeTrackedRuns.length - 1]?.runId;
   const [showContextLimit, setShowContextLimit] = useState(false);
   const [elapsedMs, setElapsedMs] = useState(0);
 
@@ -44,9 +64,15 @@ export function AgentPanel() {
   }, [runActive]);
 
   const elapsedTime  = formatElapsed(elapsedMs);
-  const displayMode  = runActive ? activeRunMode ?? agentMode : agentMode;
+  const displayMode  = focusedRun?.mode ?? (runActive ? activeRunMode ?? agentMode : agentMode);
   const isAsk        = displayMode === "ask";
-  const statusText   = agentPaused ? "Paused" : isAsk ? "Answering…" : "Building…";
+  const statusText   = viewer.readOnly
+    ? "Watching…"
+    : agentPaused
+      ? "Paused"
+      : isAsk
+        ? "Answering…"
+        : "Building…";
 
   return (
     <div
@@ -55,6 +81,8 @@ export function AgentPanel() {
     >
       {/* ── Header ───────────────────────────────────────────────────── */}
       <div className="row-start-1 shrink-0 border-b border-[#1A1A1F] bg-[#0C0C10]">
+        <ViewerBanner />
+        {!viewer.readOnly && <AgentCrashBanner />}
         <div className="flex min-h-[48px] items-center gap-3 px-3.5 py-2">
           {/* Brand mark */}
           <div className="flex items-center gap-2.5 min-w-0">
@@ -75,7 +103,7 @@ export function AgentPanel() {
           </div>
 
           <div className="ml-auto flex items-center gap-2 shrink-0">
-            <button
+            {!viewer.readOnly && <button
               type="button"
               onClick={() => void openInstructions()}
               disabled={!workspaceRoot}
@@ -84,9 +112,9 @@ export function AgentPanel() {
             >
               <FilePenLine className="h-3 w-3 shrink-0" />
               <span>Edit instructions</span>
-            </button>
+            </button>}
 
-            {runActive ? (
+            {runActive || viewer.readOnly ? (
               /* ── Live status pill ── */
               <div className="flex items-center gap-2 rounded-full border border-[#26262B] bg-[#15151A] px-2.5 py-1">
                 <span className="relative flex h-2 w-2 shrink-0">
@@ -108,16 +136,23 @@ export function AgentPanel() {
                 <span className="inline-flex h-5 items-center rounded-full border border-[#1E1E23] bg-[#141419] px-2 font-mono text-[10px] text-[#52525B]">
                   idle
                 </span>
-                <ModelPicker />
+                {!viewer.readOnly && <ModelPicker />}
               </>
             )}
 
-            <AgentMenu />
+            <AgentRunSwitcher
+              runs={trackedRuns}
+              focusedRunId={focusedRunId}
+              maxConcurrentRuns={maxConcurrentRuns}
+              onFocus={(id) => focusRun(id)}
+              onStop={viewer.readOnly ? undefined : (id) => void cancelRunById(id)}
+            />
+            {!viewer.readOnly && <AgentMenu />}
           </div>
         </div>
 
         {/* ── Run controls (visible only while active) ── */}
-        {runActive && (
+        {runActive && !viewer.readOnly && (
           <div className="flex items-center gap-2 px-3.5 pb-2.5 border-t border-[#1A1A1F]/80 pt-2">
             <button
               type="button"
@@ -133,8 +168,8 @@ export function AgentPanel() {
 
             <button
               type="button"
-              onClick={() => cancelStream()}
-              disabled={!controls.stop}
+              onClick={() => stopRunId ? void cancelRunById(stopRunId) : cancelStream()}
+              disabled={!controls.stop || (!stopRunId && !streaming)}
               className="flex h-6 w-6 items-center justify-center rounded-md border border-[#f87171]/30 bg-[#f87171]/10 text-[#f87171] transition-colors hover:bg-[#f87171]/20 disabled:pointer-events-none disabled:opacity-40"
               title="Stop run"
             >
@@ -170,19 +205,21 @@ export function AgentPanel() {
           </div>
         )}
 
-        {contextStatus && (
+        {!viewer.readOnly && contextStatus && (
           <ContextLimitDialog
             open={showContextLimit}
             onOpenChange={setShowContextLimit}
             contextStatus={contextStatus}
           />
         )}
-        <TokenBudgetMeter active={runActive} budget={runBudget} />
+        {!viewer.readOnly && activeTrackedRuns.length <= 1 && (
+          <TokenBudgetMeter active={runActive} budget={runBudget} />
+        )}
       </div>
 
       {/* ── Context bar ──────────────────────────────────────────────── */}
       <div className="row-start-2 min-w-0">
-        <ContextBar />
+        {!viewer.readOnly && <ContextBar />}
       </div>
 
       {/* ── Run region ───────────────────────────────────────────────── */}
@@ -194,7 +231,13 @@ export function AgentPanel() {
 
       {/* ── Composer ─────────────────────────────────────────────────── */}
       <div className="row-start-4">
-        <Composer />
+        {viewer.readOnly ? (
+          <div className="border-t border-[#1A1A1F] bg-[#0C0C10] px-3 py-2 text-center text-[11px] text-[#71717A]">
+            Shared session controls are disabled (read-only).
+          </div>
+        ) : (
+          <Composer />
+        )}
       </div>
     </div>
   );

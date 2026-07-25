@@ -34,6 +34,7 @@ const EVENT_TYPES: AgentEvents.EventType[] = [
   "thinking",
   "plan",
   "plan-update",
+  "plan-ready",
   "map-files",
   "read-files",
   "edit-file",
@@ -106,6 +107,31 @@ function arbEventOfType(type: AgentEvents.EventType): fc.Arbitrary<AgentEvents.A
           fc.record({
             id: fc.string({ minLength: 1, maxLength: 16 }),
             status: fc.constantFrom<AgentEvents.PlanItemStatus>("pending", "active", "done"),
+          }),
+        )
+        .map(([b, r]): AgentEvents.AgentEvent => ({ ...b, type, ...r }));
+    case "plan-ready":
+      return fc
+        .tuple(
+          baseArb,
+          fc.record({
+            steps: fc.array(
+              fc.record({
+                file: fc.string({ minLength: 1, maxLength: 24 }),
+                action: fc.constantFrom<"create" | "modify" | "delete" | "rename">(
+                  "create",
+                  "modify",
+                  "delete",
+                  "rename",
+                ),
+                rationale: fc.string({ maxLength: 40 }),
+                diff: fc.option(fc.string({ maxLength: 60 }), { nil: undefined }),
+              }),
+              { maxLength: 4 },
+            ),
+            verificationCommand: fc.option(fc.string({ maxLength: 20 }), { nil: undefined }),
+            confidence: fc.double({ min: 0, max: 1, noNaN: true }),
+            fileCount: fc.nat({ max: 4 }),
           }),
         )
         .map(([b, r]): AgentEvents.AgentEvent => ({ ...b, type, ...r }));
