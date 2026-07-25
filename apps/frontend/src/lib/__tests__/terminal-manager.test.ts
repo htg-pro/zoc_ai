@@ -47,6 +47,8 @@ vi.mock("@xterm/addon-fit", () => ({
 import {
   createTerminal,
   disposeTerminal,
+  ensureTerminalCwd,
+  getTerminalCwd,
   getTerminalOutput,
   subscribeTerminalOutput,
   writeToTerminal,
@@ -93,4 +95,75 @@ test("deduplicates concurrent creation and publishes a plain bounded transcript"
   unsubscribe();
   await disposeTerminal(id);
   expect(mocks.stopTerminal).toHaveBeenCalledWith("backend-1");
+});
+
+test("always sends an explicit cwd to the sidecar", async () => {
+  // Omitting `cwd` is what made the sidecar start the shell in its own
+  // directory — the app's install/bin path in a packaged build.
+  const id = `cwd-${Date.now()}`;
+  await createTerminal(id, PROFILE, "/workspace/project");
+
+  expect(mocks.spawnTerminal).toHaveBeenCalledWith(
+    "/bin/sh",
+    expect.objectContaining({ cwd: "/workspace/project" }),
+  );
+  expect(getTerminalCwd(id)).toBe("/workspace/project");
+  await disposeTerminal(id);
+});
+
+test("does not spawn a PTY when no workspace is open", async () => {
+  const id = `nows-${Date.now()}`;
+  await createTerminal(id, PROFILE, null);
+
+  expect(mocks.spawnTerminal).not.toHaveBeenCalled();
+  expect(getTerminalCwd(id)).toBeNull();
+  // The pane explains itself rather than opening a shell somewhere arbitrary.
+  expect(getTerminalOutput(id)).toContain("Open a project folder");
+  await disposeTerminal(id);
+});
+
+test("reuses a terminal already rooted in the active workspace", async () => {
+  const id = `reuse-${Date.now()}`;
+  await ensureTerminalCwd(id, PROFILE, "/workspace/a");
+  await ensureTerminalCwd(id, PROFILE, "/workspace/a");
+
+  expect(mocks.spawnTerminal).toHaveBeenCalledTimes(1);
+  await disposeTerminal(id);
+});
+
+test("recreates the terminal when the workspace switches", async () => {
+  // Previously the pane skipped any session that already had an instance, so
+  // the old PTY — still sitting in the previous project — stayed attached and
+  // `pwd` reported the wrong directory.
+  const id = `switch-${Date.now()}`;
+  await ensureTerminalCwd(id, PROFILE, "/workspace/a");
+  expect(getTerminalCwd(id)).toBe("/workspace/a");
+
+  await ensureTerminalCwd(id, PROFILE, "/workspace/b");
+
+  expect(mocks.spawnTerminal).toHaveBeenCalledTimes(2);
+  expect(mocks.spawnTerminal).toHaveBeenLastCalledWith(
+    "/bin/sh",
+    expect.objectContaining({ cwd: "/workspace/b" }),
+  );
+  expect(getTerminalCwd(id)).toBe("/workspace/b");
+  // The stale PTY was torn down, not leaked.
+  expect(mocks.stopTerminal).toHaveBeenCalled();
+  await disposeTerminal(id);
+});
+
+test("reports a stopped terminal distinctly from a crash", async () => {
+  mocks.events = [{ type: "exit", code: null, reason: "crashed" } as never];
+  const crashed = `crash-${Date.now()}`;
+  await createTerminal(crashed, PROFILE, "/workspace");
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  expect(getTerminalOutput(crashed)).toContain("exited unexpectedly");
+  await disposeTerminal(crashed);
+
+  mocks.events = [{ type: "exit", code: 0, reason: "stopped" } as never];
+  const stopped = `stop-${Date.now()}`;
+  await createTerminal(stopped, PROFILE, "/workspace");
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  expect(getTerminalOutput(stopped)).toContain("terminal stopped");
+  await disposeTerminal(stopped);
 });

@@ -2,6 +2,8 @@ import { useEffect, useRef } from "react";
 import type { AgentEvents } from "@zoc-studio/shared-types";
 
 import { useApp } from "@/lib/store";
+import { ErrorCodes } from "@/lib/errors";
+import type { RunPhase } from "./agent-runs";
 import {
   cancelAgentEditBatch,
   commitAgentEditBatch,
@@ -121,10 +123,17 @@ export function useAgentRunLifecycle(
       const askText = askTokens.map((event) => event.text).join("");
       commitAskStreamMessage(runId, askText, askTokens[0]?.ts);
     }
-    const phase = isStreamErrorEvent(terminal)
-      || (terminal.type === "done" && terminal.ok === false)
-      ? "failed"
-      : "done";
+    // A terminal `error` frame coded `run_cancelled` is the gateway reporting a
+    // stop, not a failure — the run must read "Stopped", not "Failed". This
+    // matters when the stop did not originate in this window (another client, or
+    // a cancel that only the backend knows about).
+    const terminalCode = (terminal as { code?: unknown }).code;
+    const phase: RunPhase =
+      terminalCode === ErrorCodes.runCancelled
+        ? "cancelled"
+        : isStreamErrorEvent(terminal) || (terminal.type === "done" && terminal.ok === false)
+          ? "failed"
+          : "done";
     finishGatewayRun(runId, phase);
   }, [
     activeRunMode,

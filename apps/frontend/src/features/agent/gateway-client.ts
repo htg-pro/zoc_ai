@@ -102,6 +102,72 @@ async function resolveBaseUrl(): Promise<string> {
 
 // ── JSON transport ────────────────────────────────────────────────────────
 
+/**
+ * An `Error` that carries the gateway's structured envelope alongside a
+ * human-readable `message`, so `lib/errors.ts` can recover the `code` without
+ * parsing prose. Throwing a real `Error` keeps every existing `catch` working.
+ */
+export class GatewayRequestError extends Error {
+  readonly code: string;
+  readonly details?: string;
+  readonly retryable?: boolean;
+  readonly status: number;
+
+  constructor(
+    message: string,
+    init: { code: string; status: number; details?: string; retryable?: boolean },
+  ) {
+    super(message);
+    this.name = "GatewayRequestError";
+    this.code = init.code;
+    this.status = init.status;
+    this.details = init.details;
+    this.retryable = init.retryable;
+  }
+}
+
+/**
+ * Read an error response into a `GatewayRequestError`.
+ *
+ * The gateway sends `{"detail": {code, message, details, retryable}}` (see
+ * `zocai_gateway/errors.py`). Older/other handlers still send a plain string
+ * `detail`, so both shapes are accepted and neither is ever allowed to reach the
+ * UI as raw JSON.
+ */
+async function requestError(res: Response, path: string, method: string): Promise<GatewayRequestError> {
+  const text = await res.text().catch(() => "");
+  let message = text;
+  let code = `http_${res.status}`;
+  let details: string | undefined;
+  let retryable: boolean | undefined;
+  try {
+    const parsed = JSON.parse(text) as { detail?: unknown };
+    const detail = parsed.detail;
+    if (typeof detail === "string") {
+      message = detail;
+    } else if (detail && typeof detail === "object") {
+      const envelope = detail as {
+        code?: unknown;
+        message?: unknown;
+        details?: unknown;
+        retryable?: unknown;
+      };
+      if (typeof envelope.message === "string") message = envelope.message;
+      if (typeof envelope.code === "string") code = envelope.code;
+      if (typeof envelope.details === "string") details = envelope.details;
+      if (typeof envelope.retryable === "boolean") retryable = envelope.retryable;
+    }
+  } catch {
+    /* keep raw text */
+  }
+  return new GatewayRequestError(message || `${method} ${path} -> http ${res.status}`, {
+    code,
+    status: res.status,
+    details,
+    retryable,
+  });
+}
+
 async function postJson<T>(path: string, body: unknown): Promise<T> {
   const baseUrl = await resolveBaseUrl();
   const res = await fetch(`${baseUrl}${path}`, {
@@ -110,16 +176,7 @@ async function postJson<T>(path: string, body: unknown): Promise<T> {
     body: JSON.stringify(body),
   });
   if (!res.ok) {
-    const text = await res.text().catch(() => "");
-    let detail = text;
-    try {
-      const parsed = JSON.parse(text) as { detail?: unknown };
-      if (typeof parsed.detail === "string") detail = parsed.detail;
-      else if (parsed.detail !== undefined) detail = JSON.stringify(parsed.detail);
-    } catch {
-      /* keep raw text */
-    }
-    throw new Error(detail || `POST ${path} -> http ${res.status}`);
+    throw await requestError(res, path, "POST");
   }
   if (res.status === 204) return undefined as T;
   const ct = res.headers.get("content-type") ?? "";
@@ -131,15 +188,7 @@ async function getJson<T>(path: string): Promise<T> {
   const baseUrl = await resolveBaseUrl();
   const res = await fetch(`${baseUrl}${path}`);
   if (!res.ok) {
-    const text = await res.text().catch(() => "");
-    let detail = text;
-    try {
-      const parsed = JSON.parse(text) as { detail?: unknown };
-      if (typeof parsed.detail === "string") detail = parsed.detail;
-    } catch {
-      /* keep raw text */
-    }
-    throw new Error(detail || `GET ${path} -> http ${res.status}`);
+    throw await requestError(res, path, "GET");
   }
   return (await res.json()) as T;
 }
@@ -208,9 +257,36 @@ export async function postAgentDecision(req: AgentDecisionRequest): Promise<void
   });
 }
 
-/** Cooperatively stop one Gateway run without disturbing concurrent peers. */
-export async function postAgentCancel(runId: string): Promise<void> {
-  await postJson<void>(`/v1/agent/runs/${encodeURIComponent(runId)}/cancel`, {});
+/**
+ * The gateway's reply to a cancel request. `state` mirrors its `RunState`, and
+ * `alreadyFinished` is true when there was nothing left to stop — the ordinary
+ * outcome when Stop races completion or is pressed twice.
+ */
+export interface AgentCancelResult {
+  runId: string;
+  cancelled: boolean;
+  state: string;
+  alreadyFinished: boolean;
+}
+
+/**
+ * Cooperatively stop one Gateway run without disturbing concurrent peers.
+ *
+ * Idempotent by contract: the endpoint reports the run's lifecycle state rather
+ * than failing for a run it no longer tracks, so a Stop that arrives after the
+ * run finished resolves normally instead of throwing "unknown run".
+ */
+export async function postAgentCancel(runId: string): Promise<AgentCancelResult> {
+  const body = await postJson<Partial<AgentCancelResult> | undefined>(
+    `/v1/agent/runs/${encodeURIComponent(runId)}/cancel`,
+    {},
+  );
+  return {
+    runId: body?.runId ?? runId,
+    cancelled: body?.cancelled ?? false,
+    state: body?.state ?? "unknown",
+    alreadyFinished: body?.alreadyFinished ?? true,
+  };
 }
 
 /** Run the gateway-owned fixed suite against the active local model. */

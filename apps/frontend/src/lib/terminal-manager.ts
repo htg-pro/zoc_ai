@@ -11,6 +11,8 @@
  * module holds everything that can't live in a store (DOM nodes, sockets).
  */
 import { getAgentClient, type TerminalStreamEvent } from "./agent-client";
+import { ErrorCodes, formatUserError, normalizeError } from "./errors";
+import { resolveTerminalCwd, terminalMatchesWorkspace } from "./terminal-cwd";
 import type { TerminalProfile } from "./store";
 
 interface Instance {
@@ -24,6 +26,8 @@ interface Instance {
   observer: ResizeObserver | null;
   mockBuf: string;
   output: string;
+  /** Workspace root this PTY was started in; drives reuse across workspaces. */
+  cwd: string | null;
 }
 
 type ExitCb = (id: string, code: number | null) => void;
@@ -69,7 +73,15 @@ export function subscribeTerminalOutput(id: string, listener: () => void): () =>
   };
 }
 
-/** Create the xterm + PTY for `id` if it doesn't exist yet (idempotent). */
+/**
+ * Create the xterm + PTY for `id` if it doesn't exist yet (idempotent).
+ *
+ * `cwd` is the active workspace root. It is passed explicitly and is *not*
+ * optional in practice: a spawn request without one used to make the sidecar
+ * start the shell in its own directory, which in a packaged build is the
+ * application's install/bin path. With no workspace open the terminal now
+ * reports that instead of starting somewhere arbitrary.
+ */
 export async function createTerminal(
   id: string,
   profile: TerminalProfile,
@@ -85,6 +97,32 @@ export async function createTerminal(
   } finally {
     if (pendingCreations.get(id) === creation) pendingCreations.delete(id);
   }
+}
+
+/** The workspace root a live terminal was started in, if any. */
+export function getTerminalCwd(id: string): string | null {
+  return instances.get(id)?.cwd ?? null;
+}
+
+/**
+ * Ensure `id`'s terminal is rooted in `cwd`, recreating it when it is not.
+ *
+ * Switching workspaces used to leave the existing PTY untouched, because the
+ * reconciling effect skipped any pane that already had an instance. The shell
+ * stayed in the previous project's directory, so `pwd` — and every command the
+ * user or the agent ran — silently targeted the wrong tree.
+ */
+export async function ensureTerminalCwd(
+  id: string,
+  profile: TerminalProfile,
+  cwd: string | null,
+): Promise<void> {
+  const existing = instances.get(id);
+  if (existing && terminalMatchesWorkspace(existing.cwd, cwd)) return;
+  if (existing) {
+    await disposeTerminal(id);
+  }
+  await createTerminal(id, profile, cwd);
 }
 
 async function createTerminalInstance(
@@ -120,10 +158,22 @@ async function createTerminalInstance(
     observer: null,
     mockBuf: "",
     output: "",
+    cwd: null,
   };
   instances.set(id, inst);
 
   registerLinks(term);
+
+  // Decide the working directory before touching the transport. Omitting `cwd`
+  // is what let the sidecar fall back to its own directory.
+  const decision = resolveTerminalCwd(cwd);
+  if (!decision.ok) {
+    const line = `# ${decision.message}\n`;
+    term.writeln(`\x1b[38;5;141m$ \x1b[0m\x1b[2m${decision.message}\x1b[0m`);
+    appendCapturedOutput(inst, line);
+    return;
+  }
+  inst.cwd = decision.cwd;
 
   // Try a real PTY through the sidecar; fall back to a local-echo mock offline.
   try {
@@ -132,7 +182,7 @@ async function createTerminalInstance(
       cols: term.cols,
       rows: term.rows,
       args: profile.args,
-      ...(cwd ? { cwd } : {}),
+      cwd: decision.cwd,
     });
     inst.backendId = session.id;
     const abort = new AbortController();
@@ -142,7 +192,7 @@ async function createTerminalInstance(
       if (inst.backendId) void client.writeTerminal(inst.backendId, data).catch(() => undefined);
     });
   } catch (err) {
-    const message = (err as Error).message;
+    const message = formatUserError(normalizeError(err, ErrorCodes.terminalSpawnFailed));
     term.writeln("\x1b[38;5;141m$ \x1b[0m# agent sidecar offline — mock terminal");
     term.writeln(`\x1b[2m${message}\x1b[0m`);
     term.write("\x1b[38;5;141m$ \x1b[0m");
@@ -163,13 +213,23 @@ async function streamInto(
         inst.term.write(ev.chunk);
         appendCapturedOutput(inst, ev.chunk);
       } else if (ev.type === "exit") {
-        const line = `\r\n[process exited with code ${ev.code ?? "?"}]\r\n`;
-        inst.term.write(`\r\n\x1b[2m[process exited with code ${ev.code ?? "?"}]\x1b[0m\r\n`);
-        appendCapturedOutput(inst, line);
+        // The sidecar tags *why* the process ended, so an expected exit, a
+        // requested stop and a crash read differently instead of all showing
+        // the same bare code.
+        const reason = (ev as { reason?: string }).reason;
+        const label =
+          reason === "stopped"
+            ? "[terminal stopped]"
+            : reason === "crashed"
+              ? "[terminal exited unexpectedly]"
+              : `[process exited with code ${ev.code ?? "?"}]`;
+        inst.term.write(`\r\n\x1b[2m${label}\x1b[0m\r\n`);
+        appendCapturedOutput(inst, `\r\n${label}\r\n`);
         onExit(inst.id, ev.code ?? null);
       } else if (ev.type === "error") {
-        const line = `\r\n[error: ${ev.message}]\r\n`;
-        inst.term.write(`\r\n\x1b[31m[error: ${ev.message}]\x1b[0m\r\n`);
+        const message = formatUserError(normalizeError(ev.message, ErrorCodes.terminalSpawnFailed));
+        const line = `\r\n[${message}]\r\n`;
+        inst.term.write(`\r\n\x1b[31m[${message}]\x1b[0m\r\n`);
         appendCapturedOutput(inst, line);
       }
     }

@@ -132,7 +132,20 @@ class ServerSession:
 
     async def start(self) -> None:
         """Spawn the server process with argv=[command, *args], cwd pinned to
-        the workspace root, and the overlaid environment (R2.1-R2.3)."""
+        the workspace root, and the overlaid environment (R2.1-R2.3).
+
+        The cwd is pinned deliberately and is never allowed to default to the
+        sidecar's own working directory: in a packaged build that directory is
+        the application's install/bin path, so an MCP server started there would
+        read and write next to the executable instead of inside the user's
+        project.
+        """
+        if not self._root.is_dir():
+            raise SessionError(
+                "spawn",
+                "workspace root is not an existing directory; open a project "
+                "folder before starting MCP servers",
+            )
         self._process = await self._spawn(self._argv, self._root, self._merged_env())
         self._reader = self._process.stdout
         self._writer = self._process.stdin

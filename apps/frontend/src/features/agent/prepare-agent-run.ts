@@ -78,3 +78,63 @@ export function prepareAgentRun(input: string, mode: AgentMode): AgentRunRequest
   const trimmed = input.trim();
   return { input: trimmed, mode: routeModeForPrompt(trimmed, mode) };
 }
+
+/** The modes the composer may select, as a runtime-checkable set. */
+export const AGENT_MODES: readonly AgentMode[] = ["ask", "plan", "agent"] as const;
+
+/** Whether `value` is one of the three supported modes. */
+export function isAgentMode(value: unknown): value is AgentMode {
+  return typeof value === "string" && (AGENT_MODES as readonly string[]).includes(value);
+}
+
+/**
+ * Modes that may read *and write* the workspace. Ask and Plan are read-only by
+ * contract, so only `agent` requires an open folder.
+ */
+export function modeRequiresWorkspace(mode: AgentMode): boolean {
+  return mode === "agent";
+}
+
+export type RunRequestCheck =
+  | { ok: true; mode: AgentMode }
+  | { ok: false; code: string; message: string };
+
+/**
+ * Validate a run submission before it reaches the transport (Phase 2B).
+ *
+ * Checks the three things that can actually be wrong at this boundary and that
+ * previously failed deeper in the stack with an unhelpful message: an
+ * unrecognised mode, an empty message, and Agent mode with no workspace open.
+ * Ask and Plan are allowed without a workspace because they never write.
+ *
+ * Returning a code plus a user-readable sentence — rather than throwing — is
+ * what lets the composer show the reason and stay enabled.
+ */
+export function validateRunRequest(params: {
+  input: string;
+  mode: unknown;
+  workspaceRoot: string | null | undefined;
+}): RunRequestCheck {
+  if (!isAgentMode(params.mode)) {
+    return {
+      ok: false,
+      code: "invalid_request",
+      message: "That chat mode is not available. Pick Ask, Plan, or Agent.",
+    };
+  }
+  if (!validateMessage(params.input).valid) {
+    return {
+      ok: false,
+      code: "invalid_request",
+      message: "Type a message before sending.",
+    };
+  }
+  if (modeRequiresWorkspace(params.mode) && !(params.workspaceRoot ?? "").trim()) {
+    return {
+      ok: false,
+      code: "no_workspace",
+      message: "No workspace is open. Open a project folder before using Agent mode.",
+    };
+  }
+  return { ok: true, mode: params.mode };
+}

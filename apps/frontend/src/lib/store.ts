@@ -141,6 +141,7 @@ import {
   loadLocalModels,
 } from "./local-models";
 import { track, trackEvent } from "./telemetry";
+import { ErrorCodes, formatUserError, isAbort, normalizeError } from "./errors";
 import { currentEditorContext } from "./editor-context";
 import {
   activeRuns,
@@ -3209,12 +3210,36 @@ export const useApp = create<AppState>((set, get) => ({
   cancelRunById: async (runId) => {
     const target = get().trackedRuns.find((run) => run.runId === runId);
     if (target && isTerminal(target)) return;
+    // Already stopping: a second click must not re-issue the request or reset
+    // the transition. The button is disabled during this window too, but the
+    // action is also reachable from the palette and keybindings.
+    if (target?.phase === "stopping") return;
+
+    if (target) {
+      // Show the transition immediately so the user sees the click land, and so
+      // the Stop control can disable itself for the duration.
+      set((s) => ({
+        trackedRuns: s.trackedRuns.map((run) =>
+          run.runId === runId ? { ...run, phase: "stopping" as RunPhase } : run,
+        ),
+      }));
+    }
+
     if (get().liveMode && target) {
       try {
         await postAgentCancel(runId);
       } catch (err) {
-        appendErrorChat(set, "cancelRun", err);
-        return;
+        // The run is stopped locally regardless. Previously this branch appended
+        // an error and returned, which left the run displayed as "Running…"
+        // forever — the visible half of the "unknown run" bug. A cancel that
+        // fails because the run already finished is not something the user needs
+        // to read about, so only genuine failures are surfaced.
+        const normalized = normalizeError(err, "cancelRun");
+        const benign =
+          normalized.code === ErrorCodes.runNotFound ||
+          normalized.code === ErrorCodes.runAlreadyFinished ||
+          /unknown run/i.test(normalized.message);
+        if (!benign) appendErrorChat(set, "cancelRun", err);
       }
     }
 
@@ -4437,10 +4462,28 @@ function appendAssistantSummary(set: SetState, content: string): void {
 }
 
 function appendErrorChat(set: SetState, stage: string, err: unknown): void {
-  const message =
-    err instanceof DOMException && err.name === "AbortError"
-      ? "(cancelled)"
-      : `Error: ${(err as Error).message}`;
+  // Everything the panel shows goes through the normaliser: a `catch` receives
+  // `unknown`, and the old `(err as Error).message` cast rendered the literal
+  // string "Error: undefined" whenever a non-Error value was thrown (a Tauri
+  // invoke rejection, a JSON body, `throw undefined`).
+  if (isAbort(err)) {
+    appendSystemChat(set, "(cancelled)");
+    return;
+  }
+  const normalized = normalizeError(err, stage);
+  const message = formatUserError(normalized);
+  appendSystemChat(set, message);
+  void track("error", {
+    stage,
+    // Structured diagnostics stay in the log, never in the chat bubble.
+    code: normalized.code,
+    message,
+    ...(normalized.details ? { details: normalized.details } : {}),
+  }).catch(() => undefined);
+}
+
+/** Append one system-role line to the chat and the workflow feed. */
+function appendSystemChat(set: SetState, message: string): void {
   const id = `err-${Date.now()}`;
   set((s) => ({
     chat: [
@@ -4458,7 +4501,6 @@ function appendErrorChat(set: SetState, stage: string, err: unknown): void {
     ],
     agentItems: appendWorkflowError(s.agentItems, message),
   }));
-  void track("error", { stage, message }).catch(() => undefined);
 }
 
 /**

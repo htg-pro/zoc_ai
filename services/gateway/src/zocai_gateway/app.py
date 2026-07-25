@@ -30,15 +30,16 @@ import os
 import queue
 import signal
 import subprocess
+import tempfile
 import threading
 import uuid
 from collections import deque
-from collections.abc import AsyncIterator, Mapping
+from collections.abc import AsyncIterator, Callable, Mapping
 from concurrent.futures import TimeoutError as FuturesTimeoutError
 from contextlib import asynccontextmanager, suppress
 from datetime import UTC, datetime
 from pathlib import Path
-from time import monotonic
+from time import monotonic, sleep
 from typing import Literal
 
 from fastapi import Depends, FastAPI, HTTPException, Query, WebSocket, WebSocketDisconnect, status
@@ -74,6 +75,7 @@ from zocai_gateway.context.mcp_host.host import MCPHost
 from zocai_gateway.context.mcp_host.registry import McpToolRegistry
 from zocai_gateway.context_mentions import search_workspace_files
 from zocai_gateway.emit_gate import DiaryMirror, EmitGate
+from zocai_gateway.errors import ERROR_MESSAGES, ErrorCode, error_body, error_envelope
 from zocai_gateway.event_bus import (
     FS_CHANGED_TOPIC,
     GatewayEventBus,
@@ -103,12 +105,18 @@ from zocai_gateway.run_pipeline import (
     default_workspace_rag_matcher,
     execute_run,
 )
+from zocai_gateway.run_state import RunLifecycle, RunState
 from zocai_gateway.security import (
     RateLimiter,
     log_security_event,
     validate_user_text,
 )
 from zocai_gateway.settings import GatewaySettings
+from zocai_gateway.workspace_context import (
+    WorkspaceContext,
+    resolve_terminal_cwd,
+    workspace_context_from_path,
+)
 from zocai_gateway.workspace_index import WorkspaceIndexer
 
 __all__ = [
@@ -150,6 +158,18 @@ DEFAULT_PRODUCER_PUT_TIMEOUT_SECONDS = 30.0
 
 #: How often the hardware monitor stream emits a snapshot (§16.2).
 HARDWARE_STREAM_INTERVAL_SECONDS = 2.0
+
+#: Prefix of the synthetic stage markers the FSM emits as `command` events (see
+#: ``fsm._stage_event``). They are protocol/diary artefacts, not shell commands:
+#: the gateway uses them to detect the R3.10 error terminal, and the renderer
+#: hides them instead of showing the user a literal ``<stage:error_closed>``.
+_SYNTHETIC_STAGE_PREFIX = "<stage:"
+
+#: Stand-in root used only where a non-optional path parameter must be supplied
+#: while no workspace is open. It intentionally does not exist, so any code path
+#: that tries to spawn or write against it fails loudly instead of silently
+#: targeting the sidecar's own (install/bin) directory.
+_NO_WORKSPACE_SENTINEL = "/nonexistent/zocai-no-workspace"
 
 
 class RunAccepted(BaseModel):
@@ -255,17 +275,20 @@ class _Run:
         "_decision_condition",
         "_decision_cursors",
         "_ever_subscribed",
+        "_failure_reason",
         "_history",
         "_history_lock",
         "_lock",
         "_loop",
         "_put_timeout",
         "_queue_maxsize",
+        "_saw_done_event",
         "_seq",
         "_subscriber_lock",
         "_subscribers",
         "decisions",
         "emit_gate",
+        "lifecycle",
         "path",
         "queue",
         "run_id",
@@ -309,6 +332,17 @@ class _Run:
         self._subscriber_lock = threading.Lock()
         self._subscribers: set[asyncio.Queue[dict[str, object] | None]] = set()
         self._ever_subscribed = False
+        # Phase 3: one authoritative lifecycle per run. `Stage` says how far the
+        # agent pipeline got; this says whether the run is still alive, which is
+        # the question Stop and the run list ask.
+        self.lifecycle = RunLifecycle(RunState.INITIALIZING)
+        # Set when the pipeline reports an unrecoverable failure (including the
+        # synthetic ERROR_CLOSED stage marker), so `close()` can emit a terminal
+        # frame that says *failed* rather than *done*.
+        self._failure_reason: str | None = None
+        # True once a contract `done` event has been gated for this run, so
+        # `close()` never emits a second terminal frame.
+        self._saw_done_event = False
 
     @property
     def is_closed(self) -> bool:
@@ -351,13 +385,32 @@ class _Run:
         with self._subscriber_lock:
             self._subscribers.discard(subscriber)
 
-    def cancel(self) -> None:
-        """Request cooperative cancellation and close this run's event bus."""
-        if self.is_closed:
-            return
+    @property
+    def state(self) -> RunState:
+        """The run's authoritative lifecycle state (Phase 3)."""
+        return self.lifecycle.state
+
+    def mark_running(self) -> None:
+        """Promote ``INITIALIZING`` → ``RUNNING`` once the pipeline is driving."""
+        if self.lifecycle.state is RunState.INITIALIZING:
+            self.lifecycle.to(RunState.RUNNING)
+
+    def cancel(self) -> bool:
+        """Request cooperative cancellation. Idempotent.
+
+        Returns ``True`` when this call actually initiated the stop and
+        ``False`` when there was nothing to stop (already stopping, already
+        finished). Never raises and never emits a second terminal frame, so a
+        double-click on Stop — or a Stop that races normal completion — is a
+        no-op rather than an error the user has to read.
+        """
+        if not self.lifecycle.request_stop():
+            return False
         self._cancelled.set()
-        self.enqueue_error("run cancelled by user")
-        self.close()
+        # `close()` emits the single terminal frame for this run; passing the
+        # reason here is what makes that frame say "Stopped" instead of "done".
+        self.close(failure_reason=None, cancelled=True)
+        return True
 
     def replay(self, since_seq: int | None = None) -> list[dict[str, object]]:
         """Buffered events with ``seq`` greater than ``since_seq`` (§9.2).
@@ -392,7 +445,27 @@ class _Run:
         with self._lock:
             if self._closed:
                 return
-        self._put(dict(event))
+        frame = dict(event)
+        # Watch the sink rather than any one producer: the FSM, the orchestrator
+        # and tests all emit through this gate, so this is the only place that
+        # sees every contract event for the run.
+        event_type = frame.get("type")
+        if event_type == "done":
+            with self._lock:
+                self._saw_done_event = True
+        else:
+            # R3.10 reports the terminal error close as a `command` event carrying
+            # a synthetic `<stage:error_closed>` marker (see fsm._stage_event).
+            # That frame is contract-conforming and the Session_Diary parses it
+            # back into a stage, so it stays on the bus — but on its own it tells
+            # the renderer nothing terminal, which is how a failed run used to sit
+            # in the UI as "Running…" forever. Record the failure so `close()`
+            # emits a real terminal frame behind it.
+            command = frame.get("command")
+            if isinstance(command, str) and command.startswith(_SYNTHETIC_STAGE_PREFIX):
+                tag = frame.get("errorTag") or frame.get("error_tag")
+                self.record_failure(str(tag) if tag else "error_closed")
+        self._put(frame)
 
     def enqueue_text(self, chunk: str) -> None:
         """Ask-Mode text sink: enqueue a raw markdown token chunk (R6.6).
@@ -417,8 +490,22 @@ class _Run:
             }
         )
 
-    def enqueue_error(self, message: str) -> None:
-        """Enqueue a best-effort SSE error frame for infrastructure failures."""
+    def enqueue_error(
+        self,
+        message: str,
+        *,
+        code: str = ErrorCode.RUN_FAILED,
+        details: object | None = None,
+        retryable: bool | None = None,
+    ) -> None:
+        """Enqueue a structured SSE ``error`` frame (Phase 2C).
+
+        ``message`` is the user-readable sentence; ``code`` lets the renderer
+        branch without string matching, and ``details`` carries developer
+        context. The legacy ``message``-only shape is preserved so older
+        consumers keep working.
+        """
+        envelope = error_envelope(code, message=message, details=details, retryable=retryable)
         with self._lock:
             if self._closed:
                 return
@@ -430,9 +517,18 @@ class _Run:
                 "seq": seq,
                 "runId": self.run_id,
                 "ts": datetime.now(UTC).isoformat(),
-                "message": message,
+                "message": envelope.message,
+                "code": envelope.code,
+                "details": envelope.details,
+                "retryable": envelope.retryable,
             }
         )
+
+    def record_failure(self, reason: str) -> None:
+        """Remember why the run failed so ``close()`` reports it as a failure."""
+        with self._lock:
+            if self._failure_reason is None:
+                self._failure_reason = reason
 
     def emit_fsm_event(self, event: AgentEvent) -> None:
         """FSM emit sink that gates each stage event and closes at DONE (R3.4).
@@ -501,28 +597,108 @@ class _Run:
                     return None
                 self._decision_condition.wait(timeout=min(remaining, 1.0))
 
-    def close(self) -> None:
-        """Signal end-of-stream by enqueuing the close sentinel."""
+    def close(
+        self,
+        *,
+        failure_reason: str | None = None,
+        cancelled: bool = False,
+    ) -> None:
+        """End the stream after emitting exactly one terminal frame (Phase 3.4).
+
+        Every close path funnels through here — normal completion, the R3.10
+        error terminal, a run timeout, an unexpected pipeline exception and user
+        cancellation — and each produces one, and only one, frame the renderer
+        recognises as terminal:
+
+        * cancelled → an ``error`` frame coded ``run_cancelled`` ("Stopped.")
+        * failed → an ``error`` frame coded ``run_failed``
+        * Ask mode → the final empty ``token`` frame with ``done: true``
+        * otherwise → a ``done`` frame, unless the FSM already emitted one
+
+        Before this, only Ask mode got a terminal frame; an Agent or Plan run
+        that ended in ``ERROR_CLOSED`` closed its stream silently, so the
+        frontend's terminal-event watcher never fired and the run stayed
+        "Running…" until the app was restarted.
+        """
         with self._lock:
             if self._closed:
                 return
             self._closed = True
-            if self.path.mode is Mode.ASK:
-                seq = self._seq
+            if failure_reason is not None and self._failure_reason is None:
+                self._failure_reason = failure_reason
+            reason = self._failure_reason
+            already_done = self._saw_done_event
+            is_ask = self.path.mode is Mode.ASK
+            # Exactly one terminal frame: an error frame for a stop or a
+            # failure, Ask mode's final empty token otherwise, and a `done`
+            # frame for Agent/Plan runs whose FSM never emitted one.
+            needs_frame = cancelled or reason is not None or is_ask or not already_done
+            if needs_frame:
+                seq: int | None = self._seq
                 self._seq += 1
             else:
                 seq = None
+
+        # Settle the lifecycle before the frame goes out, so a consumer that
+        # reacts to the frame by reading `state` sees the terminal value.
+        if cancelled:
+            self.lifecycle.finish(RunState.CANCELLED, reason="cancelled by user")
+        elif reason is not None:
+            self.lifecycle.finish(RunState.FAILED, reason=reason)
+        else:
+            self.lifecycle.finish(RunState.COMPLETED)
+
         if seq is not None:
-            self._put(
-                {
-                    "type": "token",
-                    "seq": seq,
-                    "runId": self.run_id,
-                    "ts": datetime.now(UTC).isoformat(),
-                    "text": "",
-                    "done": True,
-                }
-            )
+            ts = datetime.now(UTC).isoformat()
+            if cancelled:
+                envelope = error_envelope(ErrorCode.RUN_CANCELLED)
+                self._put(
+                    {
+                        "type": "error",
+                        "seq": seq,
+                        "runId": self.run_id,
+                        "ts": ts,
+                        "message": envelope.message,
+                        "code": envelope.code,
+                        "details": None,
+                        "retryable": False,
+                    }
+                )
+            elif reason is not None:
+                envelope = error_envelope(ErrorCode.RUN_FAILED, details=reason)
+                self._put(
+                    {
+                        "type": "error",
+                        "seq": seq,
+                        "runId": self.run_id,
+                        "ts": ts,
+                        "message": envelope.message,
+                        "code": envelope.code,
+                        "details": envelope.details,
+                        "retryable": envelope.retryable,
+                    }
+                )
+            elif self.path.mode is Mode.ASK:
+                self._put(
+                    {
+                        "type": "token",
+                        "seq": seq,
+                        "runId": self.run_id,
+                        "ts": ts,
+                        "text": "",
+                        "done": True,
+                    }
+                )
+            else:
+                self._put(
+                    {
+                        "type": "done",
+                        "seq": seq,
+                        "runId": self.run_id,
+                        "ts": ts,
+                        "ok": True,
+                    }
+                )
         self._put(None)
         with self._decision_condition:
             self._decision_condition.notify_all()
@@ -704,19 +880,36 @@ class SessionRegistry:
 
 
 class TerminalProcess:
-    """A sidecar-owned terminal process with an SSE output queue."""
+    """A sidecar-owned terminal process with an SSE output queue.
 
-    def __init__(self, req: SpawnTerminalRequest) -> None:
+    The working directory is decided *before* construction (see
+    :func:`~zocai_gateway.workspace_context.resolve_terminal_cwd`) and is always
+    passed explicitly. Nothing here ever lets the child inherit the sidecar's own
+    working directory: in a packaged build that is the application's install/bin
+    path, which is why terminals used to open there instead of in the user's
+    project.
+    """
+
+    def __init__(self, req: SpawnTerminalRequest, *, cwd: str) -> None:
         cmd = req.cmd.strip()
         if not cmd:
             raise ValueError("terminal command is empty")
-        self.session = TerminalSession(cmd=cmd, args=req.args, cwd=req.cwd)
+        if not cwd:
+            raise ValueError("terminal working directory was not resolved")
+        resolved_cwd = Path(cwd)
+        if not resolved_cwd.is_dir():
+            raise ValueError("terminal working directory does not exist")
+        self.cwd = str(resolved_cwd)
+        self.session = TerminalSession(cmd=cmd, args=req.args, cwd=self.cwd)
         self._events: queue.Queue[dict[str, object] | None] = queue.Queue()
         self._lock = threading.Lock()
         self._fd: int | None = None
         self._pid: int | None = None
         self._proc: subprocess.Popen[bytes] | None = None
         self._closed = False
+        # Distinguishes an expected exit from a user/agent stop and from a crash,
+        # so the UI can say which one happened instead of showing a bare code.
+        self._stop_requested = False
         self._spawn(req)
 
     def write(self, data: str) -> None:
@@ -754,15 +947,55 @@ class TerminalProcess:
             return
 
     def stop(self) -> TerminalSession:
+        """Terminate the terminal and its children. Idempotent.
+
+        ``pty.fork`` makes the child a session leader, so its descendants share
+        its process group. Signalling the *group* is what actually stops a
+        pipeline or a shell that spawned a build: the previous implementation
+        signalled only the direct child, leaving orphaned grandchildren running
+        (and holding the workspace's files open) after Stop.
+        """
         with self._lock:
+            self._stop_requested = True
             pid = self._pid
             proc = self._proc
+
         if pid is not None:
-            with suppress(OSError):
-                os.kill(pid, signal.SIGTERM)
+            self._signal_group(pid, signal.SIGTERM)
+            # Give the shell a moment to exit cleanly, then insist.
+            for _ in range(20):
+                if not self._pid_alive(pid):
+                    break
+                sleep(0.05)
+            else:
+                self._signal_group(pid, signal.SIGKILL)
+
         if proc is not None and proc.poll() is None:
             proc.terminate()
+            try:
+                proc.wait(timeout=1.0)
+            except subprocess.TimeoutExpired:
+                proc.kill()
         return self.session
+
+    @staticmethod
+    def _signal_group(pid: int, sig: int) -> None:
+        """Signal ``pid``'s process group, falling back to the process itself."""
+        with suppress(OSError):
+            os.killpg(os.getpgid(pid), sig)
+            return
+        with suppress(OSError):
+            os.kill(pid, sig)
+
+    @staticmethod
+    def _pid_alive(pid: int) -> bool:
+        try:
+            os.kill(pid, 0)
+        except ProcessLookupError:
+            return False
+        except PermissionError:  # pragma: no cover - alive but not ours
+            return True
+        return True
 
     async def events(self) -> AsyncIterator[dict[str, str]]:
         while True:
@@ -783,12 +1016,25 @@ class TerminalProcess:
     def _spawn_pty(self, req: SpawnTerminalRequest) -> None:
         import pty
 
+        cwd = self.cwd
         pid, fd = pty.fork()
         if pid == 0:  # child
-            if req.cwd:
-                os.chdir(req.cwd)
+            # `chdir` is unconditional and checked. Previously it ran only when a
+            # cwd happened to be supplied, so a terminal spawned without one
+            # inherited the sidecar's directory — the app's install/bin path in a
+            # packaged build. A failure here must not fall through to `execvpe`
+            # in the wrong directory, so the child reports and exits.
+            try:
+                os.chdir(cwd)
+            except OSError as exc:
+                os.write(2, f"zoc: cannot enter workspace directory: {exc}\r\n".encode())
+                os._exit(126)
             argv = [req.cmd, *req.args]
-            os.execvpe(req.cmd, argv, os.environ.copy())
+            try:
+                os.execvpe(req.cmd, argv, os.environ.copy())
+            except OSError as exc:  # pragma: no cover - exec failure in child
+                os.write(2, f"zoc: cannot start {req.cmd}: {exc}\r\n".encode())
+                os._exit(127)
         self._pid = pid
         self._fd = fd
         self.resize(req.cols, req.rows)
@@ -797,7 +1043,8 @@ class TerminalProcess:
     def _spawn_subprocess(self, req: SpawnTerminalRequest) -> None:
         self._proc = subprocess.Popen(
             [req.cmd, *req.args],
-            cwd=req.cwd or None,
+            # Always explicit: `or None` would hand the child the sidecar's cwd.
+            cwd=self.cwd,
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
@@ -845,31 +1092,78 @@ class TerminalProcess:
             self._finish(proc.wait())
 
     def _finish(self, exit_code: int | None) -> None:
+        """Settle the session once, classifying *why* it ended.
+
+        Three outcomes are distinguishable and are reported as such, because
+        "you pressed Stop", "the shell exited" and "the shell died" need
+        different UI treatment:
+
+        * ``stopped``  — a stop was requested through :meth:`stop`.
+        * ``exited``   — the process ended on its own with a status.
+        * ``crashed``  — the process vanished without a usable status.
+        """
         with self._lock:
             if self._closed:
                 return
             self._closed = True
+            stop_requested = self._stop_requested
             if self._fd is not None:
                 with suppress(OSError):
                     os.close(self._fd)
+        if stop_requested:
+            reason = "stopped"
+        elif exit_code is None:
+            reason = "crashed"
+        else:
+            reason = "exited"
         self.session = self.session.model_copy(
             update={
                 "status": TerminalSessionStatus.exited,
                 "exit_code": exit_code,
             }
         )
-        self._events.put({"type": "exit", "code": exit_code})
+        self._events.put({"type": "exit", "code": exit_code, "reason": reason})
         self._events.put(None)
 
 
 class TerminalRegistry:
-    """Tracks sidecar terminal processes by session id."""
+    """Tracks sidecar terminal processes by session id.
 
-    def __init__(self) -> None:
+    The registry owns cwd confinement: it is the single place a terminal can be
+    created, so resolving the working directory here means no caller can spawn a
+    shell outside the active workspace — including the agent's own shell tools.
+    """
+
+    def __init__(
+        self,
+        workspace_provider: Callable[[], WorkspaceContext | None] | None = None,
+    ) -> None:
         self._terminals: dict[str, TerminalProcess] = {}
+        # A provider rather than a value: the effective root for a root-less
+        # instance is created on first use, and a desktop instance can swap
+        # workspaces without rebuilding the registry.
+        self._workspace_provider = workspace_provider or (lambda: None)
+
+    @property
+    def workspace(self) -> WorkspaceContext | None:
+        return self._workspace_provider()
 
     def create(self, req: SpawnTerminalRequest) -> TerminalProcess:
-        terminal = TerminalProcess(req)
+        """Spawn a terminal rooted inside the active workspace.
+
+        Raises :class:`PermissionError` when there is no verified directory to
+        start in. Refusing is the correct outcome: the alternative — the
+        sidecar's own directory — is the application install path.
+        """
+        decision = resolve_terminal_cwd(req.cwd, self.workspace)
+        if decision.cwd is None:
+            raise PermissionError(decision.message or ERROR_MESSAGES[ErrorCode.NO_WORKSPACE])
+        if decision.fell_back:
+            logger.warning(
+                "terminal cwd rejected (%s); starting in the workspace root",
+                decision.code,
+            )
+        terminal = TerminalProcess(req, cwd=decision.cwd)
         self._terminals[str(terminal.session.id)] = terminal
         return terminal
 
@@ -1098,7 +1392,19 @@ def create_app(
     diary_worker: DiaryWorker | None = None
     hermes: HermesEvolution | None = None
     state_store: StateWrapperStore | None = None
-    resolved_root = Path(workspace_root) if workspace_root is not None else None
+    # Phase 4: one canonical WorkspaceContext, or none at all. A supplied root
+    # that is not a directory degrades to "no workspace" rather than crashing the
+    # sidecar — the user can still open a folder — but every filesystem/terminal
+    # action then fails with a clear "open a folder first" message instead of
+    # quietly targeting the sidecar's own directory.
+    workspace: WorkspaceContext | None
+    try:
+        workspace = workspace_context_from_path(workspace_root)
+    except ValueError as exc:
+        logger.warning("ignoring invalid workspace root: %s", exc)
+        workspace = None
+    resolved_root = workspace.root if workspace is not None else None
+    workspace_id_for_logs = workspace.workspace_id if workspace is not None else "none"
 
     if resolved_root is not None:
         matrix = MemoryMatrix(resolved_root)
@@ -1133,8 +1439,14 @@ def create_app(
     mcp_workspace_config = (
         resolved_root / ".zoc" / "mcp.json" if resolved_root is not None else None
     )
+    # MCP servers are spawned with cwd pinned to this root. With no workspace
+    # open there is no legitimate directory to pin them to — the sidecar's own
+    # directory is the application install path — so the host is configured
+    # (tools are still discoverable) but never started; see the `lifespan` gate.
     mcp_host = MCPHost(
-        workspace_root=str(resolved_root) if resolved_root is not None else ".",
+        workspace_root=(
+            workspace.root_path if workspace is not None else _NO_WORKSPACE_SENTINEL
+        ),
         user_config_path=mcp_user_config_path,
         workspace_config_path=mcp_workspace_config,
         registry=McpToolRegistry(),
@@ -1150,7 +1462,10 @@ def create_app(
             if hermes is not None:
                 hermes.start()
             if start_mcp:
-                await mcp_host.load()
+                if workspace is None:
+                    logger.info("no workspace open; MCP servers not started")
+                else:
+                    await mcp_host.load()
             yield
         finally:
             for task in tuple(run_tasks):
@@ -1191,7 +1506,7 @@ def create_app(
         max_concurrent_runs=resolved_settings.max_concurrent_runs,
     )
     sessions = SessionRegistry()
-    terminals = TerminalRegistry()
+    terminals = TerminalRegistry(lambda: terminal_workspace())
     app.state.run_registry = registry
     app.state.session_registry = sessions
     app.state.terminal_registry = terminals
@@ -1216,7 +1531,50 @@ def create_app(
     app.state.mcp_host = mcp_host
     app.include_router(create_mcp_router(mcp_host))
 
-    run_root = str(resolved_root) if resolved_root is not None else "."
+    # Phase 4: the authoritative root, or None. Never "." — in a packaged build
+    # that resolves to the application's install directory, which is how agent
+    # writes and terminals ended up outside the user's project.
+    run_root = workspace.root_path if workspace is not None else None
+    # Root-less instances (the test suite and the browser build) still need
+    # *somewhere* for a run to resolve paths against. That somewhere is an
+    # isolated scratch directory created on demand — never the process
+    # directory, never the user's home. A packaged desktop build always launches
+    # with a real workspace, so this branch is unreachable there.
+    fallback_root_holder: list[str] = []
+
+    def rootless_scratch_root() -> str:
+        if not fallback_root_holder:
+            scratch = Path(tempfile.mkdtemp(prefix="zocai-no-workspace-"))
+            fallback_root_holder.append(str(scratch))
+            logger.warning(
+                "no workspace configured; runs resolve against an isolated "
+                "scratch directory instead of the process directory"
+            )
+        return fallback_root_holder[0]
+
+    def effective_run_root(requested: str | None) -> str:
+        """The root a run actually uses, in descending order of authority."""
+        if run_root is not None:
+            return run_root
+        if requested:
+            return requested
+        return rootless_scratch_root()
+
+    def terminal_workspace() -> WorkspaceContext | None:
+        """The workspace a terminal is confined to.
+
+        The real workspace when one is open. For a root-less instance the
+        isolated scratch directory is used instead, so tests and the browser
+        build keep working while a spawned shell still cannot land in the
+        application's install directory.
+        """
+        if workspace is not None:
+            return workspace
+        try:
+            return workspace_context_from_path(rootless_scratch_root())
+        except ValueError:  # pragma: no cover - scratch dir is created by us
+            return None
+
     diary_sink = diary.append if diary is not None else None
 
     @app.get("/health")
@@ -1230,12 +1588,25 @@ def create_app(
             "status": "ok",
             "active_runs": registry.count(),
             "workspace_root": run_root,
+            # Phase 6: the shell renders the active workspace name, so it needs
+            # the same canonical identity the gateway confines tools to.
+            "workspace": (
+                {
+                    "workspaceId": workspace.workspace_id,
+                    "rootPath": workspace.root_path,
+                    "displayName": workspace.display_name,
+                    "openedAt": workspace.opened_at,
+                }
+                if workspace is not None
+                else None
+            ),
             "diary_enabled": diary_path is not None,
             # §12.3: the run switcher reads these to render its count badge and
             # to disable "new run" once the cap is reached.
             "running": registry.active_count(),
             "max_concurrent_runs": registry.max_concurrent_runs,
             "run_ids": [run.run_id for run in registry.active()],
+            "run_states": {run.run_id: run.state.value for run in registry.active()},
             "locked_files": list(file_locks.held_paths()),
         }
 
@@ -1327,7 +1698,9 @@ def create_app(
         await proxy_lsp(
             websocket,
             server_name,
-            workspace_root=resolved_root if resolved_root is not None else Path.cwd(),
+            # Never Path.cwd(): a language server rooted at the sidecar's own
+            # directory would index the application install tree.
+            workspace_root=Path(effective_run_root(None)),
         )
 
     @app.post("/v1/completions", dependencies=[Depends(require_admission)])
@@ -1477,8 +1850,8 @@ def create_app(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail=f"unknown session: {session_id}",
             )
-        workspace = Path(session.workspace_root or run_root)
-        resolved_workspace = workspace.resolve()
+        search_root = Path(effective_run_root(session.workspace_root))
+        resolved_workspace = search_root.resolve()
         candidates: list[ContextCandidate] = []
         for path in search_workspace_files(resolved_workspace, q, limit):
             try:
@@ -1584,14 +1957,30 @@ def create_app(
         dependencies=[Depends(require_admission)],
     )
     async def spawn_terminal(req: SpawnTerminalRequest) -> TerminalSession:
-        """Spawn a sidecar-owned terminal process for the bottom dock."""
+        """Spawn a sidecar-owned terminal rooted in the active workspace.
+
+        The working directory is resolved and confined by the registry, so a
+        renderer cannot ask for a shell outside the open project and a request
+        without a cwd no longer inherits the sidecar's own directory.
+        """
         try:
             terminal = terminals.create(req)
+        except PermissionError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=error_body(ErrorCode.NO_WORKSPACE, message=str(exc)),
+            ) from exc
         except Exception as exc:
+            logger.warning("terminal spawn failed: %s: %s", type(exc).__name__, exc)
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"failed to spawn terminal: {exc}",
+                detail=error_body(ErrorCode.TERMINAL_SPAWN_FAILED, details=str(exc)),
             ) from exc
+        logger.info(
+            "terminal spawned id=%s workspace_id=%s",
+            terminal.session.id,
+            workspace_id_for_logs,
+        )
         return terminal.session
 
     @app.post(
@@ -1680,11 +2069,7 @@ def create_app(
         R11.1, R1.9). Ask runs stream over the text-only channel (R6.6).
         """
         path = router.route(req)
-        run_root_for_limits = (
-            str(resolved_root.resolve())
-            if resolved_root is not None
-            else (req.workspace_root or run_root)
-        )
+        run_root_for_limits = effective_run_root(req.workspace_root)
         # §15.1: validate everything the renderer sends before it reaches a
         # model or the filesystem. Over-length and control-character payloads are
         # rejected here rather than deeper in the pipeline.
@@ -1738,17 +2123,15 @@ def create_app(
         # A desktop sidecar is launched with an authoritative workspace root.
         # Never let a compromised renderer redirect tools to another directory;
         # request roots remain available only for root-less test/web instances.
-        run_workspace_root = (
-            str(resolved_root.resolve())
-            if resolved_root is not None
-            else (req.workspace_root or run_root)
-        )
+        run_workspace_root = effective_run_root(req.workspace_root)
         logger.info(
-            "agent run accepted run_id=%s mode=%s provider=%s model=%s base_url=%s",
+            "agent run accepted run_id=%s mode=%s provider=%s model=%s "
+            "workspace_id=%s base_url=%s",
             run.run_id,
-            req.mode,
+            req.mode.value,
             req.provider,
             req.model,
+            workspace_id_for_logs,
             req.base_url,
         )
         # Live runs (no injected brain) get the real Context Bus matcher and the
@@ -1768,6 +2151,7 @@ def create_app(
                 mcp_loop = asyncio.get_running_loop()
                 permission_config = config_from_mapping(req.permission)
                 run_permission = build_permission_gate(permission_config, run_workspace_root)
+                run.mark_running()
                 try:
                     await asyncio.wait_for(
                         asyncio.to_thread(
@@ -1801,16 +2185,39 @@ def create_app(
                         timeout=resolved_settings.run_timeout_seconds,
                     )
                 except TimeoutError:
-                    message = (
-                        f"agent run exceeded {resolved_settings.run_timeout_seconds:g}s timeout"
+                    # Structured log carries the diagnostics; the frame the user
+                    # sees carries a sentence, not a timeout constant.
+                    logger.warning(
+                        "run timed out run_id=%s mode=%s workspace_id=%s timeout=%.0fs",
+                        run.run_id,
+                        req.mode.value,
+                        workspace_id_for_logs,
+                        resolved_settings.run_timeout_seconds,
                     )
-                    logger.warning("run %s timed out", run.run_id)
-                    run.enqueue_error(message)
+                    run.record_failure(
+                        f"run exceeded {resolved_settings.run_timeout_seconds:g}s timeout"
+                    )
                     run.close()
                 except Exception as exc:  # pragma: no cover - defensive boundary
-                    logger.exception("run %s failed", run.run_id)
-                    run.enqueue_error(f"agent run failed: {type(exc).__name__}: {exc}")
+                    logger.exception(
+                        "run failed run_id=%s mode=%s workspace_id=%s",
+                        run.run_id,
+                        req.mode.value,
+                        workspace_id_for_logs,
+                    )
+                    run.record_failure(f"{type(exc).__name__}: {exc}")
                     run.close()
+                finally:
+                    # A pipeline that returned without closing (or that died in a
+                    # way the handlers above did not model) must still settle:
+                    # never leave a run non-terminal, because the UI mirrors this
+                    # state as "Running…".
+                    if not run.is_closed:
+                        logger.warning(
+                            "run %s ended without closing its stream; settling", run.run_id
+                        )
+                        run.record_failure("run ended without a terminal event")
+                        run.close()
 
             task = asyncio.create_task(drive_run())
             run_tasks.add(task)
@@ -1829,7 +2236,7 @@ def create_app(
         if run is None:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"unknown run: {req.run_id}",
+                detail=error_body(ErrorCode.RUN_NOT_FOUND, details=f"runId={req.run_id}"),
             )
         if req.kind == "approval" and req.decision not in {"approve", "reject"}:
             raise HTTPException(
@@ -1855,15 +2262,47 @@ def create_app(
         dependencies=[Depends(require_admission)],
     )
     async def cancel_agent_run(run_id: str) -> dict[str, object]:
-        """Cooperatively stop one run without disturbing concurrent peers."""
+        """Stop one run without disturbing peers. Idempotent (Phase 3.3).
+
+        Stopping is a user intent, not a query, so this endpoint reports the
+        *outcome* of that intent and never fails for a run it cannot find. There
+        are three ways a Stop legitimately arrives with no live run behind it:
+        the run completed a moment earlier, its SSE stream drained and the
+        registry forgot it (see ``_event_stream``), or Stop was clicked twice.
+        All three used to raise ``404 unknown run: <uuid>``, which the renderer
+        printed into the chat as an error and then — because its own handler
+        returned early — left the run displayed as "Running…" forever.
+
+        The response always carries the run's lifecycle state so the caller can
+        settle its UI:
+
+        * ``cancelled`` — this call stopped a live run.
+        * ``completed``/``failed``/``cancelled`` with ``alreadyFinished`` — the
+          run had already settled; nothing to do.
+        * ``unknown`` — the run is no longer tracked; treat as finished.
+        """
         run = registry.get(run_id)
         if run is None:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"unknown run: {run_id}",
-            )
-        run.cancel()
-        return {"runId": run_id, "cancelled": True}
+            logger.info("cancel for untracked run %s treated as already finished", run_id)
+            return {
+                "runId": run_id,
+                "cancelled": False,
+                "state": "unknown",
+                "alreadyFinished": True,
+            }
+        acted = run.cancel()
+        logger.info(
+            "cancel run_id=%s acted=%s state=%s",
+            run_id,
+            acted,
+            run.state.value,
+        )
+        return {
+            "runId": run_id,
+            "cancelled": acted,
+            "state": run.state.value,
+            "alreadyFinished": not acted,
+        }
 
     @app.get("/v1/agent/events", dependencies=[Depends(require_admission)])
     async def agent_events(
@@ -1908,7 +2347,7 @@ def create_app(
         if run is None:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"unknown run: {run_id}",
+                detail=error_body(ErrorCode.RUN_NOT_FOUND, details=f"runId={run_id}"),
             )
         events = run.replay(since_seq)
         last = events[-1].get("seq") if events else since_seq

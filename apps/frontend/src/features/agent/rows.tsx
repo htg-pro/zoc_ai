@@ -360,7 +360,55 @@ export function EditFileRow({ event }: RowProps<AgentEvents.EditFileEvent>): JSX
   );
 }
 
+/**
+ * Prefix of the FSM's synthetic stage markers (see `fsm._stage_event` and
+ * `app._SYNTHETIC_STAGE_PREFIX`). These `command` events are protocol/diary
+ * artefacts, not shell commands, so rendering `event.command` verbatim showed
+ * the user a literal `<stage:error_closed>` where an explanation belonged.
+ */
+const SYNTHETIC_STAGE_PREFIX = "<stage:";
+
+/** Whether a command event is a synthetic stage marker rather than a real command. */
+export function isSyntheticStageCommand(command: string | null | undefined): boolean {
+  return typeof command === "string" && command.startsWith(SYNTHETIC_STAGE_PREFIX);
+}
+
+/**
+ * The stage-terminated row: a plain-language statement that the run stopped,
+ * with the stage tag kept as collapsible developer detail.
+ */
+function StageClosedRow({ event }: RowProps<AgentEvents.CommandEvent>): JSX.Element {
+  const detail = event.errorTag;
+  return (
+    <TimelineRow
+      icon={<Terminal className="h-3 w-3" />}
+      iconColor="text-[var(--zoc-error)]"
+      iconBg="bg-[rgba(248,113,113,0.10)]"
+      label="Run stopped"
+      labelColor="text-[var(--zoc-error)]"
+      meta={
+        <span className="text-[11px] text-[#A1A1AA] truncate">
+          The run ended before finishing.
+        </span>
+      }
+      collapsible={detail !== undefined}
+      defaultOpen={false}
+      data-event-type="command"
+      data-stage-closed="true"
+    >
+      {detail !== undefined && (
+        <CodeBlock className="min-w-0">
+          <span className="text-[11px] text-[#A1A1AA]">{detail}</span>
+        </CodeBlock>
+      )}
+    </TimelineRow>
+  );
+}
+
 export function CommandRow({ event }: RowProps<AgentEvents.CommandEvent>): JSX.Element {
+  if (isSyntheticStageCommand(event.command)) {
+    return <StageClosedRow event={event} />;
+  }
   const exitOk = event.exitCode === 0;
   const hasResult = event.exitCode !== undefined || event.errorTag !== undefined;
   return (

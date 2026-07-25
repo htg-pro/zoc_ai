@@ -108,9 +108,16 @@ describe("finishRun", () => {
     const runs = finishRun([run({ runId: "a" })], "a", "done", 5000);
     expect(runs[0].phase).toBe("done");
     expect(runs[0].endedAt).toBe(5000);
+  });
 
-    const again = finishRun(runs, "a", "failed", 9000);
-    expect(again[0].phase).toBe("failed");
+  it("keeps the first terminal outcome", () => {
+    // Several independent signals settle the same run: the terminal SSE frame,
+    // the cancel response, and an unexpected stream close. Whichever arrives
+    // first is the truth — otherwise a run the user stopped could be relabelled
+    // "failed" by a trailing error frame.
+    const cancelled = finishRun([run({ runId: "a" })], "a", "cancelled", 5000);
+    const again = finishRun(cancelled, "a", "failed", 9000);
+    expect(again[0].phase).toBe("cancelled");
     expect(again[0].endedAt).toBe(5000);
   });
 

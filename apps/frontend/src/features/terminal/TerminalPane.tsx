@@ -24,9 +24,8 @@ import { requestReveal, revealPosition } from "@/lib/editor-actions";
 import { joinPath } from "@/lib/paths";
 import { useApp } from "@/lib/store";
 import {
-  createTerminal,
   disposeTerminal,
-  hasTerminal,
+  ensureTerminalCwd,
   killTerminal,
   setTerminalCallbacks,
 } from "@/lib/terminal-manager";
@@ -88,14 +87,17 @@ export function TerminalPane() {
     useApp.getState().ensureTerminalPane(sessionId);
   }, []);
 
-  // Reconcile every visible pane with one manager-owned xterm/PTTY instance.
+  // Reconcile every visible pane with one manager-owned xterm/PTY instance.
+  // `ensureTerminalCwd` (not `createTerminal`) is deliberate: the previous
+  // version skipped any pane that already had an instance, so switching
+  // workspaces left the old PTY — still sitting in the previous project's
+  // directory — attached to the pane.
   useEffect(() => {
     for (const pane of panes) {
-      if (hasTerminal(pane.sessionId)) continue;
       const terminal = terminals.find((candidate) => candidate.id === pane.sessionId);
       const profile =
         profiles.find((candidate) => candidate.id === terminal?.profileId) ?? profiles[0];
-      if (profile) void createTerminal(pane.sessionId, profile, workspaceRoot);
+      if (profile) void ensureTerminalCwd(pane.sessionId, profile, workspaceRoot);
     }
   }, [panes, profiles, terminals, workspaceRoot]);
 

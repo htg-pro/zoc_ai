@@ -9,6 +9,7 @@ import { useApp } from "@/lib/store";
 const mocks = vi.hoisted(() => ({
   events: [] as AgentEvents.CommandEvent[],
   disposeTerminal: vi.fn(async () => undefined),
+  ensureTerminalCwd: vi.fn(async () => undefined),
   findInTerminal: vi.fn(() => true),
   killTerminal: vi.fn(async () => undefined),
   mountTerminal: vi.fn(),
@@ -22,6 +23,10 @@ vi.mock("@/features/agent/agent-stream-context", () => ({
 
 vi.mock("@/lib/terminal-manager", () => ({
   createTerminal: vi.fn(async () => undefined),
+  // The pane now reconciles through `ensureTerminalCwd`, which recreates a PTY
+  // whose cwd no longer matches the active workspace.
+  ensureTerminalCwd: mocks.ensureTerminalCwd,
+  getTerminalCwd: () => "/workspace",
   disposeTerminal: mocks.disposeTerminal,
   findInTerminal: mocks.findInTerminal,
   getTerminalOutput: () => "see src/main.ts:4:2\n5 passed, 0 failed",

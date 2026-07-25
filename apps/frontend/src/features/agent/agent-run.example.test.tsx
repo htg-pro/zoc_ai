@@ -659,7 +659,12 @@ describe("parallel Gateway runs (§12.3)", () => {
   });
 
   it("cancels a live peer behind terminal focus and releases one queued run", async () => {
-    vi.mocked(postAgentCancel).mockResolvedValue(undefined);
+    vi.mocked(postAgentCancel).mockResolvedValue({
+      runId: "run-c",
+      cancelled: true,
+      state: "cancelled",
+      alreadyFinished: false,
+    });
     vi.mocked(postAgentRun).mockResolvedValue({ runId: "run-queued" });
     vi.spyOn(agentClient, "getAgentClient").mockResolvedValue({
       memoryStats: vi.fn().mockResolvedValue({

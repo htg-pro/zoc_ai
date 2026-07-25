@@ -90,6 +90,16 @@ async def test_run_fans_out_each_frame_to_every_subscriber() -> None:
     assert await asyncio.wait_for(second.get(), timeout=1) == frame
 
     run.close()
+    # `close()` now emits exactly one terminal frame ahead of the sentinel (the
+    # guarantee that stops a closed run from looking "Running…" in the UI), and
+    # fan-out applies to it like any other frame: both subscribers see the
+    # terminal frame *and* the sentinel.
+    first_terminal = await asyncio.wait_for(first.get(), timeout=1)
+    second_terminal = await asyncio.wait_for(second.get(), timeout=1)
+    assert first_terminal is not None
+    assert first_terminal["type"] == "done"
+    assert first_terminal == second_terminal
+
     assert await asyncio.wait_for(first.get(), timeout=1) is None
     assert await asyncio.wait_for(second.get(), timeout=1) is None
     run.unsubscribe(first)

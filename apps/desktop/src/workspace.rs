@@ -176,16 +176,54 @@ pub fn desktop_config_set(
     supervisor: tauri::State<'_, Arc<AgentSupervisor>>,
     config: DesktopConfig,
 ) -> Result<DesktopConfig, String> {
+    // Canonicalize before persisting so the stored value and the in-memory root
+    // agree, and so a bad folder is refused at the point the user chose it
+    // rather than on the first file operation.
+    let next = match config.workspace_root.as_deref() {
+        Some(raw) => Some(canonical_workspace_root(raw)?),
+        None => None,
+    };
+    let config = DesktopConfig {
+        workspace_root: next
+            .as_ref()
+            .map(|p| p.to_string_lossy().into_owned()),
+        ..config
+    };
     let path = config_path();
     let text = serde_json::to_string_pretty(&config).map_err(|e| e.to_string())?;
     std::fs::write(&path, text).map_err(|e| e.to_string())?;
     let previous = state.get();
-    let next = config.workspace_root.as_ref().map(PathBuf::from);
     state.set(next.clone());
     if previous != next {
         supervisor.restart();
     }
     Ok(config)
+}
+
+/// Resolve a user-supplied workspace root to an absolute, canonical directory.
+///
+/// Canonicalizing here — at the one place a root enters the shell — is what
+/// makes every later confinement check a cheap prefix comparison. Storing the
+/// raw string instead (the previous behaviour) meant a root given as a relative
+/// path, with a trailing slash, or through a symlink produced a different string
+/// than the canonical paths derived from it, so the same folder could be
+/// accepted by one check and rejected by another.
+///
+/// A path that is not an existing directory is rejected rather than stored: a
+/// file or a deleted folder is not a workspace, and accepting one only defers
+/// the failure to the first operation that tries to use it.
+fn canonical_workspace_root(raw: &str) -> Result<PathBuf, String> {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return Err("workspace path is empty".to_string());
+    }
+    let candidate = PathBuf::from(trimmed);
+    let canonical = std::fs::canonicalize(&candidate)
+        .map_err(|e| format!("workspace not found: {trimmed} ({e})"))?;
+    if !canonical.is_dir() {
+        return Err(format!("workspace is not a directory: {trimmed}"));
+    }
+    Ok(canonical)
 }
 
 #[tauri::command]
@@ -194,14 +232,11 @@ pub fn set_workspace_root(
     supervisor: tauri::State<'_, Arc<AgentSupervisor>>,
     root: Option<String>,
 ) -> Result<(), String> {
-    if let Some(ref r) = root {
-        let p = PathBuf::from(r);
-        if !p.exists() {
-            return Err(format!("workspace not found: {r}"));
-        }
-    }
+    let next = match root {
+        Some(ref r) => Some(canonical_workspace_root(r)?),
+        None => None,
+    };
     let previous = state.get();
-    let next = root.map(PathBuf::from);
     state.set(next.clone());
     if previous != next {
         supervisor.restart();
@@ -466,6 +501,75 @@ mod tests {
         let root = std::env::temp_dir().join(format!("zoc-workspace-{label}-{nanos}"));
         std::fs::create_dir_all(&root).unwrap();
         root
+    }
+
+    #[test]
+    fn canonicalizes_a_workspace_root() {
+        // A root given with redundant components must be stored in exactly one
+        // form, so later confinement checks are a simple prefix comparison.
+        let root = temp_workspace("canon");
+        let messy = root.join(".").join("..").join(root.file_name().unwrap());
+        let resolved = canonical_workspace_root(messy.to_str().unwrap()).unwrap();
+        assert_eq!(resolved, std::fs::canonicalize(&root).unwrap());
+        assert!(resolved.is_absolute());
+        std::fs::remove_dir_all(root).ok();
+    }
+
+    #[test]
+    fn resolves_a_symlinked_workspace_root() {
+        #[cfg(unix)]
+        {
+            let real = temp_workspace("symlink-real");
+            let link = real.with_file_name("zoc-workspace-symlink-link");
+            std::fs::remove_file(&link).ok();
+            std::os::unix::fs::symlink(&real, &link).unwrap();
+
+            let resolved = canonical_workspace_root(link.to_str().unwrap()).unwrap();
+            assert_eq!(resolved, std::fs::canonicalize(&real).unwrap());
+
+            std::fs::remove_file(&link).ok();
+            std::fs::remove_dir_all(real).ok();
+        }
+    }
+
+    #[test]
+    fn rejects_a_missing_or_non_directory_root() {
+        let root = temp_workspace("notdir");
+        let file = root.join("a-file.txt");
+        std::fs::write(&file, b"x").unwrap();
+
+        assert!(canonical_workspace_root(file.to_str().unwrap()).is_err());
+        assert!(canonical_workspace_root(root.join("missing").to_str().unwrap()).is_err());
+        assert!(canonical_workspace_root("   ").is_err());
+        assert!(canonical_workspace_root("").is_err());
+
+        std::fs::remove_dir_all(root).ok();
+    }
+
+    #[test]
+    fn accepts_a_root_with_surrounding_whitespace() {
+        let root = temp_workspace("trim");
+        let padded = format!("  {}  ", root.to_str().unwrap());
+        assert_eq!(
+            canonical_workspace_root(&padded).unwrap(),
+            std::fs::canonicalize(&root).unwrap()
+        );
+        std::fs::remove_dir_all(root).ok();
+    }
+
+    #[test]
+    fn canonical_root_is_confinement_ready() {
+        // The point of canonicalizing at entry: paths derived from the stored
+        // root land inside it without any further normalisation.
+        let root = temp_workspace("confine");
+        let state = WorkspaceState::default();
+        state.set(Some(
+            canonical_workspace_root(root.to_str().unwrap()).unwrap(),
+        ));
+
+        assert!(ensure_within_workspace(&state, Path::new("src/main.rs")).is_ok());
+        assert!(ensure_within_workspace(&state, Path::new("../escape.txt")).is_err());
+        std::fs::remove_dir_all(root).ok();
     }
 
     #[test]

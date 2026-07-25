@@ -7,7 +7,25 @@
  * collapse rules are testable without rendering.
  */
 
-export type RunPhase = "running" | "paused" | "done" | "failed" | "cancelled";
+/**
+ * Lifecycle phases of a tracked run, mirroring the gateway's `RunState`
+ * (`services/gateway/src/zocai_gateway/run_state.py`).
+ *
+ * `initializing` and `stopping` are the two transitions the user can see and
+ * act on: the first covers the window between pressing Send and the gateway
+ * accepting the run, the second the window between pressing Stop and the run
+ * actually settling. Without them the UI had only "running", so a stop in
+ * flight was indistinguishable from a run still working — and a failed stop
+ * left the run stuck showing "Running…".
+ */
+export type RunPhase =
+  | "initializing"
+  | "running"
+  | "stopping"
+  | "paused"
+  | "done"
+  | "failed"
+  | "cancelled";
 
 export interface TrackedRun {
   runId: string;
@@ -35,6 +53,42 @@ const TERMINAL: ReadonlySet<RunPhase> = new Set<RunPhase>([
 /** Whether a run has finished (and so should collapse to a summary card). */
 export function isTerminal(run: Pick<TrackedRun, "phase">): boolean {
   return TERMINAL.has(run.phase);
+}
+
+/**
+ * Whether the Stop control should be shown for this run: only while it is
+ * initializing, running, or already stopping (Phase 3, stop-button rules).
+ */
+export function canStopRun(run: Pick<TrackedRun, "phase">): boolean {
+  return run.phase === "initializing" || run.phase === "running" || run.phase === "stopping";
+}
+
+/**
+ * Whether the Stop control should be disabled. True during the short `stopping`
+ * transition, so rapid repeated clicks cannot queue duplicate cancellations.
+ */
+export function isStopPending(run: Pick<TrackedRun, "phase">): boolean {
+  return run.phase === "stopping";
+}
+
+/** Short user-facing status label for a run (Phase 6). */
+export function runStatusLabel(run: Pick<TrackedRun, "phase">): string {
+  switch (run.phase) {
+    case "initializing":
+      return "Starting…";
+    case "running":
+      return "Running…";
+    case "stopping":
+      return "Stopping…";
+    case "paused":
+      return "Paused";
+    case "done":
+      return "Completed";
+    case "cancelled":
+      return "Stopped";
+    case "failed":
+      return "Failed";
+  }
 }
 
 /** Runs still executing. */
@@ -95,18 +149,26 @@ export function upsertRun(
   return [...runs.slice(0, index), merged, ...runs.slice(index + 1)];
 }
 
-/** Mark a run terminal, stamping `endedAt` once. */
+/**
+ * Mark a run terminal, stamping `endedAt` once.
+ *
+ * A run that is already terminal is left alone: several independent signals can
+ * settle the same run (the terminal SSE frame, the cancel response, an
+ * unexpected stream close) and whichever arrived first is the truth. Letting a
+ * later signal overwrite it would, for example, relabel a run the user stopped
+ * as "failed".
+ */
 export function finishRun(
   runs: readonly TrackedRun[],
   runId: string,
   phase: RunPhase,
   now: number,
 ): TrackedRun[] {
-  return runs.map((run) =>
-    run.runId === runId
-      ? { ...run, phase, endedAt: run.endedAt ?? now }
-      : run,
-  );
+  return runs.map((run) => {
+    if (run.runId !== runId) return run;
+    if (isTerminal(run)) return run;
+    return { ...run, phase, endedAt: run.endedAt ?? now };
+  });
 }
 
 /** Human duration for a run card ("1m 04s"). */

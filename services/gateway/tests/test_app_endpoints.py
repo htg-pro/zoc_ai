@@ -386,7 +386,15 @@ def test_cancel_endpoint_stops_only_the_named_run() -> None:
     response = local.post(f"/v1/agent/runs/{first_id}/cancel")
 
     assert response.status_code == 200
-    assert response.json() == {"runId": first_id, "cancelled": True}
+    # The response now reports the run's lifecycle state, not just a boolean:
+    # the renderer needs it to settle its UI when a Stop races completion (and
+    # so this endpoint never has to answer "unknown run").
+    assert response.json() == {
+        "runId": first_id,
+        "cancelled": True,
+        "state": "cancelled",
+        "alreadyFinished": False,
+    }
     registry = app.state.run_registry
     assert registry.get(first_id).is_cancelled is True
     assert registry.get(first_id).is_closed is True
