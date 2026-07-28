@@ -1,0 +1,41 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24" role="img" aria-labelledby="zoc-mark-title">
+  <!--
+    Zoc AI mark — standalone, gradient fill.
+    Feature: zoc-agent-chat-rebuild — R18.1, R18.2, R18.3, R18.6
+
+    Original artwork: a Z built as a spark. Two full-width horizontal
+    terminals plus a diagonal band broken by a lateral jog, so the form reads
+    at once as a Z and as a bolt.
+
+    Construction (all values on a 0.25 u grid, 1 u = 1 viewBox px):
+      optical box        x, y in [4, 20]
+      terminal bars      3 u tall x 16 u wide
+      diagonal band      4.5 u measured horizontally (3.1 u perpendicular,
+                         so the diagonal carries slightly more weight than
+                         the terminals)
+      leg run            dx -5.25 u per dy 5 u  (43.6 deg from horizontal)
+      kink offset        +2.5 u at y = 12
+      corners            hard, 0 radius
+      fill only          one closed subpath, non-zero winding, no strokes,
+                         so scaling never changes optical weight
+
+    No curve commands, no traced glyph outlines, and no path data derived
+    from the lucide `Zap` glyph or any other third-party icon set (R18.6).
+
+    The gradient stops resolve to the zoc-agent-strong and zoc-agent-soft
+    custom properties when this file is inlined in the app; the literals are
+    those same token values, so a standalone render matches.
+  -->
+  <title id="zoc-mark-title">Zoc AI</title>
+  <defs>
+    <linearGradient id="zoc-mark-spark" gradientUnits="userSpaceOnUse" x1="4" y1="4" x2="20" y2="20">
+      <stop offset="0" stop-color="var(--zoc-agent-strong, #9b6af1)" />
+      <stop offset="1" stop-color="var(--zoc-agent-soft, #b79bf9)" />
+    </linearGradient>
+  </defs>
+  <path
+    fill="url(#zoc-mark-spark) currentColor"
+    fill-rule="nonzero"
+    d="M4 4H20V7L14.75 12H17.25L12 17H20V20H4V17H7.5L12.75 12H10.25L15.5 7H4Z"
+  />
+</svg>

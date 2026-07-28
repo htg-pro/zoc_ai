@@ -1,0 +1,48 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 96 24" width="96" height="24" role="img" aria-labelledby="zoc-lockup-title">
+  <!--
+    Zoc AI lockup — mark with wordmark.
+    Feature: zoc-agent-chat-rebuild — R18.2, R18.6
+
+    Layout: mark at 24 u in x [0, 24], an 8 u gutter, wordmark from x = 32.
+    Total 96 x 24, so the 4 u clear space to the left of the mark's optical
+    box is mirrored to the right of the wordmark.
+
+    The wordmark references `InterVariable` by family name — the app's own
+    sans stack from apps/frontend/tailwind.config.ts — and is NEVER converted
+    to outlines: R18.6 forbids shipping a licensed-font outline the repository
+    lacks redistribution rights for. `textLength` with the default
+    `lengthAdjust="spacing"` pins the wordmark's advance to 60 u so the lockup
+    keeps its 96 u box when a fallback family is substituted, adjusting only
+    tracking and never glyph shapes.
+
+    Deviation from the design's variants table, recorded so it is not
+    "corrected" back: the table asks for both an 18 u cap height and a 96 x 24
+    total, and the two cannot hold together — "Zoc AI" at an 18 u Inter cap
+    height needs a ~24.75 u font size and ~73 u of advance, which puts the
+    total at ~105 u. The 96 u total is kept, because a consumer can lay out
+    against it, and the cap height instead aligns with the mark's own 16 u
+    optical box (21 u font size, 15.3 u Inter cap height).
+  -->
+  <title id="zoc-lockup-title">Zoc AI</title>
+  <defs>
+    <linearGradient id="zoc-lockup-spark" gradientUnits="userSpaceOnUse" x1="4" y1="4" x2="20" y2="20">
+      <stop offset="0" stop-color="var(--zoc-agent-strong, #9b6af1)" />
+      <stop offset="1" stop-color="var(--zoc-agent-soft, #b79bf9)" />
+    </linearGradient>
+  </defs>
+  <path
+    fill="url(#zoc-lockup-spark) currentColor"
+    fill-rule="nonzero"
+    d="M4 4H20V7L14.75 12H17.25L12 17H20V20H4V17H7.5L12.75 12H10.25L15.5 7H4Z"
+  />
+  <text
+    x="32"
+    y="19.75"
+    textLength="60"
+    lengthAdjust="spacing"
+    fill="currentColor"
+    font-family="InterVariable, Inter, system-ui, sans-serif"
+    font-size="21"
+    font-weight="600"
+  >Zoc AI</text>
+</svg>

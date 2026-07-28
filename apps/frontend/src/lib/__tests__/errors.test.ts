@@ -96,6 +96,19 @@ describe("normalizeError", () => {
     const result = normalizeError("x".repeat(5_000));
     expect(result.message.length).toBeLessThanOrEqual(601);
   });
+
+  it("sanitizes historical llama.cpp context-overflow JSON", () => {
+    const raw =
+      'http 400: {"error":{"type":"exceed_context_size_error","n_prompt_tokens":9444,"n_ctx":8192}}';
+    const result = normalizeError(new Error(raw));
+
+    expect(result.code).toBe(ErrorCodes.contextWindowExceeded);
+    expect(result.message).toContain("9,444");
+    expect(result.message).toContain("8,192");
+    expect(result.message).toContain("Reduce attached context");
+    expect(result.message).not.toContain("exceed_context_size_error");
+    expect(result.message).not.toContain("{");
+  });
 });
 
 describe("formatUserError", () => {

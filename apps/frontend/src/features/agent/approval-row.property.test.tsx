@@ -20,7 +20,7 @@ import {
   ApprovalRow,
   type AgentDecisionRequest,
   type ApprovalDecision,
-} from "./rows";
+} from "./decision-rows";
 
 afterEach(() => {
   cleanup();

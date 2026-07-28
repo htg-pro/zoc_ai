@@ -28,6 +28,7 @@ from types import SimpleNamespace
 
 from fastapi.testclient import TestClient
 from zocai_gateway.app import create_app
+from zocai_gateway.run_pipeline import DefaultAgentBrain
 from zocai_gateway.scripts import launch
 from zocai_gateway.settings import GatewaySettings
 
@@ -53,15 +54,18 @@ def test_four_gateway_routes_are_registered() -> None:
 
 def test_run_route_responds_and_is_not_unknown_route() -> None:
     """POST /v1/agent/run is a real route (not a 404-for-unknown-route)."""
-    client = TestClient(create_app())
+    # An injected brain stands in for an available model so the R5.2 readiness
+    # gate is satisfied; Ask needs no workspace (R1.7).
+    client = TestClient(create_app(brain=DefaultAgentBrain()))
     resp = client.post("/v1/agent/run", json={"prompt": "hello", "mode": "ask"})
     assert resp.status_code == 200
     assert resp.json()["runId"]
 
 
-def test_decision_route_responds_and_is_not_unknown_route() -> None:
+def test_decision_route_responds_and_is_not_unknown_route(tmp_path) -> None:
     """POST /v1/agent/decision is registered; unknown run is a handled 404."""
-    client = TestClient(create_app())
+    # Agent mode requires a bound workspace (R1.4) and a ready model (R5.2).
+    client = TestClient(create_app(workspace_root=tmp_path, brain=DefaultAgentBrain()))
     run_id = client.post(
         "/v1/agent/run", json={"prompt": "build", "mode": "agent"}
     ).json()["runId"]

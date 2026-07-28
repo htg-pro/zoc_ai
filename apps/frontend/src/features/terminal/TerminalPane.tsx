@@ -22,7 +22,7 @@ import { AgentTerminalPanes } from "./AgentTerminalPanes";
 import { useTerminalPaneShortcuts } from "./useTerminalPaneShortcuts";
 import { requestReveal, revealPosition } from "@/lib/editor-actions";
 import { joinPath } from "@/lib/paths";
-import { useApp } from "@/lib/store";
+import { activeWorkspaceRoot, useApp } from "@/lib/store";
 import {
   disposeTerminal,
   ensureTerminalCwd,
@@ -48,7 +48,7 @@ export function TerminalPane() {
   const closeTerminalPane = useApp((state) => state.closeTerminalPane);
   const setActiveTerminal = useApp((state) => state.setActiveTerminal);
   const renameTerminal = useApp((state) => state.renameTerminal);
-  const workspaceRoot = useApp((state) => state.workspaceRoot);
+  const workspaceRoot = useApp(activeWorkspaceRoot);
   const sharedStream = useAgentStreamContext();
 
   const commandEvents = useMemo(
@@ -107,10 +107,11 @@ export function TerminalPane() {
       onExit: (id, code) => useApp.getState().setTerminalExited(id, code),
       onOpenLink: (path, line = 1) => {
         const state = useApp.getState();
+        const root = activeWorkspaceRoot(state);
         const absolute =
-          path.startsWith("/") || /^[A-Za-z]:[\\/]/.test(path) || !state.workspaceRoot
+          path.startsWith("/") || /^[A-Za-z]:[\\/]/.test(path) || !root
             ? path
-            : joinPath(state.workspaceRoot, path);
+            : joinPath(root, path);
         if (absolute === state.activeFile) {
           void state.openFile(absolute);
           revealPosition(line, 1);

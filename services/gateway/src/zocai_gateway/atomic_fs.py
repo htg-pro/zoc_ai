@@ -7,12 +7,41 @@ same-directory temp/replace algorithm instead of one-by-one ``copy2`` writes.
 
 from __future__ import annotations
 
+import hashlib
 import os
 import subprocess
 import tempfile
 from contextlib import suppress
 from dataclasses import dataclass
 from pathlib import Path
+
+
+def sha256_hex(data: bytes) -> str:
+    """Hex SHA-256 of ``data`` — the canonical content hash for diff staleness (R12.7)."""
+    return hashlib.sha256(data).hexdigest()
+
+
+def sha256_text(text: str | None) -> str | None:
+    """Hex SHA-256 of ``text`` (UTF-8), or ``None`` when ``text`` is ``None``.
+
+    Used for a pre-write base hash where the prior *content* is already in hand
+    (an agent tool read it back as text) rather than re-reading the file.
+    """
+    if text is None:
+        return None
+    return sha256_hex(text.encode("utf-8"))
+
+
+def sha256_file(path: Path | str) -> str | None:
+    """Hex SHA-256 of the file's bytes at ``path``, or ``None`` when absent (R12.7).
+
+    Never raises: a missing/unreadable target is a ``None`` base hash, which the
+    renderer reads as "no known base" rather than a stale marker.
+    """
+    try:
+        return sha256_hex(Path(path).read_bytes())
+    except OSError:
+        return None
 
 
 @dataclass(frozen=True, slots=True)

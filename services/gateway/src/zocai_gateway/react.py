@@ -49,9 +49,11 @@ from shared_schema.agent_events import (
     PlanUpdateEvent,
 )
 
+from zocai_gateway.atomic_fs import sha256_text
 from zocai_gateway.fsm import EmitSink
 from zocai_gateway.memory.state_wrapper import Diff
-from zocai_gateway.mode_router import AgentRunRequest
+from zocai_gateway.mode_router import AgentRunRequest, Capability
+from zocai_gateway.mode_router import Decision as CapabilityDecision
 from zocai_gateway.model_runtime import (
     ModelToolResponse,
     ToolCall,
@@ -168,6 +170,11 @@ TOOL_SPECS: tuple[ToolSpec, ...] = (
 #: EditStep (R10.1). ``make_dir`` mutates the workspace but creates a directory,
 #: not a file, so it is neither gated nor counted (design tool→event table).
 _COUNTED_MUTATIONS = frozenset({"write_file", "delete_file", "move_file"})
+
+#: Native tools that mutate the workspace — gated by the WRITE capability.
+_WRITE_TOOLS = frozenset({"write_file", "make_dir", "delete_file", "move_file"})
+#: Native tools that execute commands — gated by the EXECUTE capability.
+_EXECUTE_TOOLS = frozenset({"run_shell"})
 
 #: Bounded wait for a developer's interactive approval before a run gives up (Part 7.1).
 PERMISSION_DECISION_TIMEOUT = 300.0
@@ -300,6 +307,12 @@ class ReActExecutor:
     mcp_call: McpDispatch | None = None
     check_permission: PermissionGate | None = None
     wait_for_permission: PermissionDecisionWaiter | None = None
+    #: Mode capability gate bound to ``(mode, plan-approval)`` upstream (R7.6/
+    #: R7.7/R16.2-16.4). When set, a WRITE tool (write/make_dir/delete/move) and
+    #: an EXECUTE tool (run_shell) are checked against it before dispatch, so a
+    #: mode that does not permit the capability (e.g. Plan before approval)
+    #: cannot mutate the workspace even if a tool call reaches the loop.
+    capability_gate: Callable[[Capability], CapabilityDecision] | None = None
     _mcp_names: frozenset[str] = field(default_factory=frozenset, init=False)
 
     MAX_STEPS: ClassVar[int] = 30
@@ -505,6 +518,34 @@ class ReActExecutor:
                     )
                 permission_approved = True
 
+        # Mode capability gate (R7.6/R7.7/R16.2-16.4): a WRITE or EXECUTE tool is
+        # refused when the current mode/approval does not permit it (e.g. Plan
+        # before approval), independent of the fine-grained permission engine
+        # above. Reads and network/MCP tools are not capability-gated here.
+        if self.capability_gate is not None:
+            capability: Capability | None = None
+            if name in _WRITE_TOOLS:
+                capability = Capability.WRITE
+            elif name in _EXECUTE_TOOLS:
+                capability = Capability.EXECUTE
+            if capability is not None:
+                cap_decision = self.capability_gate(capability)
+                if cap_decision.rejected:
+                    detail = (
+                        cap_decision.message
+                        or f"{capability.value} tools are not available in this mode."
+                    )
+                    log_security_event(
+                        "capability_denied",
+                        detail,
+                        run_id=self.run_id,
+                        action_kind=capability.value,
+                        tool=name,
+                    )
+                    return _DispatchResult(
+                        observation=ToolObservation(call.id, ok=False, content=detail)
+                    )
+
         if self.mcp_call is not None and name in self._mcp_names:
             ok, content = self.mcp_call(name, call.arguments)  # aggregated MCP tool (Part 4)
             return _DispatchResult(
@@ -562,6 +603,7 @@ class ReActExecutor:
             adds=adds,
             dels=dels,
             status="done",
+            base_hash=sha256_text(prior),
         )
         return _DispatchResult(
             observation=ToolObservation(call.id, ok=True, content=f"wrote {path}"),
@@ -616,6 +658,7 @@ class ReActExecutor:
             adds=adds,
             dels=dels,
             status="done",
+            base_hash=sha256_text(prior),
         )
         return _DispatchResult(
             observation=ToolObservation(call.id, ok=True, content=f"deleted {path}"),

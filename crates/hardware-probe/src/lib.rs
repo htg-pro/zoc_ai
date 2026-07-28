@@ -41,6 +41,13 @@ pub struct HardwareProfile {
     pub gpu_memory_gb: Option<f64>,
     /// Detected system memory in gigabytes, if probeable.
     pub system_memory_gb: Option<f64>,
+    /// Currently *available* system memory in gigabytes, if probeable.
+    ///
+    /// Distinct from `system_memory_gb` and not derivable from it: a model that
+    /// fits in total RAM can still fail to load on a machine that is already
+    /// using most of it, which is exactly the case the model picker's fit state
+    /// exists to warn about (R13.6).
+    pub available_memory_gb: Option<f64>,
 }
 
 impl HardwareProfile {
@@ -58,32 +65,24 @@ impl HardwareProfile {
 /// 500 ms tier-selection budget (R1.2). Any resource that cannot be determined is
 /// reported as `None`.
 pub fn probe() -> HardwareProfile {
+    // One refresh feeds both memory readings; probing them separately would
+    // sample the machine twice and could report an available figure larger than
+    // the total it is compared against.
+    let mut system = System::new();
+    system.refresh_memory();
+    let total_bytes = system.total_memory();
+    let available_bytes = system.available_memory();
+
     HardwareProfile {
         gpu_memory_gb: probe_gpu_memory_gb(),
-        system_memory_gb: probe_system_memory_gb(),
+        system_memory_gb: (total_bytes > 0).then(|| bytes_to_gb(total_bytes)),
+        available_memory_gb: (available_bytes > 0).then(|| bytes_to_gb(available_bytes)),
     }
 }
 
 /// Convert a raw byte count to gigabytes.
 fn bytes_to_gb(bytes: u64) -> f64 {
     bytes as f64 / BYTES_PER_GB
-}
-
-/// Read total physical system memory in gigabytes via `sysinfo`.
-///
-/// Returns `None` if the platform reports zero total memory (treated as an
-/// undetectable reading rather than a real 0 GB machine).
-fn probe_system_memory_gb() -> Option<f64> {
-    // `new()` allocates no per-subsystem state; we explicitly refresh only memory
-    // to keep the probe cheap and deterministic.
-    let mut system = System::new();
-    system.refresh_memory();
-    let total_bytes = system.total_memory();
-    if total_bytes == 0 {
-        None
-    } else {
-        Some(bytes_to_gb(total_bytes))
-    }
 }
 
 /// Best-effort GPU memory probe.

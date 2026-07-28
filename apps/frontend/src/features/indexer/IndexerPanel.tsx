@@ -5,13 +5,15 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
 import { getAgentClient } from "@/lib/agent-client";
-import { MOCK_INDEX_STATUS } from "@/lib/mock-data";
 import { useApp } from "@/lib/store";
 import { track } from "@/lib/telemetry";
 
 export function IndexerPanel() {
   const sessionId = useApp((s) => s.activeSessionId);
-  const [status, setStatus] = useState<IndexStatus>(MOCK_INDEX_STATUS);
+  // Starts empty, not with a sample status. Seeding this with fabricated counts
+  // meant a workspace that had never been indexed still showed a plausible
+  // "1,284 files / 5,217 chunks", which reads as real.
+  const [status, setStatus] = useState<IndexStatus | null>(null);
   const [busy, setBusy] = useState(false);
   const [live, setLive] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -41,7 +43,7 @@ export function IndexerPanel() {
       const client = await getAgentClient();
       const next = await client.indexRebuild(sessionId);
       setStatus(next);
-      await track("indexer.rebuilt", { root: status.workspace_root });
+      await track("indexer.rebuilt", { root: next.workspace_root });
     } catch (err) {
       setError((err as Error).message);
     } finally {
@@ -68,6 +70,26 @@ export function IndexerPanel() {
         </Button>
       </div>
       <Separator className="my-2" />
+      {status === null ? (
+        <p className="text-[11px] text-muted-foreground">
+          {error
+            ? "The index status is unavailable."
+            : "No index status yet — open a workspace and reindex to build one."}
+        </p>
+      ) : (
+        <IndexStatusDetail status={status} />
+      )}
+      {error && (
+        <p className="mt-2 text-[10px] text-amber-400">{error}</p>
+      )}
+    </div>
+  );
+}
+
+/** The status table plus the embedder card, for a status that actually exists. */
+function IndexStatusDetail({ status }: { status: IndexStatus }) {
+  return (
+    <>
       <dl className="grid grid-cols-2 gap-y-1.5 text-[11px]">
         <dt className="text-muted-foreground">Root</dt>
         <dd className="truncate font-mono">{status.workspace_root}</dd>
@@ -120,9 +142,6 @@ export function IndexerPanel() {
           </div>
         );
       })()}
-      {error && (
-        <p className="mt-2 text-[10px] text-amber-400">{error}</p>
-      )}
-    </div>
+    </>
   );
 }

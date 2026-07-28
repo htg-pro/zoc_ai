@@ -70,7 +70,15 @@ function arbEvent(seq: number, nonce: number): fc.Arbitrary<AgentEvent> {
     fc.record({ prompt: fc.string() }).map(
       (r): AgentEvent => ({ ...base, type: "approval", prompt: `${r.prompt}#${nonce}` }),
     ),
-    fc.boolean().map((ok): AgentEvent => ({ ...base, type: "done", ok, reason: `r#${nonce}` })),
+    fc.boolean().map(
+      (ok): AgentEvent => ({
+        ...base,
+        type: "done",
+        ok,
+        reason: `r#${nonce}`,
+        filesChanged: 0,
+      }),
+    ),
   );
 }
 

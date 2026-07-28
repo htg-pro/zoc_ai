@@ -31,5 +31,14 @@ plugins = ["pydantic.mypy"]
 exclude = ["legacy/"]
 
 [tool.pytest.ini_options]
-testpaths = ["services/gateway/tests"]
+# `scripts/tests` carries the Build_Gate guards for the Python gate scripts —
+# the dependency-policy lockfile scan (zoc-agent-chat-rebuild R5.4, R22.5).
+# `packages/shared-types/python/tests` carries the Message_Part contract tests
+# and the schema-drift guard (R7.4, R22.5), which is the other half of the same
+# gate. A guard that pytest does not collect is not a guard.
+testpaths = [
+  "services/gateway/tests",
+  "scripts/tests",
+  "packages/shared-types/python/tests",
+]
 addopts = "-q"

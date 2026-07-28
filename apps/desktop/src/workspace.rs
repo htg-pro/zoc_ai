@@ -162,6 +162,29 @@ pub fn load_config() -> DesktopConfig {
     }
 }
 
+/// Persist just the workspace root into `desktop.json`, merging with the
+/// existing config.
+///
+/// The gateway's `WorkspaceBinder` re-reads `desktop.json` on every request
+/// (R1.2), so writing the switch here is what lets a running sidecar rebind to
+/// a new workspace **without a restart**. `set_workspace_root` no longer relies
+/// on a respawn to hand the gateway the new root through the environment.
+fn persist_workspace_root(next: Option<&Path>) -> Result<(), String> {
+    let mut cfg = load_config();
+    cfg.workspace_root = next.map(|p| p.to_string_lossy().into_owned());
+    let path = config_path();
+    let text = serde_json::to_string_pretty(&cfg).map_err(|e| e.to_string())?;
+    std::fs::write(&path, text).map_err(|e| e.to_string())
+}
+
+/// Whether a workspace transition is the onboarding *first selection* (no
+/// workspace was open before). Only that transition restarts the sidecar; a
+/// later *switch* between two workspaces rebinds via `desktop.json` with no
+/// restart (R1.2). Clearing the workspace also never restarts.
+fn is_onboarding_selection(previous: &Option<PathBuf>, next: &Option<PathBuf>) -> bool {
+    previous.is_none() && next.is_some()
+}
+
 #[tauri::command]
 pub fn desktop_config_get(state: tauri::State<'_, Arc<WorkspaceState>>) -> DesktopConfig {
     let cfg = load_config();
@@ -184,9 +207,7 @@ pub fn desktop_config_set(
         None => None,
     };
     let config = DesktopConfig {
-        workspace_root: next
-            .as_ref()
-            .map(|p| p.to_string_lossy().into_owned()),
+        workspace_root: next.as_ref().map(|p| p.to_string_lossy().into_owned()),
         ..config
     };
     let path = config_path();
@@ -194,7 +215,11 @@ pub fn desktop_config_set(
     std::fs::write(&path, text).map_err(|e| e.to_string())?;
     let previous = state.get();
     state.set(next.clone());
-    if previous != next {
+    // R1.2: the gateway re-reads desktop.json on every request, so a workspace
+    // *switch* rebinds without a restart. Only the onboarding first-selection
+    // restarts the sidecar (permitted); the env fallback the respawn passes is
+    // no longer required for a rebind.
+    if is_onboarding_selection(&previous, &next) {
         supervisor.restart();
     }
     Ok(config)
@@ -238,7 +263,12 @@ pub fn set_workspace_root(
     };
     let previous = state.get();
     state.set(next.clone());
-    if previous != next {
+    // Persist the switch so the gateway rebinds via desktop.json without a
+    // restart (R1.2) — this command no longer depends on a respawn to hand the
+    // new root to the sidecar through the environment.
+    persist_workspace_root(next.as_deref())?;
+    // Only the onboarding first-selection restarts; a later switch rebinds live.
+    if is_onboarding_selection(&previous, &next) {
         supervisor.restart();
     }
     Ok(())
@@ -501,6 +531,19 @@ mod tests {
         let root = std::env::temp_dir().join(format!("zoc-workspace-{label}-{nanos}"));
         std::fs::create_dir_all(&root).unwrap();
         root
+    }
+
+    #[test]
+    fn only_first_selection_is_onboarding() {
+        // R1.2: only the first workspace selection (no previous) restarts the
+        // sidecar. A switch between two workspaces, or clearing the workspace,
+        // rebinds via desktop.json with no restart.
+        let a = Some(PathBuf::from("/a"));
+        let b = Some(PathBuf::from("/b"));
+        assert!(is_onboarding_selection(&None, &a)); // first pick → restart
+        assert!(!is_onboarding_selection(&a, &b)); // switch → no restart
+        assert!(!is_onboarding_selection(&a, &None)); // clear → no restart
+        assert!(!is_onboarding_selection(&None, &None)); // nothing → no restart
     }
 
     #[test]

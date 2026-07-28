@@ -6,6 +6,7 @@ import {
   Coins,
   Cpu,
   Download,
+  Folder,
   History,
   MessagesSquare,
   Pin,
@@ -23,6 +24,7 @@ import {
   sessionStats,
   tabCounts as computeTabCounts,
 } from "@/lib/session-query";
+import { sessionListItem } from "@/features/agent/session-origin";
 import type { Session } from "@zoc-studio/shared-types";
 
 /* ── helpers ───────────────────────────────────────────────────── */
@@ -133,13 +135,27 @@ export function SessionsView() {
   };
 
   const onNew = async () => {
-    const root =
+    // No "/" fallback: a session must be scoped to a real folder (R2.x). When
+    // none is resolvable the control is disabled below; guard here too.
+    const root = (
       workspaceRoot ??
       sessions.find((s) => s.id === useApp.getState().activeSessionId)?.workspace_root ??
-      "/";
+      ""
+    ).trim();
+    if (!root || root === "/") return;
     const created = await createSession(`Session ${new Date().toLocaleTimeString()}`, root);
     if (created) setMainView("editor");
   };
+
+  // New Session is enabled only when a real workspace is resolvable (R2.x).
+  const canCreateSession = (() => {
+    const root = (
+      workspaceRoot ??
+      sessions.find((s) => s.id === useApp.getState().activeSessionId)?.workspace_root ??
+      ""
+    ).trim();
+    return root !== "" && root !== "/";
+  })();
 
   return (
     <ScrollArea className="h-full bg-background">
@@ -162,8 +178,10 @@ export function SessionsView() {
               Import
             </button>
             <button
-              className="flex h-8 items-center gap-1.5 rounded-lg bg-primary px-3 text-[12px] font-medium text-primary-foreground hover:bg-primary/90"
+              className="flex h-8 items-center gap-1.5 rounded-lg bg-primary px-3 text-[12px] font-medium text-primary-foreground hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-40"
               onClick={() => void onNew()}
+              disabled={!canCreateSession}
+              title={canCreateSession ? "New session" : "Open a workspace first to start a session"}
             >
               <Plus className="h-3.5 w-3.5" />
               New session
@@ -449,8 +467,17 @@ function SessionCard({
             </span>
           )}
         </div>
-        <p className="mt-1.5 font-mono text-[10px] text-muted-foreground/50">
-          Updated {formatDate(session.updated_at)} · {msgCount} messages
+        <p className="mt-1.5 flex items-center gap-1 font-mono text-[10px] text-muted-foreground/50">
+          <span>Updated {formatDate(session.updated_at)} · {msgCount} messages</span>
+          <span className="text-muted-foreground/30">·</span>
+          <Folder className="h-2.5 w-2.5 shrink-0" />
+          <span
+            data-testid="session-card-root"
+            title={session.workspace_root}
+            className="truncate"
+          >
+            {sessionListItem(session).rootBasename}
+          </span>
         </p>
       </div>
 

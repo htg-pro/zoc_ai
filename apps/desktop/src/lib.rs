@@ -6,6 +6,8 @@
 mod checks;
 mod fs_commands;
 mod git;
+mod hardware_fit;
+mod runtime_bridge;
 mod llama_server;
 mod patch;
 mod search_commands;
@@ -19,7 +21,7 @@ use std::sync::Arc;
 use crate::fs_commands::WatcherState;
 use crate::llama_server::LlamaServerSupervisor;
 use crate::share::ShareState;
-use crate::sidecar::{AgentStatus, AgentSupervisor};
+use crate::sidecar::{AgentRuntimeSupervisor, AgentStatus, AgentSupervisor};
 use crate::workspace::WorkspaceState;
 
 #[tauri::command]
@@ -42,10 +44,20 @@ pub fn run() {
         .init();
 
     let supervisor: Arc<AgentSupervisor> = Arc::new(AgentSupervisor::default());
+    let runtime_supervisor: Arc<AgentRuntimeSupervisor> =
+        Arc::new(AgentRuntimeSupervisor::default());
     let watcher: Arc<WatcherState> = Arc::new(WatcherState::default());
     let workspace: Arc<WorkspaceState> = Arc::new(WorkspaceState::default());
     let llama_server: Arc<LlamaServerSupervisor> = Arc::new(LlamaServerSupervisor::default());
     let share: Arc<ShareState> = Arc::new(ShareState::default());
+    // The Secret_Vault probes its backend at construction (R14.7), so the
+    // degraded state is known before the first key is entered rather than
+    // discovered on the first save.
+    let vault: Arc<secrets::SecretVault> = Arc::new(secrets::SecretVault::system());
+    // The loopback transport the Agent_Runtime reaches Desktop_Core through
+    // (R6.1, R14.10): a separate OS process cannot invoke a Tauri command.
+    let bridge: Arc<runtime_bridge::RuntimeBridge> =
+        Arc::new(runtime_bridge::RuntimeBridge::default());
     // Seed the in-memory workspace state from any persisted desktop.json so
     // FS commands work immediately after boot, even before the UI explicitly
     // pushes a workspace root via `set_workspace_root`.
@@ -70,25 +82,62 @@ pub fn run() {
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_process::init())
         .manage(supervisor.clone())
+        .manage(runtime_supervisor.clone())
         .manage(watcher.clone())
         .manage(workspace.clone())
         .manage(llama_server.clone())
         .manage(share.clone())
+        .manage(vault.clone())
+        .manage(bridge.clone())
         .setup({
             let supervisor = supervisor.clone();
+            let runtime_supervisor = runtime_supervisor.clone();
+            let vault = vault.clone();
+            let bridge = bridge.clone();
             move |app| {
                 let handle = app.handle().clone();
-                sidecar::supervise(handle, supervisor.clone());
+                // Start the bridge before the runtime, so the first spawn already
+                // has a URL to be given.
+                runtime_bridge::start(
+                    bridge.clone(),
+                    vault.clone(),
+                    runtime_supervisor.clone(),
+                    workspace.clone(),
+                );
+                sidecar::supervise(handle.clone(), supervisor.clone());
+                // The runtime is supervised alongside the Python sidecar rather
+                // than after it. It reads Workspace_Services' port on every
+                // spawn, so it tolerates starting first and needs no ordering
+                // guarantee between the two.
+                sidecar::supervise_runtime(handle.clone(), runtime_supervisor.clone(), supervisor.clone());
+                // R14.8: the vault owns *when* there is something to say about
+                // its backend; the shell owns the emit. Installing the publisher
+                // announces the probed backend once, so the renderer's degraded
+                // notice does not wait for a first write, and every later tier
+                // change — a keychain that goes away mid-session, or comes back —
+                // reaches the same subscriber without a restart.
+                {
+                    let events = handle.clone();
+                    vault.set_status_publisher(Box::new(move |status| {
+                        use tauri::Emitter;
+                        let _ = events.emit(secrets::STATUS_EVENT, status);
+                    }));
+                }
                 Ok(())
             }
         })
         .on_window_event({
             let supervisor = supervisor.clone();
+            let runtime_supervisor = runtime_supervisor.clone();
+            let bridge = bridge.clone();
             let llama_server = llama_server.clone();
             let share = share.clone();
             move |_window, event| {
                 if let tauri::WindowEvent::Destroyed = event {
                     supervisor.shutdown();
+                    // R3.7: no orphan. Same proven path as the Python sidecar.
+                    runtime_supervisor.shutdown();
+                    bridge.shutdown();
                     llama_server.shutdown();
                     // Never leave a LAN listener behind after the window closes.
                     share.stop();
@@ -101,6 +150,9 @@ pub fn run() {
             secrets::secret_get,
             secrets::secret_set,
             secrets::secret_clear,
+            secrets::secret_has,
+            secrets::secret_backend_status,
+            secrets::runtime_secret_get,
             fs_commands::fs_list_dir,
             fs_commands::fs_read_text,
             fs_commands::fs_write_text,
@@ -155,6 +207,11 @@ pub fn run() {
             sidecar::agent_crash_reports,
             sidecar::agent_crash_reports_clear,
             sidecar::agent_restart,
+            // ── Agent_Runtime (zoc-agent-chat-rebuild R3.4, R3.8, R13.6) ──
+            sidecar::agent_runtime_endpoint,
+            sidecar::agent_runtime_status,
+            sidecar::runtime_restart,
+            hardware_fit::local_model_hardware_fit,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

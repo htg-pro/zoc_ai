@@ -63,15 +63,17 @@ describe("secureStore (browser fallback)", () => {
     expect(await secureStore.get("b")).toBe("2");
   });
 
-  it("notifies subscribers on set and clear", async () => {
+  it("notifies subscribers with the exact key on set and clear", async () => {
     const cb = vi.fn();
     const unsub = subscribeSecrets(cb);
-    await secureStore.set("k", "v");
+    await secureStore.set("provider.openai.api_key", "v");
     expect(cb).toHaveBeenCalledTimes(1);
-    await secureStore.clear("k");
+    expect(cb).toHaveBeenLastCalledWith("provider.openai.api_key");
+    await secureStore.clear("provider.openai.api_key");
     expect(cb).toHaveBeenCalledTimes(2);
+    expect(cb).toHaveBeenLastCalledWith("provider.openai.api_key");
     unsub();
-    await secureStore.set("k", "v2");
+    await secureStore.set("provider.openai.api_key", "v2");
     expect(cb).toHaveBeenCalledTimes(2);
   });
 });

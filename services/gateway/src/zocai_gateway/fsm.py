@@ -46,10 +46,18 @@ from shared_schema.agent_events import (
     AgentEvent,
     CommandEvent,
     DoneEvent,
+    StageEvent,
     SummaryEvent,
     ThinkingEvent,
 )
 
+from zocai_gateway.stage_view import (
+    ReportedStage,
+    StageReport,
+    StageState,
+    project_stages,
+    report_stage_for,
+)
 from zocai_gateway.stages import Stage
 
 __all__ = [
@@ -209,9 +217,23 @@ class FSM:
     run_id: str = "run"
     emit: EmitSink | None = None
     stage_event_factory: StageEventFactory = default_stage_event_factory
+    #: When True the FSM also emits a reported-stage :class:`StageEvent` for every
+    #: stage entry (R7.1-R7.4), alongside the existing diary frames. Off by
+    #: default so the bare FSM's one-event-per-entry contract is unchanged; the
+    #: run driver turns it on so the frontend receives stage reports.
+    emit_stage_reports: bool = False
+    #: Populated by the run driver before the SUMMARY→DONE transition so the
+    #: terminal ``done`` event carries the real count of distinct files the run
+    #: changed and, when that is zero, a human reason (R8.7/R8.8). Ignored for
+    #: every non-DONE stage.
+    done_files_changed: int = 0
+    done_reason: str | None = None
     current: Stage = field(init=False)
     events: list[AgentEvent] = field(init=False, default_factory=list)
+    #: The reported-stage frames emitted so far, for :meth:`stage_report`.
+    stage_events: list[StageEvent] = field(init=False, default_factory=list)
     _seq: int = field(init=False, default=0)
+    _active_reported: ReportedStage | None = field(init=False, default=None)
 
     def __post_init__(self) -> None:
         self.current = self.initial
@@ -350,10 +372,92 @@ class FSM:
     # -- emission -----------------------------------------------------------
 
     def _emit_entry(self, stage: Stage, detail: str | None = None) -> None:
-        """Build and emit a conforming stage event for entering ``stage`` (R3.3)."""
+        """Build and emit a conforming stage event for entering ``stage`` (R3.3).
+
+        When :attr:`emit_stage_reports` is set, a reported-stage
+        :class:`StageEvent` is emitted alongside the existing frame (R7.1-R7.4)
+        so the frontend stops inferring the stage from thinking text. For a
+        *terminal* stage the report is emitted **before** the factory frame, so
+        the terminal ``done``/error frame stays last on the bus (R6.5); for a
+        non-terminal stage it is emitted **after**, so the run's first frame
+        stays the allocator-aware ``IntentEvent`` (R1.9).
+        """
         ts = datetime.now(UTC).isoformat()
+        terminal = stage in _TERMINAL
+        if self.emit_stage_reports and terminal:
+            self._emit_stage_report(stage, ts, detail)
         event = self.stage_event_factory(stage, self._seq, self.run_id, ts, detail)
+        if stage is Stage.DONE and isinstance(event, DoneEvent):
+            # The factory owns allocator metadata; the run outcome (distinct
+            # files changed + a human reason when none changed) is stamped here
+            # from what the driver recorded on the FSM (R8.7/R8.8).
+            event = event.model_copy(
+                update={
+                    "files_changed": self.done_files_changed,
+                    "reason": self.done_reason,
+                }
+            )
         self._seq += 1
         self.events.append(event)
         if self.emit is not None:
             self.emit(event)
+        if self.emit_stage_reports and not terminal:
+            self._emit_stage_report(stage, ts, detail)
+
+    def _emit_stage_report(self, stage: Stage, ts: str, detail: str | None) -> None:
+        """Emit the reported-stage frame for entering ``stage`` (R7.1-R7.4)."""
+        if stage is Stage.ERROR_CLOSED:
+            # A fail marks whichever reported stage was active as FAILED, naming
+            # the reason (R7.3) — ERROR_CLOSED is not a reported stage of its own.
+            failed = self._active_reported or ReportedStage.ANALYZE
+            self._push_stage_report(
+                failed, StageState.FAILED, ts, reason=detail or "The run stopped with an error."
+            )
+            return
+        if stage is Stage.DONE:
+            # Reaching DONE means the summary stage succeeded (R7.4).
+            self._push_stage_report(ReportedStage.SUMMARY, StageState.SUCCEEDED, ts)
+            return
+        reported = report_stage_for(stage)
+        if reported is None:
+            # PAUSED (and any unmapped stage) is not a reported stage.
+            return
+        self._active_reported = reported
+        self._push_stage_report(reported, StageState.ACTIVE, ts)
+
+    def _push_stage_report(
+        self,
+        reported: ReportedStage,
+        state: StageState,
+        ts: str,
+        reason: str | None = None,
+    ) -> None:
+        event = StageEvent(
+            seq=self._seq,
+            run_id=self.run_id,
+            ts=ts,
+            stage=reported.value,
+            state=state.value,
+            reason=reason,
+        )
+        self._seq += 1
+        self.stage_events.append(event)
+        if self.emit is not None:
+            self.emit(event)
+
+    def report_review(self, state: StageState, ts: str | None = None, reason: str | None = None) -> None:
+        """Emit a REVIEW reported-stage frame (plan-mode approval gate, R7.5/R7.8).
+
+        REVIEW has no FSM stage; the plan-mode approval gate drives it directly.
+        No-op unless :attr:`emit_stage_reports` is set.
+        """
+        if not self.emit_stage_reports:
+            return
+        self._active_reported = ReportedStage.REVIEW
+        self._push_stage_report(
+            ReportedStage.REVIEW, state, ts or datetime.now(UTC).isoformat(), reason=reason
+        )
+
+    def stage_report(self) -> tuple[StageReport, ...]:
+        """The consolidated six-stage report from the frames emitted so far (R7.1-R7.4)."""
+        return project_stages(self.stage_events)

@@ -1,59 +1,21 @@
 /**
- * Agent_Event ingestion and ordering (R7.3, R8.2, R8.3, R8.4, R8.7, R8.8, R11.1).
+ * Agent_Event timeline helpers (R8.2, R8.3, R8.4, R11.1).
  *
- * Pure logic that decides whether an incoming event is applied, buffered (while
- * paused), or discarded (duplicate/stale or after stop), plus the timeline
- * upsert-by-id/order-by-seq rule, isolated plan-step updates, and tool-call
- * status labeling.
+ * Pure timeline logic: the upsert-by-id/order-by-seq rule, buffered-event
+ * draining on resume, isolated plan-step updates, tool-call status labeling,
+ * and error-detail extraction.
+ *
+ * The ingest-decision gate (`decideIngest`) that previously lived here is
+ * retired: the Event_Normalizer (`features/agent/normalize.ts`) is the single
+ * path that decides what enters the feed, owning the cross-run, duplicate-seq,
+ * and malformed discard rules (R9.1, R9.6). The helpers below have no overlap
+ * with normalization and keep their own tests.
  */
 import type {
   AgentEvent,
   PlanStep,
   ToolCallStatus,
 } from "@zoc-studio/shared-types";
-
-export type IngestDecision = "apply" | "buffer" | "discard";
-
-export interface IngestState {
-  /** Highest sequence number already processed for the session (R8.6). */
-  highestSeq: number;
-  /** True while the run is paused — events are buffered, not applied (R7.3). */
-  paused: boolean;
-  /** True once the run's stream has been stopped/terminated (R8.8). */
-  stopped: boolean;
-  /**
-   * The active backend run id; events tagged with a different `run_id` are
-   * stale cross-run replays and are discarded (R1.2). `null` means no run is
-   * bound yet, so the cross-run rule does not apply.
-   */
-  activeRunId: string | null;
-}
-
-/**
- * Decide how to handle an incoming event:
- *  - discard if the event carries a non-null `run_id` that differs from the
- *    active run (cross-run stale replay) (R1.2),
- *  - discard if it is a duplicate/stale (`seq <= highestSeq`) (R8.7),
- *  - discard if the stream has been stopped (R8.8),
- *  - buffer if the run is paused (R7.3),
- *  - otherwise apply (R1.7).
- *
- * The cross-run discard leaves `highestSeq`, `activeRunId`, and
- * `boundMessageId` untouched at the caller.
- */
-export function decideIngest(event: AgentEvent, st: IngestState): IngestDecision {
-  if (
-    event.run_id != null &&
-    st.activeRunId != null &&
-    event.run_id !== st.activeRunId
-  ) {
-    return "discard";
-  }
-  if (event.seq <= st.highestSeq) return "discard";
-  if (st.stopped) return "discard";
-  if (st.paused) return "buffer";
-  return "apply";
-}
 
 /** Sequence number of any Agent_Event. */
 export function eventSeq(event: AgentEvent): number {

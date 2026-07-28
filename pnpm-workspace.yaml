@@ -4,6 +4,7 @@ packages:
 
 minimumReleaseAgeExclude:
   - dompurify@3.4.11
+  - '@ai-sdk/anthropic@3.0.103'
 
 # Security: force patched versions of transitive dependencies flagged by the
 # SCA scan. dompurify (<3.4.9) is pulled in by monaco-editor; js-yaml (<4.2.0)

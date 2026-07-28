@@ -59,6 +59,13 @@ export interface AgentRunRequest {
   topK?: number | null;
   repeatPenalty?: number | null;
   maxTokens?: number | null;
+  /**
+   * Reasoning-effort level applied to the run's model request (R17.2). Sent as
+   * `reasoningEffort`; the Gateway `AgentRunRequest` field is hand-written (not
+   * schema-generated) and this builder is its paired frontend side (task 1.2).
+   * Omitted entirely for models with no reasoning-effort parameter (R17.4).
+   */
+  reasoningEffort?: "low" | "medium" | "high" | null;
   /** Editor context consumed by context-aware Ask Mode (§12.1). */
   context?: EditorRunContext | null;
 }
@@ -235,6 +242,9 @@ export async function postAgentRun(req: AgentRunRequest): Promise<AgentRunHandle
     top_k: req.topK ?? null,
     repeat_penalty: req.repeatPenalty ?? null,
     max_tokens: req.maxTokens ?? null,
+    // R17.4: omit the field entirely for models with no effort parameter, so
+    // the Gateway issues the request without a defaulted reasoning-effort value.
+    ...(req.reasoningEffort ? { reasoningEffort: req.reasoningEffort } : {}),
   });
   const runId = accepted.runId ?? accepted.run_id;
   if (!runId) {

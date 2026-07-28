@@ -37,6 +37,17 @@ once_cell = "1"
 parking_lot = "0.12"
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json"] }
 keyring = "3"
+# ── Secret_Vault tier 2 (zoc-agent-chat-rebuild R14.6) ───────────────────
+# XChaCha20-Poly1305 for its 192-bit nonce: the vault is rewritten on every key
+# change with no coordination point for a counter, so random nonces must be safe.
+chacha20poly1305 = { version = "0.10", default-features = false, features = ["alloc", "getrandom"] }
+# Argon2id over the keychain-held master secret, so a keychain leak alone does
+# not immediately yield the file key.
+argon2 = { version = "0.5", default-features = false, features = ["alloc", "password-hash"] }
+zeroize = { version = "1", features = ["zeroize_derive"] }
+# Content digests behind `base_digest`, so a stale hunk is refused rather
+# than force-applied (R10.8, R10.15).
+sha2 = "0.10"
 notify = "6"
 notify-debouncer-mini = "0.4"
 dirs = "5"
@@ -44,6 +55,8 @@ getrandom = "=0.2.17"
 chrono = { version = "0.4", default-features = false, features = ["clock"] }
 similar = "2"
 zoc-studio-hotpath = { path = "../../crates/hotpath" }
+hardware-probe = { path = "../../crates/hardware-probe" }
 
 [dev-dependencies]
 tempfile = "3.10"
+proptest = "1"

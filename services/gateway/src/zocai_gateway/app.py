@@ -30,7 +30,6 @@ import os
 import queue
 import signal
 import subprocess
-import tempfile
 import threading
 import uuid
 from collections import deque
@@ -112,10 +111,14 @@ from zocai_gateway.security import (
     validate_user_text,
 )
 from zocai_gateway.settings import GatewaySettings
+from zocai_gateway.workspace_binder import (
+    NoWorkspaceError,
+    WorkspaceBinder,
+    WorkspaceScope,
+)
 from zocai_gateway.workspace_context import (
     WorkspaceContext,
     resolve_terminal_cwd,
-    workspace_context_from_path,
 )
 from zocai_gateway.workspace_index import WorkspaceIndexer
 
@@ -165,11 +168,9 @@ HARDWARE_STREAM_INTERVAL_SECONDS = 2.0
 #: hides them instead of showing the user a literal ``<stage:error_closed>``.
 _SYNTHETIC_STAGE_PREFIX = "<stage:"
 
-#: Stand-in root used only where a non-optional path parameter must be supplied
-#: while no workspace is open. It intentionally does not exist, so any code path
-#: that tries to spawn or write against it fails loudly instead of silently
-#: targeting the sidecar's own (install/bin) directory.
-_NO_WORKSPACE_SENTINEL = "/nonexistent/zocai-no-workspace"
+#: Sentinel meaning "use the RunRegistry's configured diary" so a caller can
+#: pass ``diary=None`` to mean "no mirroring" (a root-less Ask run) distinctly.
+_REGISTRY_DEFAULT_DIARY: object = object()
 
 
 class RunAccepted(BaseModel):
@@ -275,6 +276,7 @@ class _Run:
         "_decision_condition",
         "_decision_cursors",
         "_ever_subscribed",
+        "_failure_code",
         "_failure_reason",
         "_history",
         "_history_lock",
@@ -291,6 +293,7 @@ class _Run:
         "lifecycle",
         "path",
         "queue",
+        "root",
         "run_id",
     )
 
@@ -300,12 +303,17 @@ class _Run:
         path: ExecutionPath,
         diary: DiaryMirror | None = None,
         *,
+        root: Path | None = None,
         queue_maxsize: int = DEFAULT_SSE_QUEUE_MAXSIZE,
         replay_buffer_size: int = DEFAULT_EVENT_REPLAY_BUFFER,
         put_timeout_seconds: float = DEFAULT_PRODUCER_PUT_TIMEOUT_SECONDS,
     ) -> None:
         self.run_id = run_id
         self.path = path
+        #: The resolved Workspace_Root this run operates in, or ``None`` for a
+        #: root-less Ask run (R1.7). Recorded here so diagnostics and the run's
+        #: driver share one authoritative value rather than recomputing it.
+        self.root = root
         self.queue: asyncio.Queue[dict[str, object] | None] = asyncio.Queue(
             maxsize=max(1, queue_maxsize)
         )
@@ -340,6 +348,7 @@ class _Run:
         # synthetic ERROR_CLOSED stage marker), so `close()` can emit a terminal
         # frame that says *failed* rather than *done*.
         self._failure_reason: str | None = None
+        self._failure_code: str = ErrorCode.RUN_FAILED
         # True once a contract `done` event has been gated for this run, so
         # `close()` never emits a second terminal frame.
         self._saw_done_event = False
@@ -524,11 +533,21 @@ class _Run:
             }
         )
 
-    def record_failure(self, reason: str) -> None:
-        """Remember why the run failed so ``close()`` reports it as a failure."""
+    def record_failure(self, reason: str, *, code: str = ErrorCode.RUN_FAILED) -> None:
+        """Remember why the run failed so ``close()`` reports it as a failure.
+
+        ``code`` is the typed error code the terminal error frame should carry
+        (default ``run_failed``). First writer wins, so a structured code set by
+        the pipeline (e.g. ``provider_auth_invalid``) is not overwritten by the
+        generic ``error_closed`` tag the FSM's terminal frame later records.
+        """
         with self._lock:
-            if self._failure_reason is None:
+            if self._failure_reason is None or (
+                self._failure_code == ErrorCode.RUN_FAILED
+                and code != ErrorCode.RUN_FAILED
+            ):
                 self._failure_reason = reason
+                self._failure_code = code
 
     def emit_fsm_event(self, event: AgentEvent) -> None:
         """FSM emit sink that gates each stage event and closes at DONE (R3.4).
@@ -627,6 +646,7 @@ class _Run:
             if failure_reason is not None and self._failure_reason is None:
                 self._failure_reason = failure_reason
             reason = self._failure_reason
+            failure_code = self._failure_code
             already_done = self._saw_done_event
             is_ask = self.path.mode is Mode.ASK
             # Exactly one terminal frame: an error frame for a stop or a
@@ -665,7 +685,7 @@ class _Run:
                     }
                 )
             elif reason is not None:
-                envelope = error_envelope(ErrorCode.RUN_FAILED, details=reason)
+                envelope = error_envelope(failure_code, details=reason)
                 self._put(
                     {
                         "type": "error",
@@ -711,8 +731,17 @@ class _Run:
         begun, each EventSource has an independent queue: a LAN viewer can no
         longer steal frames from the desktop feed, and slow consumers exert
         bounded backpressure independently.
+
+        FSM/EmitGate frames carry their own sequence counter. Advance this
+        channel's counter past every observed frame so a terminal frame created
+        by :meth:`close` can never reuse an earlier sequence and be discarded by
+        the frontend's append-only merge.
         """
         if item is not None:
+            seq = item.get("seq")
+            if isinstance(seq, int):
+                with self._lock:
+                    self._seq = max(self._seq, seq + 1)
             with self._history_lock:
                 self._history.append(dict(item))
 
@@ -808,14 +837,26 @@ class RunRegistry:
         """Whether starting another run would exceed ``max_concurrent_runs``."""
         return self.active_count() >= self._max_concurrent_runs
 
-    def create(self, path: ExecutionPath, run_id: str | None = None) -> _Run:
+    def create(
+        self,
+        path: ExecutionPath,
+        run_id: str | None = None,
+        *,
+        root: Path | None = None,
+        diary: DiaryMirror | None | object = _REGISTRY_DEFAULT_DIARY,
+    ) -> _Run:
         run_id = run_id or uuid.uuid4().hex
         if run_id in self._runs:
             raise ValueError(f"run already exists: {run_id}")
+        # A run mirrors to the diary of the workspace it runs in: the caller
+        # passes the resolved scope's diary so a rebound run writes to the new
+        # workspace's diary (D3). Callers that omit it get the registry default.
+        resolved_diary = self._diary if diary is _REGISTRY_DEFAULT_DIARY else diary
         run = _Run(
             run_id=run_id,
             path=path,
-            diary=self._diary,
+            diary=resolved_diary,  # type: ignore[arg-type]
+            root=root,
             queue_maxsize=self._queue_maxsize,
             replay_buffer_size=self._replay_buffer_size,
         )
@@ -850,10 +891,24 @@ class SessionRegistry:
     def get(self, session_id: str) -> Session | None:
         return self._sessions.get(session_id)
 
-    def create(self, req: CreateSessionRequest) -> Session:
+    def create(self, req: CreateSessionRequest, *, binder: WorkspaceBinder) -> Session:
+        """Create a session bound to the resolved Workspace_Root (R15.1, R15.2).
+
+        Raises :class:`NoWorkspaceError` when no workspace is resolved: a session
+        scoped to a placeholder path is how runs ended up resolving against "/".
+        ``req.workspace_root`` is advisory — the resolved root wins, and a
+        disagreement is logged.
+        """
+        workspace = binder.require()
+        if req.workspace_root and req.workspace_root != workspace.root_path:
+            logger.info(
+                "session create workspace_root %r differs from resolved %r; using resolved",
+                req.workspace_root,
+                workspace.root_path,
+            )
         session = Session(
             title=req.title,
-            workspace_root=req.workspace_root,
+            workspace_root=workspace.root_path,
             provider=req.provider,
             model=req.model,
         )
@@ -1338,6 +1393,7 @@ def create_app(
     lazy_index: bool = False,
     start_mcp: bool = False,
     mcp_user_config_path: Path | str | None = None,
+    model_health_probe: Callable[[str], bool] | None = None,
 ) -> FastAPI:
     """Create and configure the gateway FastAPI application.
 
@@ -1384,6 +1440,14 @@ def create_app(
     # bare ``create_app()`` (e.g. tests) admits loopback requests (R12.4).
     resolved_settings = settings if settings is not None else GatewaySettings()
 
+    # R5.2: the run-start readiness gate probes a local llama.cpp endpoint's
+    # ``/health`` before creating a run record. Injectable so tests drive the
+    # gate deterministically without a real socket; defaults to the real bounded
+    # probe. Cloud providers are never probed here (structural check only).
+    resolved_health_probe: Callable[[str], bool] = (
+        model_health_probe if model_health_probe is not None else model_runtime.probe_local_health
+    )
+
     # Layer 4 persistence (R9): with a workspace, initialize the .zocai/ matrix,
     # start the non-blocking Diary_Worker mirror (R9.3) and the Tier 3
     # Hermes-Evolution idle loop (R9.7), and bind the Tier 2 State_Wrapper store
@@ -1392,17 +1456,15 @@ def create_app(
     diary_worker: DiaryWorker | None = None
     hermes: HermesEvolution | None = None
     state_store: StateWrapperStore | None = None
-    # Phase 4: one canonical WorkspaceContext, or none at all. A supplied root
-    # that is not a directory degrades to "no workspace" rather than crashing the
-    # sidecar — the user can still open a folder — but every filesystem/terminal
-    # action then fails with a clear "open a folder first" message instead of
-    # quietly targeting the sidecar's own directory.
-    workspace: WorkspaceContext | None
-    try:
-        workspace = workspace_context_from_path(workspace_root)
-    except ValueError as exc:
-        logger.warning("ignoring invalid workspace root: %s", exc)
-        workspace = None
+    # Phase 4: the Workspace_Binder resolves the active root for every request
+    # from persisted desktop config (R1.1, R1.2). ``workspace_root`` is the
+    # injected override (tests, explicit construction); a scope factory is
+    # attached below so workspace-scoped resources rebuild on a rebind (D3).
+    binder = WorkspaceBinder(override=workspace_root, env=os.environ)
+    # The startup workspace, if one is resolved. Everything workspace-scoped is
+    # (re)built from the binder's scope; routes resolve the *current* root at
+    # call time rather than closing over this value.
+    workspace: WorkspaceContext | None = binder.resolve()
     resolved_root = workspace.root if workspace is not None else None
     workspace_id_for_logs = workspace.workspace_id if workspace is not None else "none"
 
@@ -1433,25 +1495,85 @@ def create_app(
     )
     run_tasks: set[asyncio.Task[None]] = set()
 
-    # Part 4 (§4.1): the generic MCP host. ``configure()`` seeds server states
-    # from MCP_Config without spawning; enabled stdio servers are started only
-    # when ``start_mcp`` is set (the desktop runtime), so tests never spawn.
-    mcp_workspace_config = (
-        resolved_root / ".zoc" / "mcp.json" if resolved_root is not None else None
-    )
-    # MCP servers are spawned with cwd pinned to this root. With no workspace
-    # open there is no legitimate directory to pin them to — the sidecar's own
-    # directory is the application install path — so the host is configured
-    # (tools are still discoverable) but never started; see the `lifespan` gate.
-    mcp_host = MCPHost(
-        workspace_root=(
-            workspace.root_path if workspace is not None else _NO_WORKSPACE_SENTINEL
-        ),
-        user_config_path=mcp_user_config_path,
-        workspace_config_path=mcp_workspace_config,
-        registry=McpToolRegistry(),
-    )
-    mcp_host.configure()
+    # Part 4 (§4.1): the generic MCP host is now a *per-workspace* resource
+    # owned by the WorkspaceScope (D3), not a process singleton. MCP servers are
+    # spawned with cwd pinned to the workspace root, so there is no legitimate
+    # host without a workspace — no ``/nonexistent`` stand-in. ``configure()``
+    # seeds server states from MCP_Config without spawning; ``load()`` spawns the
+    # enabled stdio servers and is only called when ``start_mcp`` is set (the
+    # desktop runtime), so tests never spawn.
+    def _make_mcp_host(scope_workspace: WorkspaceContext) -> MCPHost:
+        return MCPHost(
+            workspace_root=scope_workspace.root_path,
+            user_config_path=mcp_user_config_path,
+            workspace_config_path=scope_workspace.root / ".zoc" / "mcp.json",
+            registry=McpToolRegistry(),
+        )
+
+    # The startup workspace's MCP host, configured against its root. Loaded by
+    # the lifespan when ``start_mcp`` is set; retired with the scope on shutdown
+    # or a rebind. ``None`` when no workspace is open at startup.
+    startup_mcp_host: MCPHost | None = None
+    if workspace is not None:
+        startup_mcp_host = _make_mcp_host(workspace)
+        startup_mcp_host.configure()
+
+    # D3: workspace-scoped resources (diary, hermes, state store, and the MCP
+    # host) live in a WorkspaceScope so a rebind rebuilds them for the new root
+    # without a process restart (R1.2). The startup workspace's scope wraps the
+    # eagerly built resources above; a *rebind* builds fresh ones via this
+    # factory and retires the previous scope (which closes its MCP host). The
+    # factory is async so it can ``load()`` (spawn) the new root's MCP servers.
+    async def _build_scope(scope_workspace: WorkspaceContext) -> WorkspaceScope:
+        scope_matrix = MemoryMatrix(scope_workspace.root)
+        scope_matrix.initialize()
+        scope_diary_path = scope_matrix.session_diary_path
+        scope_state_store = StateWrapperStore(scope_matrix.state_wrapper_path)
+        scope_diary = DiaryWorker(scope_diary_path)
+        scope_diary.start()
+        scope_hermes = HermesEvolution(scope_matrix)
+        scope_hermes.start()
+        scope_mcp_host = _make_mcp_host(scope_workspace)
+        if start_mcp:
+            await scope_mcp_host.load()  # configure + spawn enabled servers
+        else:
+            scope_mcp_host.configure()  # listable but not spawned (tests)
+        return WorkspaceScope(
+            workspace=scope_workspace,
+            diary=scope_diary,
+            diary_path=scope_diary_path,
+            state_store=scope_state_store,
+            hermes=scope_hermes,
+            mcp_host=scope_mcp_host,
+        )
+
+    binder.set_scope_factory(_build_scope)
+    if workspace is not None:
+        binder.seed_scope(
+            WorkspaceScope(
+                workspace=workspace,
+                diary=diary,
+                diary_path=diary_path,
+                state_store=state_store,
+                hermes=hermes,
+                mcp_host=startup_mcp_host,
+            )
+        )
+
+    async def _resolve_scope_mcp_host() -> MCPHost | None:
+        """The MCP host of the *current* workspace scope, or ``None`` (R1.2).
+
+        Resolves the active scope (building/rebinding it on a workspace change),
+        so the MCP control routes always drive the host configured against the
+        workspace open right now. Returns ``None`` when no workspace is open, so
+        the routes answer honestly (empty list / typed ``no_workspace`` error)
+        instead of driving a ``/nonexistent`` sentinel host.
+        """
+        try:
+            scope = await binder.scope()
+        except NoWorkspaceError:
+            return None
+        return scope.mcp_host if isinstance(scope.mcp_host, MCPHost) else None
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
@@ -1462,10 +1584,10 @@ def create_app(
             if hermes is not None:
                 hermes.start()
             if start_mcp:
-                if workspace is None:
+                if startup_mcp_host is None:
                     logger.info("no workspace open; MCP servers not started")
                 else:
-                    await mcp_host.load()
+                    await startup_mcp_host.load()
             yield
         finally:
             for task in tuple(run_tasks):
@@ -1475,12 +1597,13 @@ def create_app(
                 if run_tasks:
                     await asyncio.gather(*run_tasks, return_exceptions=True)
                 await active_workspace_indexer.close()
-                await mcp_host.aclose()
             finally:
-                if hermes is not None:
-                    hermes.stop()
-                if diary_worker is not None:
-                    diary_worker.stop()
+                # Retire the active WorkspaceScope, which stops its diary +
+                # hermes workers and closes its MCP host (D3). This is the
+                # seeded startup scope when no rebind happened, or a fresh scope
+                # after one — either way its resources are released once here (a
+                # rebind already retired and closed the previous scope's host).
+                await binder.retire_scope()
 
     app = FastAPI(
         title="Zoc AI Gateway",
@@ -1506,7 +1629,10 @@ def create_app(
         max_concurrent_runs=resolved_settings.max_concurrent_runs,
     )
     sessions = SessionRegistry()
-    terminals = TerminalRegistry(lambda: terminal_workspace())
+    # R1.3/R1.8: terminals resolve the current workspace at spawn time and
+    # refuse (``NO_WORKSPACE``) when none is bound — ``resolve_terminal_cwd``
+    # already returns that for a ``None`` workspace, so no scratch fallback.
+    terminals = TerminalRegistry(binder.resolve)
     app.state.run_registry = registry
     app.state.session_registry = sessions
     app.state.terminal_registry = terminals
@@ -1526,56 +1652,34 @@ def create_app(
     completion_cache = CompletionCache()
     app.state.completion_cache = completion_cache
 
-    # Part 4: publish the MCP host and mount its admitted control routes on the
-    # existing listener (no new interface, R10.5).
-    app.state.mcp_host = mcp_host
-    app.include_router(create_mcp_router(mcp_host))
+    # Part 4: publish the startup MCP host (diagnostics/compat) and mount the
+    # admitted control routes on the existing listener (no new interface,
+    # R10.5). The routes resolve the *current* workspace scope's host at call
+    # time via ``_resolve_scope_mcp_host`` so a rebind is reflected without a
+    # restart; ``app.state.mcp_host`` is the startup host (``None`` when no
+    # workspace was open at startup).
+    app.state.mcp_host = startup_mcp_host
+    app.include_router(create_mcp_router(_resolve_scope_mcp_host))
 
     # Phase 4: the authoritative root, or None. Never "." — in a packaged build
     # that resolves to the application's install directory, which is how agent
     # writes and terminals ended up outside the user's project.
-    run_root = workspace.root_path if workspace is not None else None
-    # Root-less instances (the test suite and the browser build) still need
-    # *somewhere* for a run to resolve paths against. That somewhere is an
-    # isolated scratch directory created on demand — never the process
-    # directory, never the user's home. A packaged desktop build always launches
-    # with a real workspace, so this branch is unreachable there.
-    fallback_root_holder: list[str] = []
+    #
+    # There is no root-less scratch fallback any more (D2): every run/terminal
+    # resolves its root through the binder at call time. Plan/Agent require a
+    # root; Ask tolerates ``None`` and creates no directory; a terminal spawn
+    # with no workspace is refused by ``resolve_terminal_cwd`` (R1.4, R1.7, R1.8).
+    def run_root_for_mode(mode: Mode) -> Path | None:
+        """The Workspace_Root a run of ``mode`` operates in (R1.4, R1.7).
 
-    def rootless_scratch_root() -> str:
-        if not fallback_root_holder:
-            scratch = Path(tempfile.mkdtemp(prefix="zocai-no-workspace-"))
-            fallback_root_holder.append(str(scratch))
-            logger.warning(
-                "no workspace configured; runs resolve against an isolated "
-                "scratch directory instead of the process directory"
-            )
-        return fallback_root_holder[0]
-
-    def effective_run_root(requested: str | None) -> str:
-        """The root a run actually uses, in descending order of authority."""
-        if run_root is not None:
-            return run_root
-        if requested:
-            return requested
-        return rootless_scratch_root()
-
-    def terminal_workspace() -> WorkspaceContext | None:
-        """The workspace a terminal is confined to.
-
-        The real workspace when one is open. For a root-less instance the
-        isolated scratch directory is used instead, so tests and the browser
-        build keep working while a spawned shell still cannot land in the
-        application's install directory.
+        Ask resolves and tolerates ``None`` (read-only Q&A needs no directory);
+        Plan and Agent require a root, raising ``NoWorkspaceError`` when none is
+        resolved. Neither branch creates a directory.
         """
-        if workspace is not None:
-            return workspace
-        try:
-            return workspace_context_from_path(rootless_scratch_root())
-        except ValueError:  # pragma: no cover - scratch dir is created by us
-            return None
-
-    diary_sink = diary.append if diary is not None else None
+        if mode is Mode.ASK:
+            resolved = binder.resolve()
+            return resolved.root if resolved is not None else None
+        return binder.require().root
 
     @app.get("/health")
     async def health() -> dict[str, str]:
@@ -1584,20 +1688,24 @@ def create_app(
     @app.get("/v1/agent/runtime", dependencies=[Depends(require_admission)])
     async def agent_runtime() -> dict[str, object]:
         """Small diagnostics snapshot for the desktop UI and smoke tests."""
+        # R1.1/R1.2: resolve the *current* workspace at request time, so a folder
+        # opened after startup is reflected here without a restart (drives the
+        # onboarding runtime re-fetch, R2.5). ``None`` when unbound.
+        current_ws = binder.resolve()
         return {
             "status": "ok",
             "active_runs": registry.count(),
-            "workspace_root": run_root,
+            "workspace_root": current_ws.root_path if current_ws is not None else None,
             # Phase 6: the shell renders the active workspace name, so it needs
             # the same canonical identity the gateway confines tools to.
             "workspace": (
                 {
-                    "workspaceId": workspace.workspace_id,
-                    "rootPath": workspace.root_path,
-                    "displayName": workspace.display_name,
-                    "openedAt": workspace.opened_at,
+                    "workspaceId": current_ws.workspace_id,
+                    "rootPath": current_ws.root_path,
+                    "displayName": current_ws.display_name,
+                    "openedAt": current_ws.opened_at,
                 }
-                if workspace is not None
+                if current_ws is not None
                 else None
             ),
             "diary_enabled": diary_path is not None,
@@ -1695,12 +1803,17 @@ def create_app(
         if not is_request_admitted(resolved_settings, presented):
             await websocket.close(code=1008, reason="unauthorized")
             return
+        # R1.1: a language server is rooted at the current workspace, resolved
+        # at connect time. With no workspace open there is nothing to index, so
+        # the proxy is refused rather than pointed at the install tree.
+        lsp_ws = binder.resolve()
+        if lsp_ws is None:
+            await websocket.close(code=1008, reason="no workspace open")
+            return
         await proxy_lsp(
             websocket,
             server_name,
-            # Never Path.cwd(): a language server rooted at the sidecar's own
-            # directory would index the application install tree.
-            workspace_root=Path(effective_run_root(None)),
+            workspace_root=lsp_ws.root,
         )
 
     @app.post("/v1/completions", dependencies=[Depends(require_admission)])
@@ -1779,7 +1892,13 @@ def create_app(
     )
     async def create_session(req: CreateSessionRequest) -> Session:
         """Create a session and initialize its semantic index policy."""
-        session = sessions.create(req)
+        try:
+            session = sessions.create(req, binder=binder)
+        except NoWorkspaceError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=error_body(ErrorCode.NO_WORKSPACE),
+            ) from exc
         try:
             await active_workspace_indexer.open_workspace(str(session.id), session.workspace_root)
         except ValueError as exc:
@@ -1850,8 +1969,12 @@ def create_app(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail=f"unknown session: {session_id}",
             )
-        search_root = Path(effective_run_root(session.workspace_root))
-        resolved_workspace = search_root.resolve()
+        # R1.1: search the current workspace. With none bound there is nothing
+        # to search, so return no candidates rather than scanning a scratch dir.
+        search_ws = binder.resolve()
+        if search_ws is None:
+            return []
+        resolved_workspace = search_ws.root.resolve()
         candidates: list[ContextCandidate] = []
         for path in search_workspace_files(resolved_workspace, q, limit):
             try:
@@ -2069,19 +2192,41 @@ def create_app(
         R11.1, R1.9). Ask runs stream over the text-only channel (R6.6).
         """
         path = router.route(req)
-        run_root_for_limits = effective_run_root(req.workspace_root)
-        # §15.1: validate everything the renderer sends before it reaches a
-        # model or the filesystem. Over-length and control-character payloads are
-        # rejected here rather than deeper in the pipeline.
+        # §15.1: validate everything the renderer sends first — before a model,
+        # the filesystem, or any resource gate. Over-length and control-character
+        # payloads are a malformed *request* (422), independent of workspace.
         validated = validate_user_text(req.prompt, field="prompt")
         if not validated.ok:
-            log_security_event("invalid_input", validated.reason, workspace=run_root_for_limits)
+            log_security_event(
+                "invalid_input", validated.reason, workspace=req.workspace_root or "unresolved"
+            )
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
                 detail=validated.reason,
             )
         if validated.text != req.prompt:
             req = req.model_copy(update={"prompt": validated.text})
+
+        # R1.4/R1.7: resolve the run root by mode. Ask tolerates no workspace
+        # (read-only Q&A needs no directory); Plan and Agent require one and are
+        # refused with a typed ``no_workspace`` error, creating no scratch dir.
+        try:
+            run_workspace_root = run_root_for_mode(req.mode)
+        except NoWorkspaceError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=error_body(ErrorCode.NO_WORKSPACE),
+            ) from exc
+        run_root_for_limits = str(run_workspace_root) if run_workspace_root else "no-workspace"
+        # R1.8: a renderer proposing a different directory is worth recording.
+        if req.workspace_root and (
+            run_workspace_root is None or req.workspace_root != str(run_workspace_root)
+        ):
+            logger.info(
+                "agent run workspace_root %r differs from resolved %r",
+                req.workspace_root,
+                str(run_workspace_root) if run_workspace_root else None,
+            )
 
         # §15.1: cap run starts per workspace so a runaway client (or a
         # compromised renderer) cannot spend the user's tokens in a loop.
@@ -2102,6 +2247,35 @@ def create_app(
                 headers={"Retry-After": str(max(1, int(limit.retry_after_seconds)))},
             )
 
+        # R5.2: a live run must name a model that could serve it. Refuse before
+        # creating a run record, so an unservable request leaves the registry
+        # untouched. Injected brains (tests) are deterministic doubles and need
+        # no model, so the gate applies only to the live path.
+        if brain is None:
+            model_readiness = model_runtime.readiness(req.provider, req.model, req.base_url)
+            if not model_readiness.ready:
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail=error_body(
+                        ErrorCode.MODEL_NOT_READY, details=model_readiness.reason
+                    ),
+                )
+            # R5.2: for a locally-served llama.cpp endpoint, a *live* bounded
+            # /health probe backstops the structural check — a server that is
+            # down or still loading (503) must reject before a run record is
+            # created. Cloud providers keep the structural check (their key is
+            # verified at call time). The probe blocks, so run it off the loop.
+            if model_runtime.is_local_llamacpp(req.provider) and req.base_url:
+                healthy = await asyncio.to_thread(resolved_health_probe, req.base_url)
+                if not healthy:
+                    raise HTTPException(
+                        status_code=status.HTTP_409_CONFLICT,
+                        detail=error_body(
+                            ErrorCode.MODEL_NOT_READY,
+                            details="the local model server is not responding",
+                        ),
+                    )
+
         # §12.3: several runs may execute at once, but not without limit — each
         # holds a model context, a worker thread and an isolated workspace.
         if registry.at_capacity():
@@ -2113,17 +2287,22 @@ def create_app(
                     "stop one before starting another"
                 ),
             )
+        # D3/R1.2: resolve the scope for the run's workspace (rebuilt on rebind).
+        # A root-less Ask run has no scope. The run mirrors to its workspace's
+        # diary, so a rebound run writes to the new workspace's diary.
+        run_scope = await binder.scope() if run_workspace_root is not None else None
         try:
-            run = registry.create(path, run_id=req.run_id)
+            run = registry.create(
+                path,
+                run_id=req.run_id,
+                root=run_workspace_root,
+                diary=run_scope.diary if run_scope is not None else None,
+            )
         except ValueError as exc:
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,
                 detail=str(exc),
             ) from exc
-        # A desktop sidecar is launched with an authoritative workspace root.
-        # Never let a compromised renderer redirect tools to another directory;
-        # request roots remain available only for root-less test/web instances.
-        run_workspace_root = effective_run_root(req.workspace_root)
         logger.info(
             "agent run accepted run_id=%s mode=%s provider=%s model=%s "
             "workspace_id=%s base_url=%s",
@@ -2142,7 +2321,9 @@ def create_app(
         # their deterministic runs are unchanged.
         live_run = brain is None
         run_rag_matcher = (
-            default_workspace_rag_matcher(run_workspace_root, lazy=lazy_index) if live_run else None
+            default_workspace_rag_matcher(run_workspace_root, lazy=lazy_index)
+            if live_run and run_workspace_root is not None
+            else None
         )
         run_apply_strategy = ApplyStrategy.REACT if live_run else ApplyStrategy.SINGLE_PASS
         if drive:
@@ -2150,7 +2331,34 @@ def create_app(
             async def drive_run() -> None:
                 mcp_loop = asyncio.get_running_loop()
                 permission_config = config_from_mapping(req.permission)
-                run_permission = build_permission_gate(permission_config, run_workspace_root)
+                # A root-less Ask run has no workspace to gate writes against or
+                # store project memory under; both are skipped (Ask is read-only).
+                run_permission = (
+                    build_permission_gate(permission_config, str(run_workspace_root))
+                    if run_workspace_root is not None
+                    else None
+                )
+                run_project_memory = (
+                    ProjectMemoryStore(run_workspace_root)
+                    if run_workspace_root is not None
+                    else None
+                )
+                # D3: the run's state store, diary, and hermes come from the
+                # workspace scope, so a rebound run persists to and learns in the
+                # new workspace rather than the one open at process start.
+                run_state_store = run_scope.state_store if run_scope is not None else None
+                run_hermes = run_scope.hermes if run_scope is not None else None
+                run_diary_sink = (
+                    run_scope.diary.append
+                    if run_scope is not None and run_scope.diary is not None
+                    else None
+                )
+                # D3: the MCP host is the run workspace's scoped host, spawned
+                # against that root, so a rebound run's MCP tools run in the new
+                # workspace. ``None`` for a root-less Ask run (MCP needs a root).
+                run_mcp_host: MCPHost | None = None
+                if run_scope is not None and isinstance(run_scope.mcp_host, MCPHost):
+                    run_mcp_host = run_scope.mcp_host
                 run.mark_running()
                 try:
                     await asyncio.wait_for(
@@ -2162,9 +2370,9 @@ def create_app(
                             text_sink=run.enqueue_text,
                             close=run.close,
                             workspace_root=run_workspace_root,
-                            state_store=state_store,
+                            state_store=run_state_store,
                             evolution=engine,
-                            diary_sink=diary_sink,
+                            diary_sink=run_diary_sink,
                             brain=brain,
                             rag_matcher=run_rag_matcher,
                             wait_for_review_decision=run.wait_for_review_decision,
@@ -2172,15 +2380,18 @@ def create_app(
                             workspace_indexer=active_workspace_indexer,
                             index_session_id=run.run_id,
                             apply_strategy=run_apply_strategy,
-                            mcp_host=mcp_host,
+                            mcp_host=run_mcp_host,
                             mcp_loop=mcp_loop,
                             check_permission=run_permission,
                             network_allowlist=permission_config.network_allowlist,
                             is_cancelled=lambda: run.is_cancelled,
                             plan_only=req.mode is Mode.PLAN,
                             file_locks=file_locks,
-                            project_memory=ProjectMemoryStore(run_workspace_root),
-                            hermes=hermes,
+                            project_memory=run_project_memory,
+                            hermes=run_hermes,
+                            failure_sink=lambda reason, code: run.record_failure(
+                                reason, code=code
+                            ),
                         ),
                         timeout=resolved_settings.run_timeout_seconds,
                     )

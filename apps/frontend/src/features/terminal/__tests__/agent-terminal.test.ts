@@ -261,3 +261,58 @@ describe("agent-terminal: CommandEvent adapter", () => {
     expect(commandKey(cmd({ commandId: null, command: "ls" }))).toBe("r1:ls");
   });
 });
+
+// Feature: zoc-ai-agent-chat-overhaul, Property 25: Internal frames appear on no rendered surface
+//
+// The terminal half of Property 25: the only surface a `CommandEvent` can reach
+// is the live xterm, via `deriveEventsFromCommand → renderSegment → writeToTerminal`.
+// A synthetic `<stage:...>` marker is an internal Stage_Machine frame, not
+// process output, so it must produce no terminal events at all (R10.3, R13.2).
+describe("agent-terminal: internal <stage:> frames never reach the terminal (Property 25)", () => {
+  function cmd(command: string, patch: Partial<AgentEvents.CommandEvent> = {}): AgentEvents.CommandEvent {
+    return {
+      type: "command",
+      seq: 1,
+      runId: "r1",
+      ts: "2026-01-01T00:00:00Z",
+      command,
+      ...patch,
+    };
+  }
+  const empty: CommandBookkeeping = { started: new Set(), ended: new Set() };
+
+  it("drops a synthetic stage command frame, emitting nothing to the terminal", () => {
+    fc.assert(
+      fc.property(
+        fc.constantFrom(
+          "error_closed",
+          "done",
+          "analyze",
+          "plan",
+          "apply",
+          "verify",
+          "summary",
+          "intake",
+        ),
+        // Even with output/exit fields set, a stage marker frame yields no events.
+        fc.record({
+          outputDelta: fc.option(fc.string(), { nil: undefined }),
+          exitCode: fc.option(fc.integer(), { nil: undefined }),
+        }),
+        (name, extra) => {
+          const { events, book } = deriveEventsFromCommand(cmd(`<stage:${name}>`, extra), empty);
+          expect(events).toEqual([]);
+          // Bookkeeping is untouched, so a later real command is unaffected.
+          expect(book).toBe(empty);
+        },
+      ),
+      { numRuns: 100 },
+    );
+  });
+
+  it("still routes a genuine command through unchanged", () => {
+    const { events } = deriveEventsFromCommand(cmd("pnpm test", { exitCode: 0 }), empty);
+    expect(events.some((e) => e.kind === "run-start")).toBe(true);
+    expect(events.some((e) => e.kind === "run-exit")).toBe(true);
+  });
+});

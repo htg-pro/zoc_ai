@@ -1,25 +1,28 @@
 from __future__ import annotations
 
+from dataclasses import replace
 from pathlib import Path
 
+import pytest
 from pydantic import ValidationError
 from zocai_gateway.context.steering_compiler import SteeringPayload
-from zocai_gateway.context.token_gate import TokenGateResult
+from zocai_gateway.context.token_gate import TokenGateResult, estimate_tokens
 from zocai_gateway.edits import EditPlan, PlannedChange
 from zocai_gateway.emit_gate import EmitGate
 from zocai_gateway.mode_router import AgentRunRequest, Mode
 from zocai_gateway.model_allocator import Allocation
 from zocai_gateway.model_interface import ModelTier
-from zocai_gateway.model_runtime import ModelRuntimeError
+from zocai_gateway.model_runtime import ModelContextWindowError, ModelRuntimeError
 from zocai_gateway.plan import AgentPlan
+from zocai_gateway.reasoning import split_reasoning
 from zocai_gateway.run_pipeline import (
     DefaultAgentBrain,
+    ModelUnavailableError,
     RunContext,
     RunPipeline,
     RuntimeAgentBrain,
     _agent_system_prompt,
-    _extract_thinking,
-    _has_think_block,
+    _structured_plan_system_prompt,
 )
 from zocai_gateway.stages import Stage
 
@@ -59,7 +62,45 @@ def test_thinking_call_is_bounded_and_extracts_only_think_block(monkeypatch) -> 
     assert scratchpad == "Inspect parser.py and preserve error handling."
     assert calls[0][0].max_tokens == 1024
     assert "Wrap ALL your reasoning" in str(calls[0][1]["system_prompt"])
-    assert _extract_thinking("no tags") == ""
+    assert split_reasoning("no tags").reasoning == ""
+
+
+def test_structured_prompt_budgets_the_complete_model_input() -> None:
+    user_prompt = "Update the parser while preserving its public API. " * 12
+    context = replace(
+        _context(),
+        project_instructions="PROJECT RULE: preserve compatibility.\n" * 900,
+        read_files_payload="src/parser.py:\n" + ("implementation line\n" * 2_000),
+        scratchpad="inspect edge cases\n" * 1_000,
+        conversation_history="DUPLICATE_HISTORY_SHOULD_NOT_APPEAR" * 500,
+    )
+
+    system_prompt = _structured_plan_system_prompt(
+        context,
+        include_schema=False,
+        user_prompt=user_prompt,
+    )
+    total_input_tokens = estimate_tokens(system_prompt) + estimate_tokens(user_prompt)
+
+    assert total_input_tokens <= int(context.allocation.context_window * 0.60)
+    assert "Return only JSON matching the AgentPlan schema" in system_prompt
+    assert system_prompt.index("PROJECT RULE") < system_prompt.index("Create a concise")
+    assert "DUPLICATE_HISTORY_SHOULD_NOT_APPEAR" not in system_prompt
+    assert "[Context trimmed to fit the model window.]" in system_prompt
+
+
+def test_complete_user_prompt_is_rejected_rather_than_silently_truncated() -> None:
+    context = _context()
+    oversized_user_prompt = "user requirement " * 2_000
+
+    with pytest.raises(ModelContextWindowError) as excinfo:
+        _structured_plan_system_prompt(
+            context,
+            include_schema=False,
+            user_prompt=oversized_user_prompt,
+        )
+
+    assert excinfo.value.code == "context_window_exceeded"
 
 
 def test_structured_plan_uses_response_format_and_retries_validation(monkeypatch) -> None:
@@ -243,28 +284,37 @@ def test_thinking_issued_as_a_separate_bounded_call(monkeypatch) -> None:
 
 
 def test_empty_think_block_proceeds_without_scratchpad(monkeypatch) -> None:
-    """R1.3 vs R2.4 boundary: a complete-but-empty block yields no scratchpad."""
+    """A complete-but-empty block yields no scratchpad and advances (R6.3)."""
     for response in ("<think></think>", "<think>   </think>", "prefix<think>\n\t </think>tail"):
-        assert _has_think_block(response) is True
+        assert split_reasoning(response).had_block is True
         monkeypatch.setattr(
             "zocai_gateway.run_pipeline.generate_text", lambda *_a, _resp=response, **_k: _resp
         )
         assert RuntimeAgentBrain().think(_request(), _context()) == ""
 
 
-def test_missing_think_block_raises(monkeypatch) -> None:
-    """R2.4: a non-empty response with no complete block fails closed (raises)."""
-    for response in ("no tags at all", "<think>unclosed reasoning", "</think> only close"):
-        assert _has_think_block(response) is False
+def test_missing_think_block_advances_with_body_as_analysis(monkeypatch) -> None:
+    """R6.2: a non-empty response with no complete block becomes the analysis result.
+
+    The fail-closed path (and its retry) are gone. A no-block response degrades:
+    ``think`` returns without raising, records no reasoning for a plain answer
+    (storing the body as the analysis result), and treats a dangling ``<think>``
+    as reasoning-so-far.
+    """
+    cases = {
+        "no tags at all": ("", "no tags at all"),
+        "</think> only close": ("", "</think> only close"),
+        "<think>unclosed reasoning": ("unclosed reasoning", ""),
+    }
+    for response, (expected_reasoning, expected_analysis) in cases.items():
+        assert split_reasoning(response).had_block is False
         monkeypatch.setattr(
             "zocai_gateway.run_pipeline.generate_text", lambda *_a, _resp=response, **_k: _resp
         )
-        try:
-            RuntimeAgentBrain().think(_request(), _context())
-        except RuntimeError:
-            pass
-        else:  # pragma: no cover - assertion branch
-            raise AssertionError(f"missing block should have raised for {response!r}")
+        brain = RuntimeAgentBrain()
+        reasoning = brain.think(_request(), _context())  # must not raise
+        assert reasoning == expected_reasoning
+        assert brain._last_analysis == expected_analysis
 
 
 def test_no_provider_yields_no_scratchpad(monkeypatch) -> None:
@@ -295,8 +345,12 @@ def test_no_provider_run_advances_intake_to_analyze_without_thinking_event(
     )
 
 
-def test_thinking_model_error_raises_runtime_error(monkeypatch) -> None:
-    """R2.5: a model-runtime error during thinking is raised (→ ERROR_CLOSED)."""
+def test_thinking_model_error_raises_model_unavailable(monkeypatch) -> None:
+    """R6.6: a model transport error during thinking raises ModelUnavailableError.
+
+    The surfaced error names the provider so the frontend can point at it, and
+    it drives the run to ERROR_CLOSED (see the run-level test below).
+    """
 
     def boom(*_args: object, **_kwargs: object) -> str:
         raise ModelRuntimeError("thinking endpoint timed out")
@@ -304,10 +358,11 @@ def test_thinking_model_error_raises_runtime_error(monkeypatch) -> None:
     monkeypatch.setattr("zocai_gateway.run_pipeline.generate_text", boom)
     try:
         RuntimeAgentBrain().think(_request(), _context())
-    except RuntimeError:
-        pass
+    except ModelUnavailableError as exc:
+        assert exc.provider == "mock"
+        assert "mock" in str(exc)
     else:  # pragma: no cover - assertion branch
-        raise AssertionError("a model-runtime thinking error should raise")
+        raise AssertionError("a model transport error should raise ModelUnavailableError")
 
 
 def test_thinking_error_drives_run_to_error_closed(tmp_path: Path, monkeypatch) -> None:

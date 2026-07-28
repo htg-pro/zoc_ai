@@ -21,12 +21,14 @@ class _Base(BaseModel):
 
 # ── Health ────────────────────────────────────────────────────────────────
 
+
 class HealthResponse(_Base):
     status: str
     version: str
 
 
 # ── Messages ──────────────────────────────────────────────────────────────
+
 
 class MessageRole(str, Enum):
     user = "user"
@@ -54,6 +56,7 @@ class OpenFileContext(_Base):
 
 # ── Tool calls ────────────────────────────────────────────────────────────
 
+
 class ToolCallStatus(str, Enum):
     pending = "pending"
     running = "running"
@@ -75,6 +78,7 @@ class ToolCall(_Base):
 
 
 # ── Plans ─────────────────────────────────────────────────────────────────
+
 
 class PlanStepStatus(str, Enum):
     pending = "pending"
@@ -105,6 +109,7 @@ class Plan(_Base):
 
 # ── Diff patches ──────────────────────────────────────────────────────────
 
+
 class DiffPatch(_Base):
     id: UUID = Field(default_factory=uuid4)
     file_path: str
@@ -113,6 +118,7 @@ class DiffPatch(_Base):
 
 
 # ── Inline edit (Cmd-K) ───────────────────────────────────────────────────
+
 
 class InlineEditResult(_Base):
     """Result of an inline-edit request: the rewritten replacement for the
@@ -124,6 +130,7 @@ class InlineEditResult(_Base):
 
 # ── Project rules (.zoc/rules) ────────────────────────────────────────────
 
+
 class ProjectRulesInfo(_Base):
     """Whether per-project agent rules are active for a session, and which
     files they came from."""
@@ -134,6 +141,7 @@ class ProjectRulesInfo(_Base):
 
 
 # ── Checkpoints (restore points) ──────────────────────────────────────────
+
 
 class CheckpointInfo(_Base):
     """A restorable checkpoint captured before an agent run's changes were
@@ -147,6 +155,7 @@ class CheckpointInfo(_Base):
 
 # ── Context mentions (@ picker) ───────────────────────────────────────────
 
+
 class ContextCandidate(_Base):
     """A candidate for the `@` context picker: a file, folder, or code symbol."""
 
@@ -158,6 +167,7 @@ class ContextCandidate(_Base):
 
 
 # ── Local model benchmarks ───────────────────────────────────────────────
+
 
 class RunModelBenchmarkRequest(_Base):
     """Run the fixed benchmark suite against an already-loaded local model."""
@@ -199,6 +209,7 @@ class ModelBenchmarkHistory(_Base):
 
 # ── Sessions ──────────────────────────────────────────────────────────────
 
+
 class SessionStatus(str, Enum):
     active = "active"
     idle = "idle"
@@ -220,6 +231,7 @@ class Session(_Base):
 
 
 # ── Providers / models registry ───────────────────────────────────────────
+
 
 class ProviderKind(str, Enum):
     llamacpp = "llamacpp"
@@ -284,6 +296,7 @@ class ProviderDescriptor(_Base):
 
 # ── Permissions ───────────────────────────────────────────────────────────
 
+
 class PermissionScope(str, Enum):
     read_fs = "read_fs"
     write_fs = "write_fs"
@@ -314,6 +327,7 @@ class ToolGrant(_Base):
 
 # ── Tools ─────────────────────────────────────────────────────────────────
 
+
 class ToolDescriptor(_Base):
     name: str
     description: str
@@ -330,6 +344,7 @@ class ToolResult(_Base):
 
 
 # ── Slash commands ────────────────────────────────────────────────────────
+
 
 class SlashCommandName(str, Enum):
     review = "review"
@@ -348,6 +363,7 @@ class SlashCommandDescriptor(_Base):
 
 
 # ── Code review findings ──────────────────────────────────────────────────
+
 
 class FindingSeverity(str, Enum):
     info = "info"
@@ -373,6 +389,7 @@ class CodeReviewReport(_Base):
 
 # ── Test generation result ────────────────────────────────────────────────
 
+
 class TestGenerationResult(_Base):
     framework: str
     target: str
@@ -384,6 +401,7 @@ class TestGenerationResult(_Base):
 
 
 # ── Indexer ───────────────────────────────────────────────────────────────
+
 
 class IndexChunk(_Base):
     id: str
@@ -454,6 +472,7 @@ class UpdateIndexConfigRequest(_Base):
 
 # ── Settings ──────────────────────────────────────────────────────────────
 
+
 class EmbeddingProvider(str, Enum):
     auto = "auto"
     openai = "openai"
@@ -476,6 +495,7 @@ class UpdateSettingsRequest(_Base):
 
 # ── Terminal sessions ─────────────────────────────────────────────────────
 
+
 class TerminalSessionStatus(str, Enum):
     running = "running"
     exited = "exited"
@@ -492,6 +512,7 @@ class TerminalSession(_Base):
 
 
 # ── Agent / SSE events ────────────────────────────────────────────────────
+
 
 class AgentEventBase(_Base):
     session_id: UUID
@@ -591,6 +612,7 @@ class DoneEvent(AgentEventBase):
 
 # ── Live agent-authored to-do list (Cursor/Claude Code TodoWrite pattern) ──
 
+
 class TodoStatus(str, Enum):
     pending = "pending"
     in_progress = "in_progress"
@@ -616,6 +638,7 @@ class TodoUpdateEvent(AgentEventBase):
 # These rename/collapse the older `agent.*` lifecycle events into a single
 # run-scoped vocabulary. Emitted additively alongside the legacy events so
 # existing consumers keep working during the migration.
+
 
 class RunLifecycleEvent(AgentEventBase):
     type: Literal[
@@ -659,6 +682,7 @@ class DiffReadyEvent(AgentEventBase):
 
 # ── API requests ──────────────────────────────────────────────────────────
 
+
 class CreateSessionRequest(_Base):
     title: str
     workspace_root: str
@@ -670,6 +694,11 @@ class UpdateSessionRequest(_Base):
     title: str | None = None
     provider: str | None = None
     model: str | None = None
+    #: Archiving a Session writes `SessionStatus.closed` through this field
+    #: (R15.11). Before it existed the archive action had nothing to set, so it
+    #: had to invent a second route; `PATCH /sessions/{id}` already carries the
+    #: other three fields and now carries this one.
+    status: SessionStatus | None = None
 
 
 class PostMessageRequest(_Base):

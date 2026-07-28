@@ -1,0 +1,27 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24" role="img" aria-labelledby="zoc-favicon-title">
+  <!--
+    Zoc AI favicon — vector source.
+    Feature: zoc-agent-chat-rebuild — R18.2, R18.3, R18.5
+
+    The monochrome geometry with the kink offset at its upper bound, 3.0 u
+    instead of 2.5 u, which is the one adjustment the design permits for
+    small-size legibility: scaled to 16 px the 2.5 u kink lands on a
+    half-pixel and the break blurs, while 3.0 u holds a 2 px step.
+
+    Right edge  (20,7) -> (14.75,12) -> [+3.0 kink] -> (17.75,12) -> (12.5,17)
+    Left edge   (15.5,7) -> (10.25,12) -> [+3.0 kink] -> (13.25,12) -> (8,17)
+    Band stays 4.5 u horizontally at both ends; the legs keep the dx -5.25 u
+    per dy 5 u run of the standalone mark.
+
+    Filled with the literal value of the zoc-agent-strong token rather than
+    `currentColor`: a favicon is rendered by the browser chrome with no
+    document to inherit from, and this violet holds against both a light and a
+    dark tab strip. favicon.ico carries the same geometry at 16, 32, and 48 px.
+  -->
+  <title id="zoc-favicon-title">Zoc AI</title>
+  <path
+    fill="#9b6af1"
+    fill-rule="nonzero"
+    d="M4 4H20V7L14.75 12H17.75L12.5 17H20V20H4V17H8L13.25 12H10.25L15.5 7H4Z"
+  />
+</svg>

@@ -4,15 +4,12 @@
 // Feature: studio-ui-redesign, Property 25: Tool-call events are labeled with their status
 // Feature: studio-ui-redesign, Property 26: Plan-update events set affected step statuses
 // Feature: studio-ui-redesign, Property 27: An error event transitions to error and retains prior timeline content
-// Feature: studio-ui-redesign, Property 29: Out-of-order/duplicate events are discarded with no state change
-// Feature: studio-ui-redesign, Property 30: A stopped run applies no further events
 import { describe, expect, it } from "vitest";
 import fc from "fast-check";
 import type { AgentEvent } from "@zoc-studio/shared-types";
 import {
   type TimelineEntry,
   applyPlanStep,
-  decideIngest,
   drainBuffer,
   errorDetail,
   eventEntryId,
@@ -25,19 +22,6 @@ import {
   arbPlanUniqueIds,
   arbPlanStepStatus,
 } from "../../__tests__/arbitraries";
-
-// Minimal local seq-cursor model. The former `lib/seq-cursor.ts` helper was
-// removed with the legacy agent transport (zoc-agent-ecosystem-merge task 9.2);
-// this test only needs its tiny pure shape to model the ingest cursor.
-interface SeqCursor {
-  highestSeq: number;
-  activeRunId: string | null;
-}
-const initialCursor = (): SeqCursor => ({ highestSeq: 0, activeRunId: null });
-const advance = (cursor: SeqCursor, seq: number): SeqCursor => ({
-  ...cursor,
-  highestSeq: Math.max(cursor.highestSeq, seq),
-});
 
 const isSortedBySeq = (entries: TimelineEntry[]): boolean =>
   entries.every((e, i) => i === 0 || entries[i - 1].seq <= e.seq);
@@ -63,42 +47,6 @@ describe("event-ingest", () => {
         },
       ),
       { numRuns: 200 },
-    );
-  });
-
-  it("Property 29/30: duplicates/stale are discarded; a stopped stream applies nothing", () => {
-    fc.assert(
-      fc.property(
-        fc.integer({ min: 0, max: 100 }),
-        fc.integer({ min: 0, max: 100 }),
-        fc.boolean(),
-        fc.boolean(),
-        (seq, highestSeq, paused, stopped) => {
-          const event = {
-            type: "message",
-            session_id: "s",
-            seq,
-            at: new Date(0).toISOString(),
-            message: { id: "m", role: "assistant", content: "" },
-          } as unknown as AgentEvent;
-          const decision = decideIngest(event, {
-            highestSeq,
-            paused,
-            stopped,
-            activeRunId: null,
-          });
-          if (seq <= highestSeq) {
-            expect(decision).toBe("discard");
-          } else if (stopped) {
-            expect(decision).toBe("discard");
-          } else if (paused) {
-            expect(decision).toBe("buffer");
-          } else {
-            expect(decision).toBe("apply");
-          }
-        },
-      ),
-      { numRuns: 300 },
     );
   });
 
@@ -244,134 +192,6 @@ describe("event-ingest upsertById order/identity (chat-memory-session-system)", 
           if (original.id === entry.id) continue;
           const kept = result.find((e) => e.id === original.id);
           expect(kept).toEqual(original);
-        }
-      }),
-      { numRuns: 300 },
-    );
-  });
-});
-
-describe("event-ingest cross-run isolation", () => {
-  // A minimal message-type AgentEvent carrying a non-null run_id. The cross-run
-  // rule branches only on run_id vs activeRunId, so the message payload and the
-  // remaining ingest fields are irrelevant — but we still vary seq/highestSeq/
-  // paused/stopped to prove the cross-run discard takes priority over every
-  // other rule.
-  const arbCrossRunEvent = (runId: string, seq: number): AgentEvent =>
-    ({
-      type: "message",
-      session_id: "s",
-      seq,
-      run_id: runId,
-      at: new Date(0).toISOString(),
-      message: { id: "m", role: "assistant", content: "" },
-    }) as unknown as AgentEvent;
-
-  it("Property 2: an event whose run_id differs from the active run is discarded", () => {
-    // **Validates: Requirements 1.2**
-    fc.assert(
-      fc.property(
-        // Two distinct, non-null run ids: one on the event, one active.
-        fc.uniqueArray(fc.hexaString({ minLength: 1, maxLength: 8 }), {
-          minLength: 2,
-          maxLength: 2,
-        }),
-        fc.integer({ min: 0, max: 1000 }),
-        fc.integer({ min: 0, max: 1000 }),
-        fc.boolean(),
-        fc.boolean(),
-        ([eventRunId, activeRunId], seq, highestSeq, paused, stopped) => {
-          const event = arbCrossRunEvent(eventRunId, seq);
-          // Cross-run discard is the first rule and ignores seq/paused/stopped.
-          const decision = decideIngest(event, {
-            highestSeq,
-            paused,
-            stopped,
-            activeRunId,
-          });
-          expect(decision).toBe("discard");
-        },
-      ),
-      { numRuns: 300 },
-    );
-  });
-});
-
-// Feature: chat-memory-session-system, Property 4: Seq monotonicity / idempotent ingestion
-// Validates: Requirements 1.4
-//
-// Models a stream as: a cursor (single seq authority) + an applied-id set.
-// Each delivered event is run through `decideIngest`; on "apply" the cursor is
-// advanced via `advance`. We assert each event id is applied at most once,
-// re-delivery of an already-applied event is discarded, and `highestSeq` is
-// non-decreasing across the whole stream — including duplicates and reorderings.
-describe("event-ingest idempotent ingestion (Property 4)", () => {
-  /**
-   * A canonical set of events with unique entry ids and unique, strictly
-   * increasing seqs. Re-delivering any element therefore means re-delivering
-   * the *same* (id, seq) event, which is what idempotency must discard.
-   */
-  const arbCanonical = fc
-    .array(arbAgentEvent("s"), { maxLength: 20 })
-    .map((events) => {
-      const byId = new Map<string, AgentEvent>();
-      for (const e of events) {
-        const id = eventEntryId(e);
-        if (!byId.has(id)) byId.set(id, e);
-      }
-      // Assign unique, increasing seqs so dedup-by-seq is well defined.
-      return [...byId.values()].map((e, i) => ({ ...e, seq: i + 1 }));
-    });
-
-  /** A delivery stream with arbitrary duplicates and reorderings. */
-  const arbStream = arbCanonical.chain((canonical) => {
-    if (canonical.length === 0) {
-      return fc.constant({ canonical, stream: [] as AgentEvent[] });
-    }
-    return fc
-      .array(fc.nat({ max: canonical.length - 1 }), { maxLength: 80 })
-      .map((indices) => ({
-        canonical,
-        stream: indices.map((i) => canonical[i]),
-      }));
-  });
-
-  it("applies each event id at most once, discards re-delivery, keeps highestSeq non-decreasing", () => {
-    fc.assert(
-      fc.property(arbStream, ({ stream }) => {
-        let cursor = initialCursor();
-        const appliedCount = new Map<string, number>();
-        let prevHighest = cursor.highestSeq;
-
-        for (const ev of stream) {
-          const id = eventEntryId(ev);
-          const alreadyApplied = appliedCount.has(id);
-
-          const decision = decideIngest(ev, {
-            highestSeq: cursor.highestSeq,
-            paused: false,
-            stopped: false,
-            activeRunId: cursor.activeRunId,
-          });
-
-          // Re-delivery of an already-applied event must be discarded.
-          if (alreadyApplied) {
-            expect(decision).toBe("discard");
-          }
-
-          if (decision === "apply") {
-            appliedCount.set(id, (appliedCount.get(id) ?? 0) + 1);
-            cursor = advance(cursor, eventSeq(ev));
-          }
-
-          // highestSeq is non-decreasing at every step.
-          expect(cursor.highestSeq).toBeGreaterThanOrEqual(prevHighest);
-          prevHighest = cursor.highestSeq;
-        }
-
-        // Each event id was applied at most once.
-        for (const count of appliedCount.values()) {
-          expect(count).toBeLessThanOrEqual(1);
         }
       }),
       { numRuns: 300 },

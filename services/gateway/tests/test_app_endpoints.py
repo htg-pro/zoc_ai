@@ -15,11 +15,15 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 from zocai_gateway.app import create_app
+from zocai_gateway.run_pipeline import DefaultAgentBrain
 
 
 @pytest.fixture
-def client() -> TestClient:
-    return TestClient(create_app())
+def client(tmp_path: Path) -> TestClient:
+    # A bound workspace (Plan/Agent require one, R1.4) and an injected brain (a
+    # deterministic stand-in for an available model, so the R5.2 readiness gate
+    # is satisfied without configuring a real provider).
+    return TestClient(create_app(workspace_root=tmp_path, brain=DefaultAgentBrain()))
 
 
 def test_routes_are_registered() -> None:
@@ -139,7 +143,7 @@ def test_context_search_returns_workspace_files(tmp_path) -> None:
 
 def test_workspace_reindex_streams_progress_and_updates_status(tmp_path) -> None:
     (tmp_path / "main.py").write_text("def searchable():\n    return 1\n", encoding="utf-8")
-    with TestClient(create_app()) as client:
+    with TestClient(create_app(workspace_root=tmp_path)) as client:
         session = client.post(
             "/v1/sessions",
             json={"title": "workspace", "workspace_root": str(tmp_path)},
@@ -151,24 +155,24 @@ def test_workspace_reindex_streams_progress_and_updates_status(tmp_path) -> None
                 frames.append(websocket.receive_json())
 
         assert response.status_code == 200
-        assert [frame["type"] for frame in frames] == [
-            "index.started",
-            "index.progress",
-            "index.completed",
-        ]
-        assert frames[-1]["indexedFiles"] == 1
+        # A bound workspace now carries a ``.zocai/`` memory dir, so the number
+        # of progress frames varies; assert the sequence shape instead.
+        assert frames[0]["type"] == "index.started"
+        assert frames[-1]["type"] == "index.completed"
+        assert all(frame["type"] == "index.progress" for frame in frames[1:-1])
+        assert frames[-1]["indexedFiles"] >= 1
         assert frames[-1]["tokenCount"] > 0
 
         status_response = client.get(f"/v1/sessions/{session['id']}/index/status")
         assert status_response.status_code == 200
-        assert status_response.json()["file_count"] == 1
+        assert status_response.json()["file_count"] >= 1
 
         query = client.post(
             f"/v1/sessions/{session['id']}/index/query",
             json={"query": "searchable", "top_k": 5},
         )
         assert query.status_code == 200
-        assert query.json()[0]["chunk"]["file"] == "main.py"
+        assert any(hit["chunk"]["file"] == "main.py" for hit in query.json())
 
 
 def test_decision_acknowledged_for_known_run(client: TestClient) -> None:
@@ -324,7 +328,7 @@ def test_agent_run_uses_authoritative_sidecar_workspace(
         finished.set()
 
     monkeypatch.setattr("zocai_gateway.app.execute_run", fake_execute_run)
-    app = create_app(workspace_root=authoritative)
+    app = create_app(workspace_root=authoritative, brain=DefaultAgentBrain())
     with TestClient(app) as test_client:
         response = test_client.post(
             "/v1/agent/run",
@@ -355,7 +359,7 @@ def test_agent_run_threads_workspace_network_allowlist(
         finished.set()
 
     monkeypatch.setattr("zocai_gateway.app.execute_run", fake_execute_run)
-    app = create_app(workspace_root=tmp_path)
+    app = create_app(workspace_root=tmp_path, brain=DefaultAgentBrain())
     with TestClient(app) as test_client:
         response = test_client.post(
             "/v1/agent/run",
@@ -376,7 +380,7 @@ def test_agent_run_threads_workspace_network_allowlist(
 
 
 def test_cancel_endpoint_stops_only_the_named_run() -> None:
-    app = create_app(drive=False)
+    app = create_app(drive=False, brain=DefaultAgentBrain())
     local = TestClient(app)
     first_id = local.post("/v1/agent/run", json={"prompt": "first", "mode": "ask"}).json()["runId"]
     second_id = local.post("/v1/agent/run", json={"prompt": "second", "mode": "ask"}).json()[

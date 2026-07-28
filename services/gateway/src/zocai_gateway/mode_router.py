@@ -26,6 +26,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
+from typing import Final, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -36,6 +37,7 @@ from zocai_gateway.context.steering_compiler import (
     SteeringPayload,
     compile_steering,
 )
+from zocai_gateway.errors import ErrorCode
 from zocai_gateway.fsm import FSM
 from zocai_gateway.security import log_security_event
 from zocai_gateway.stages import Stage
@@ -49,6 +51,7 @@ from zocai_gateway.toolsets import (
 __all__ = [
     "ASK_ACTIVE_FILE_CHAR_LIMIT",
     "ASK_RAG_TOP_K",
+    "PERMISSIONS",
     "SWITCH_TO_AGENT_MESSAGE",
     "AgentPath",
     "AgentRunRequest",
@@ -58,13 +61,16 @@ __all__ = [
     "AskPath",
     "AskResponse",
     "AskResult",
+    "Capability",
     "ContextFileReference",
+    "Decision",
     "ExecutionPath",
     "Mode",
     "ModeRouter",
     "RequestContext",
     "SwitchToAgentMessage",
     "build_ask_context",
+    "check_capability",
     "is_edit_request",
 ]
 
@@ -148,6 +154,12 @@ class AgentRunRequest(BaseModel):
     top_k: int | None = Field(default=None, alias="topK")
     repeat_penalty: float | None = Field(default=None, alias="repeatPenalty")
     max_tokens: int | None = Field(default=None, alias="maxTokens")
+    #: The Reasoning_Effort level for this run (R17.2). ``None`` means the
+    #: frontend sent no preference; ``model_runtime`` maps it per provider
+    #: capability and omits it entirely for models with no such parameter (R17.4).
+    reasoning_effort: Literal["low", "medium", "high"] | None = Field(
+        default=None, alias="reasoningEffort"
+    )
     #: Frontend PermissionConfig (camelCase) used to gate agent tools (Part 7.1).
     permission: dict[str, object] | None = None
 
@@ -369,7 +381,7 @@ AskGenerator = Callable[[str, AskContext], str]
 def build_ask_context(
     prompt: str,
     *,
-    workspace_root: Path | str = ".",
+    workspace_root: Path | str | None = ".",
     steering_dir: Path | None = None,
     rag_matcher: RagMatcher | None = None,
     context: RequestContext | None = None,
@@ -383,19 +395,34 @@ def build_ask_context(
     ``<workspace_root>/.zoc/steering``; ``rag_matcher`` defaults to the no-op
     :class:`NullRagMatcher` until task 8.1 wires the real matcher.
 
+    ``workspace_root`` may be ``None`` for a root-less Ask run (R1.7): steering,
+    project instructions, and the active-file inline are then simply empty —
+    Ask answers general questions with no project context and reads nothing.
+
     When ``context`` carries an ``active_file``, its content is read from the
     workspace and inlined (truncated to
     :data:`ASK_ACTIVE_FILE_CHAR_LIMIT`) so Ask Mode can answer about the code the
     user is actually looking at (§12.1). A missing or unreadable file degrades to
     "path only" rather than failing the request.
     """
+    matcher: RagMatcher = rag_matcher if rag_matcher is not None else NullRagMatcher()
+    fragments = tuple(matcher.extract(prompt))
+    active_file = context.active_file if context is not None else None
+    if workspace_root is None:
+        # Root-less Ask: no workspace to compile steering from or read files in.
+        return AskContext(
+            steering=SteeringPayload(),
+            rag_fragments=fragments,
+            project_instructions="",
+            active_file=active_file,
+            active_file_content=None,
+            selection=context.selection if context is not None else None,
+            cursor_line=context.cursor_line if context is not None else None,
+        )
     resolved_steering_dir = (
         steering_dir if steering_dir is not None else Path(workspace_root) / DEFAULT_STEERING_DIR
     )
     steering = compile_steering(resolved_steering_dir)
-    matcher: RagMatcher = rag_matcher if rag_matcher is not None else NullRagMatcher()
-    fragments = tuple(matcher.extract(prompt))
-    active_file = context.active_file if context is not None else None
     return AskContext(
         steering=steering,
         rag_fragments=fragments,
@@ -488,7 +515,7 @@ class AskPath(ExecutionPath):
         request: AgentRunRequest,
         *,
         generate: AskGenerator,
-        workspace_root: Path | str = ".",
+        workspace_root: Path | str | None = ".",
         steering_dir: Path | None = None,
         rag_matcher: RagMatcher | None = None,
     ) -> AskResult:
@@ -584,3 +611,83 @@ class ModeRouter:
             toolset=FullToolset(),
             plan_only=req.mode == Mode.PLAN,
         )
+
+
+# ── Mode capability table (R7.6, R7.7, R16.2-16.4) ───────────────────────────
+
+
+class Capability(str, Enum):
+    """A class of tool capability the Mode_Router permits or rejects per mode."""
+
+    READ = "read"  # read-only tools (list, read_file, search…) — always safe
+    WRITE = "write"  # file mutation (write_file, delete_file, move_file)
+    EXECUTE = "execute"  # command execution (terminal, checks, MCP side effects)
+
+
+@dataclass(frozen=True, slots=True)
+class Decision:
+    """The outcome of a capability check.
+
+    ``permitted`` is the table verdict; a rejection carries the typed
+    ``MODE_NOT_PERMITTED`` code and a user-readable ``message`` (no ids/paths).
+    """
+
+    permitted: bool
+    code: str | None = None
+    message: str | None = None
+
+    @property
+    def rejected(self) -> bool:
+        return not self.permitted
+
+
+def _capability_table() -> dict[tuple[Mode, bool, Capability], bool]:
+    """Build the exhaustive (mode, approved, capability) → permitted table.
+
+    The rules (design "Mode_Router", R7.6/R7.7/R16.2-16.4):
+
+    * Ask (R16.2): read-only permitted; write/execute rejected, regardless of
+      any approval state (Ask never reaches an approval gate).
+    * Plan before approval (R7.6/R16.3): read-only permitted; write/execute
+      rejected — the plan is staged, nothing is written.
+    * Plan after approval (R7.7): read/write/execute permitted — approval
+      resumes the same run with the Edit-stage capabilities enabled.
+    * Agent (R16.4): read/write/execute permitted, subject to the configured
+      approval policy (enforced separately by the permission engine).
+    """
+    table: dict[tuple[Mode, bool, Capability], bool] = {}
+    for mode in Mode:
+        for approved in (False, True):
+            for capability in Capability:
+                if capability is Capability.READ or mode is Mode.AGENT:
+                    permitted = True
+                elif mode is Mode.PLAN:
+                    permitted = approved  # write/execute only after approval
+                else:  # Mode.ASK
+                    permitted = False
+                table[(mode, approved, capability)] = permitted
+    return table
+
+
+#: Mode × approved × capability → permitted. Declared (built from the rules
+#: above) so :func:`check_capability` is a pure table lookup and the decision is
+#: exhaustively testable (Property 16).
+PERMISSIONS: Final[dict[tuple[Mode, bool, Capability], bool]] = _capability_table()
+
+
+def check_capability(mode: Mode, approved: bool, capability: Capability) -> Decision:
+    """Permit or reject a capability for ``(mode, approved)`` (R7.6, R7.7, R16.2-16.4).
+
+    A rejection carries the typed ``MODE_NOT_PERMITTED`` code so the caller can
+    surface it as a mode-permission error rather than a raw failure.
+    """
+    if PERMISSIONS[(mode, approved, capability)]:
+        return Decision(permitted=True)
+    return Decision(
+        permitted=False,
+        code=ErrorCode.MODE_NOT_PERMITTED,
+        message=(
+            f"{capability.value} tools are not available in {mode.value} mode"
+            + (" before you approve the plan." if mode is Mode.PLAN else ".")
+        ),
+    )

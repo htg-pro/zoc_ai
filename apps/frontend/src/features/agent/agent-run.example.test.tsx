@@ -7,15 +7,13 @@
  * the property suite does not assert as universals:
  *
  *  - Run_Feed subscribes EXACTLY ONCE on mount (R3.1) — the injected
- *    `createStream` is invoked a single time when `AgentRunFeed` mounts via the
- *    `useAgentStream` stream options.
+ *    `createStream` is invoked a single time when a consumer of
+ *    `useAgentStream` mounts.
  *  - `done` marks the run complete while the stream KEEPS MONITORING for late
  *    events (R3.6) — after a `done` row arrives, a later event still appends and
  *    the underlying stream is never torn down.
- *  - Ask vs Agent rendering at the feed level (R4.3 / R4.4) — Agent_Mode
- *    structured Event_Rows render as structured rows; an Ask_Mode raw `token`
- *    text-channel frame is NOT promoted to a structured row (it streams as
- *    markdown text on the separate channel, not as an Event_Row).
+ *    (Ask vs Agent row dispatch moved to the folded-trace reducer when the
+ *    parallel event feed was removed; see agent-trace.test.ts.)
  *  - Submit targets the Gateway, not a legacy transport (R2.1 / R6.5) — the
  *    rewired store `sendUserMessage` calls the mocked gateway-client
  *    `postAgentRun` and touches no legacy agent run/message transport.
@@ -53,8 +51,9 @@ vi.mock("@/lib/tauri-bridge", async () => {
   };
 });
 
-import AgentRunFeed, { AgentRunFeedView } from "./AgentRunFeed";
-import { ApprovalRow, isRecognizedEvent } from "./rows";
+import { ApprovalRow } from "./decision-rows";
+import useAgentStream from "./useAgentStream";
+import type { UseAgentStreamOptions } from "./useAgentStream";
 import type { AgentEventStream } from "./useAgentStream";
 import { postAgentRun, postAgentDecision, postAgentCancel } from "./gateway-client";
 import { useApp } from "@/lib/store";
@@ -122,7 +121,31 @@ afterEach(() => {
   });
 });
 
-describe("AgentRunFeed mount/subscribe (R3.1)", () => {
+
+/**
+ * A minimal renderer over `useAgentStream`.
+ *
+ * These subscription assertions used to mount `AgentRunFeed`, the parallel run
+ * feed that has since been removed in favour of the single folded-trace card.
+ * The behaviour under test belongs to the hook, not to that component, so the
+ * harness renders just enough DOM to assert on which events arrived.
+ */
+function StreamHarness({ options }: { options: UseAgentStreamOptions }): JSX.Element {
+  const { events } = useAgentStream(options);
+  return (
+    <div>
+      {events.map((event) => (
+        <div key={`${event.seq}:${event.type}`} data-event-type={event.type}>
+          {typeof (event as { text?: unknown }).text === "string"
+            ? String((event as { text?: unknown }).text)
+            : null}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+describe("stream subscription (R3.1)", () => {
   it("subscribes to the Gateway SSE stream exactly once on mount", async () => {
     const streams: FakeStream[] = [];
     const createStream = vi.fn((_url: string) => {
@@ -134,9 +157,7 @@ describe("AgentRunFeed mount/subscribe (R3.1)", () => {
     const recoverFromDiary = vi.fn(async () => [] as AgentEvent[]);
 
     render(
-      <AgentRunFeed
-        streamOptions={{ createStream, resolveBaseUrl, recoverFromDiary }}
-      />,
+      <StreamHarness options={{ createStream, resolveBaseUrl, recoverFromDiary }} />,
     );
 
     // The hook resolves the base URL, then subscribes — exactly one connection.
@@ -159,8 +180,8 @@ describe("done completion keeps the stream monitoring (R3.6)", () => {
     });
 
     const { container } = render(
-      <AgentRunFeed
-        streamOptions={{
+      <StreamHarness
+        options={{
           createStream,
           resolveBaseUrl: async () => "",
           recoverFromDiary: async () => [],
@@ -178,6 +199,7 @@ describe("done completion keeps the stream monitoring (R3.6)", () => {
       runId: "run-named",
       ts: TS,
       ok: true,
+      filesChanged: 0,
     };
     await emitNamed(stream, "done", doneEvent);
 
@@ -193,8 +215,8 @@ describe("done completion keeps the stream monitoring (R3.6)", () => {
     });
 
     const { container } = render(
-      <AgentRunFeed
-        streamOptions={{
+      <StreamHarness
+        options={{
           createStream,
           resolveBaseUrl: async () => "",
           recoverFromDiary: async () => [],
@@ -216,6 +238,7 @@ describe("done completion keeps the stream monitoring (R3.6)", () => {
       runId: "run-1",
       ts: TS,
       ok: true,
+      filesChanged: 0,
     };
     await emit(stream, doneEvent);
 
@@ -243,78 +266,6 @@ describe("done completion keeps the stream monitoring (R3.6)", () => {
     // connection, still open.
     expect(stream.close).not.toHaveBeenCalled();
     expect(createStream).toHaveBeenCalledTimes(1);
-  });
-});
-
-describe("Ask vs Agent rendering at the feed level (R4.3, R4.4)", () => {
-  it("renders Agent_Mode structured Event_Rows, one per kind (R4.4)", () => {
-    const events: AgentEvent[] = [
-      {
-        type: "intent",
-        seq: 1,
-        runId: "run-1",
-        ts: TS,
-        text: "Investigate the failing test",
-        modelTier: "local-slm",
-        contextWindowTokens: 8192,
-      },
-      {
-        type: "edit-file",
-        seq: 2,
-        runId: "run-1",
-        ts: TS,
-        path: "src/foo.ts",
-        diff: "@@ -1 +1 @@",
-        adds: 0,
-        dels: 0,
-        status: "done",
-      },
-      { type: "command", seq: 3, runId: "run-1", ts: TS, command: "pnpm test", exitCode: 0 },
-    ];
-
-    const { container } = render(<AgentRunFeedView events={events} />);
-
-    // Each structured event renders as its own structured row (R4.4).
-    expect(container.querySelector('[data-event-type="intent"]')).not.toBeNull();
-    expect(container.querySelector('[data-event-type="edit-file"]')).not.toBeNull();
-    expect(container.querySelector('[data-event-type="command"]')).not.toBeNull();
-    expect(screen.getByText("Investigate the failing test")).toBeInTheDocument();
-    expect(screen.getByText("pnpm test")).toBeInTheDocument();
-  });
-
-  it("does NOT promote an Ask_Mode token text frame to a structured row (R4.3)", () => {
-    // In Ask_Mode the Gateway streams raw `{ type: "token", text }` frames on
-    // the markdown text channel — these are NOT one of the eight structured
-    // Event_Rows, so the structured-row feed must discard them rather than
-    // render a row for them (R4.3 / R3.5). A real structured `summary` row in
-    // the same feed still renders, confirming only the Agent structured-row
-    // channel produces rows.
-    const tokenFrame = {
-      type: "token",
-      seq: 1,
-      runId: "run-1",
-      ts: TS,
-      text: "**streamed markdown answer**",
-    } as unknown as AgentEvent;
-    const summary: AgentEvents.SummaryEvent = {
-      type: "summary",
-      seq: 2,
-      runId: "run-1",
-      ts: TS,
-      text: "structured summary row",
-    };
-
-    // The token frame is not a recognized structured Event_Row.
-    expect(isRecognizedEvent(tokenFrame)).toBe(false);
-
-    const { container } = render(<AgentRunFeedView events={[tokenFrame, summary]} />);
-
-    // No structured row was produced for the token frame.
-    expect(container.querySelector('[data-event-type="token"]')).toBeNull();
-    expect(screen.queryByText("**streamed markdown answer**")).toBeNull();
-    // The genuine structured row still renders.
-    expect(container.querySelector('[data-event-type="summary"]')).not.toBeNull();
-    expect(screen.getByText("structured summary row")).toBeInTheDocument();
   });
 });
 
@@ -347,7 +298,9 @@ describe("submit targets the Gateway, not a legacy transport (R2.1, R6.5)", () =
       messageQueue: [],
       selectedModel: { provider: "mock", model: "mock-model" },
       llamaCppStatus: null,
-      workspaceRoot: null,
+      // Agent mode requires an open folder (validateRunRequest), so this test
+      // models a user with a workspace open.
+      workspaceRoot: "/ws",
       activeSessionId: "",
     });
 
@@ -363,10 +316,13 @@ describe("submit targets the Gateway, not a legacy transport (R2.1, R6.5)", () =
       provider: "mock",
       apiKey: null,
       baseUrl: null,
-      workspaceRoot: null,
+      workspaceRoot: "/ws",
       reviewChanges: true,
     });
     expect(request.runId).toMatch(/^run-/);
+    // R17.4 — the mock provider carries no effort parameter, so the field is
+    // omitted entirely from the request (never defaulted).
+    expect(request.reasoningEffort).toBeUndefined();
     expect(tauriBridgeMock.gitCheckpointCommit).toHaveBeenCalledWith(
       `zoc: checkpoint before run ${request.runId}`,
     );
@@ -401,7 +357,9 @@ describe("submit targets the Gateway, not a legacy transport (R2.1, R6.5)", () =
       messageQueue: [],
       selectedModel: { provider: "mock", model: "mock-model" },
       llamaCppStatus: null,
-      workspaceRoot: null,
+      // Agent mode requires an open folder, so the checkpoint failure — not the
+      // workspace gate — is what must block this run.
+      workspaceRoot: "/ws",
       activeSessionId: "",
       chat: [],
       agentItems: [],
@@ -416,11 +374,104 @@ describe("submit targets the Gateway, not a legacy transport (R2.1, R6.5)", () =
     expect(postAgentRun).not.toHaveBeenCalled();
     expect(useApp.getState().streaming).toBe(false);
     expect(useApp.getState().runId).toBeNull();
+    expect(useApp.getState().chat.some((entry) => entry.message?.role === "system")).toBe(false);
+    expect(useApp.getState().agentSurfaceError).toMatchObject({
+      operation: "run",
+      message: expect.stringContaining("git identity missing"),
+    });
+
+    vi.restoreAllMocks();
+  });
+
+  it("refuses an Agent submit with no workspace open, instead of running against a scratch dir", async () => {
+    vi.mocked(postAgentRun).mockResolvedValue({ runId: "should-not-start" });
+    tauriBridgeMock.isTauri.mockReturnValue(true);
+    vi.spyOn(agentClient, "getAgentClient").mockResolvedValue({
+      memoryStats: vi.fn().mockResolvedValue({
+        context_window: 8192,
+        tokens_used: 0,
+        messages: 0,
+        summaries: 0,
+        facts: 0,
+      }),
+    } as unknown as Awaited<ReturnType<typeof agentClient.getAgentClient>>);
+
+    useApp.setState({
+      liveMode: true,
+      agentMode: "agent",
+      messageQueue: [],
+      selectedModel: { provider: "mock", model: "mock-model" },
+      llamaCppStatus: null,
+      workspaceRoot: null,
+      sessions: [],
+      activeSessionId: "",
+      chat: [],
+      agentItems: [],
+      streaming: false,
+      isRunning: false,
+      runId: null,
+    });
+
+    await useApp.getState().sendUserMessage("add a login page");
+
+    // No run was submitted, and no run state was left half-started.
+    expect(postAgentRun).not.toHaveBeenCalled();
+    expect(useApp.getState().streaming).toBe(false);
+    expect(useApp.getState().isRunning).toBe(false);
+    expect(useApp.getState().runId).toBeNull();
+    // The user is told why, in plain language.
     expect(
       useApp
         .getState()
-        .chat.some((entry) => entry.message?.content.includes("git identity missing")),
+        .chat.some((entry) => entry.message?.content.includes("Open a project folder")),
     ).toBe(true);
+
+    vi.restoreAllMocks();
+  });
+
+  it("says the agent is unreachable instead of fabricating an assistant reply", async () => {
+    vi.mocked(postAgentRun).mockResolvedValue({ runId: "should-not-start" });
+    vi.spyOn(agentClient, "getAgentClient").mockResolvedValue({
+      memoryStats: vi.fn().mockResolvedValue({
+        context_window: 8192,
+        tokens_used: 0,
+        messages: 0,
+        summaries: 0,
+        facts: 0,
+      }),
+    } as unknown as Awaited<ReturnType<typeof agentClient.getAgentClient>>);
+
+    useApp.setState({
+      liveMode: false,
+      agentMode: "ask",
+      messageQueue: [],
+      selectedModel: { provider: "mock", model: "mock-model" },
+      llamaCppStatus: null,
+      workspaceRoot: "/ws",
+      activeSessionId: "",
+      chat: [],
+      agentItems: [],
+      streaming: false,
+      isRunning: false,
+      runId: null,
+    });
+
+    await useApp.getState().sendUserMessage("what does this do?");
+
+    const chat = useApp.getState().chat;
+    // No canned assistant answer — that is indistinguishable from a real one.
+    expect(chat.some((entry) => entry.message?.role === "assistant")).toBe(false);
+    expect(
+      chat.some(
+        (entry) =>
+          entry.message?.role === "system" &&
+          entry.message.content.includes("Can't reach the agent service"),
+      ),
+    ).toBe(true);
+    // Run state is released, not left spinning.
+    expect(useApp.getState().streaming).toBe(false);
+    expect(useApp.getState().isRunning).toBe(false);
+    expect(postAgentRun).not.toHaveBeenCalled();
 
     vi.restoreAllMocks();
   });
@@ -552,11 +603,79 @@ describe("submit targets the Gateway, not a legacy transport (R2.1, R6.5)", () =
       useApp
         .getState()
         .chat.some((entry) =>
-          entry.message?.content.includes("Select a local .gguf model"),
+          entry.message?.content.includes("Select a model to run"),
         ),
     ).toBe(true);
 
     vi.restoreAllMocks();
+  });
+
+  it("reuses the original user bubble when a failed run start is retried", async () => {
+    const prompt = "plan the parser migration";
+    vi.mocked(postAgentRun)
+      .mockRejectedValueOnce({
+        code: "context_window_exceeded",
+        message: "Reduce attached context, then retry.",
+        retryable: true,
+      })
+      .mockResolvedValueOnce({ runId: "run-retry" });
+    vi.spyOn(agentClient, "getAgentClient").mockResolvedValue({
+      memoryStats: vi.fn().mockResolvedValue({
+        context_window: 8192,
+        tokens_used: 0,
+        messages: 0,
+        summaries: 0,
+        facts: 0,
+      }),
+    } as unknown as Awaited<ReturnType<typeof agentClient.getAgentClient>>);
+    useApp.setState({
+      liveMode: true,
+      agentMode: "ask",
+      trackedRuns: [],
+      focusedRunId: null,
+      runId: null,
+      messageQueue: [],
+      selectedModel: { provider: "mock", model: "mock-model" },
+      llamaCppStatus: null,
+      workspaceRoot: null,
+      activeSessionId: "",
+      chat: [],
+      agentItems: [],
+      agentSurfaceError: null,
+      pendingRunMessageId: null,
+      boundMessageId: null,
+    });
+
+    await useApp.getState().sendUserMessage(prompt);
+
+    const firstUsers = useApp
+      .getState()
+      .chat.filter((entry) => entry.message?.role === "user");
+    expect(firstUsers).toHaveLength(1);
+    expect(useApp.getState().chat.some((entry) => entry.message?.role === "system")).toBe(false);
+    expect(useApp.getState().agentSurfaceError).toMatchObject({
+      operation: "run",
+      code: "context_window_exceeded",
+    });
+    const messageId = firstUsers[0].id;
+    expect(useApp.getState().pendingRunMessageId).toBe(messageId);
+
+    useApp.getState().requestComposerSubmit(prompt, { reuseMessageId: messageId });
+    await useApp.getState().sendUserMessage(prompt);
+
+    const retriedUsers = useApp
+      .getState()
+      .chat.filter((entry) => entry.message?.role === "user");
+    expect(retriedUsers).toHaveLength(1);
+    expect(retriedUsers[0].id).toBe(messageId);
+    expect(useApp.getState().agentSurfaceError).toBeNull();
+    expect(useApp.getState().trackedRuns).toContainEqual(
+      expect.objectContaining({
+        runId: "run-retry",
+        prompt,
+        messageId,
+      }),
+    );
   });
 });
 

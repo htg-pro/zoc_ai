@@ -16,10 +16,11 @@
  * User-typing events are recorded unconditionally and are never gated on the
  * agent being active — typing into a terminal must stay non-blocking while the
  * agent streams output into it. The React/xterm layer sits on top of this
- * verified core; this module imports nothing framework-specific (the single
- * import is a type-only reference to the shared event contract).
+ * verified core; this module imports only pure helpers (the shared event
+ * contract type and the {@link isSyntheticStageCommand} predicate).
  */
 import type { AgentEvents } from "@zoc-studio/shared-types";
+import { isSyntheticStageCommand } from "@/features/agent/stage-markers";
 
 /** The run-END separator appended exactly once when a command exits. */
 export const AGENT_RUN_END_SEPARATOR = "────────────────────────────────";
@@ -285,6 +286,14 @@ export function deriveEventsFromCommand(
   event: AgentEvents.CommandEvent,
   book: CommandBookkeeping,
 ): { events: AgentTerminalEvent[]; book: CommandBookkeeping } {
+  // A `<stage:...>` frame is an internal Stage_Machine marker, not process
+  // output. It must never reach the terminal surface (R10.3, R13.2): drop it
+  // before it can become a run-start marker line. The renderer drops the same
+  // frames in `normalizeEvent`; this is the terminal half of that guarantee.
+  if (isSyntheticStageCommand(event.command)) {
+    return { events: [], book };
+  }
+
   const key = commandKey(event);
   const events: AgentTerminalEvent[] = [];
   const started = new Set(book.started);

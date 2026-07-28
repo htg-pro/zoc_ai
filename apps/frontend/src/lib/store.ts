@@ -139,9 +139,10 @@ import {
   DEFAULT_HOST,
   DEFAULT_PORT,
   loadLocalModels,
+  readinessDeadlineSecs,
 } from "./local-models";
 import { track, trackEvent } from "./telemetry";
-import { ErrorCodes, formatUserError, isAbort, normalizeError } from "./errors";
+import { ErrorCodes, formatUserError, gitErrorToAppError, isAbort, isAuthError, normalizeError } from "./errors";
 import { currentEditorContext } from "./editor-context";
 import {
   activeRuns,
@@ -154,7 +155,6 @@ import {
 } from "@/features/agent/agent-runs";
 import { buildInlineEditPatch, spliceText, stripCodeFence } from "./inline-edit";
 import type { AutonomyLevel } from "./run-machine";
-import { decideIngest } from "./event-ingest";
 // The single agent transport (gateway-client) + the pure Composer run-decision
 // helper (prepare-agent-run). The Composer submit path posts runs to the
 // Gateway through these and lets `useAgentStream` drive the feed — no legacy
@@ -165,8 +165,18 @@ import {
   type ContextFileRef,
 } from "@/features/agent/gateway-client";
 import { prepareAgentRun } from "@/features/agent/prepare-agent-run";
+import {
+  evaluateRunGate,
+  selectionAvailabilityMap,
+} from "@/features/agent/model-availability";
+import type { SurfaceError } from "@/features/agent/surface-state";
+import { sessionOrigin } from "@/features/agent/session-origin";
+import {
+  buildReasoningEffortField,
+  modelSupportsReasoningEffort,
+} from "@/features/agent/composer-controls";
 import { resolveSessionIntent } from "./session-lifecycle";
-import { effectiveSettings, setSetting } from "./settings";
+import { effectiveSettings, getReasoningEffort, setSetting } from "./settings";
 import { checkAction } from "./trust";
 
 export type AgentMode = "ask" | "plan" | "agent";
@@ -374,6 +384,8 @@ export interface AppState {
    * re-fill the composer with the message whose run was interrupted (§11.1).
    */
   lastSentPrompt: string;
+  /** Existing user message to reuse for the next explicit Retry submission. */
+  pendingRunMessageId: string | null;
   /** Epoch ms when the active run started, for telemetry duration (§11.2). */
   runStartedAt: number | null;
   /**
@@ -384,6 +396,9 @@ export interface AppState {
   runStage: string | null;
   /** Record the latest observed stage for one run (active run by default). */
   setRunStage: (stage: string, runId?: string | null) => void;
+  /** Set a tracked run's transient phase (stalled/reconnecting/running). Never
+   *  reopens a terminal run — terminal phases are absorbing (R8.x). */
+  setRunPhase: (phase: RunPhase, runId?: string | null) => void;
   /**
    * Every run the panel knows about, active or finished (§12.3). Populated
    * alongside `runId` so the switcher can list concurrent runs and keep
@@ -398,8 +413,8 @@ export interface AppState {
   streaming: boolean;
   isRunning: boolean;
   /** The active run's id — the backend-issued (here client-supplied, backend
-   *  echoed) `runId` the run is bound to. Drives cross-run event discarding
-   *  via `decideIngest` (R1.2, R1.3). */
+   *  echoed) `runId` the run is bound to. Cross-run event discarding on the SSE
+   *  feed is owned by the Event_Normalizer (`normalizeEvent`) (R9.1, R9.6). */
   runId: string | null;
   /** Latest telemetry snapshot for the active Gateway run. */
   runBudget: AgentEvents.BudgetEvent | null;
@@ -539,6 +554,20 @@ export interface AppState {
   git: GitStatus | null;
   /** Refresh git status into `git`. */
   refreshGit: () => Promise<void>;
+  /** The most recent typed error to surface on the agent panel (git/model/
+   *  workspace), or `null`. Drives `surfaceState`'s error precedence (R14.3,
+   *  R19.6). Cleared on a fresh workspace or a recovered git status. */
+  agentSurfaceError: SurfaceError | null;
+  setAgentSurfaceError: (error: SurfaceError | null) => void;
+  /** Providers whose credentials the Gateway/provider rejected (HTTP 401/403 or
+   *  an auth error code) on a run/request/stream (R4.5). Only the named provider
+   *  is marked; cleared when that provider's key changes or is re-entered. */
+  invalidProviders: Record<string, true>;
+  markProviderInvalid: (provider: string) => void;
+  clearProviderInvalid: (provider: string) => void;
+  /** True while session history is being (re)hydrated from the Gateway, so the
+   *  panel can show a loading placeholder instead of an empty state (R19.2). */
+  sessionHistoryLoading: boolean;
   stageFiles: (paths: string[]) => Promise<void>;
   unstageFiles: (paths: string[]) => Promise<void>;
   discardFiles: (paths: string[]) => Promise<void>;
@@ -625,6 +654,15 @@ export interface AppState {
   sendUserMessage: (content: string) => Promise<void>;
   sendMessage: () => Promise<void>;
   setInput: (value: string) => void;
+  /** Monotonic signal the Composer watches so a follow-up chip (or a panel
+   *  Retry) submits through the Composer's own current-mode path rather than
+   *  calling `sendUserMessage` directly (R21.3). `requestComposerSubmit` first
+   *  writes the prompt into the Composer input, then bumps this. */
+  composerSubmitSignal: number;
+  requestComposerSubmit: (
+    prompt: string,
+    options?: { reuseMessageId?: string | null },
+  ) => void;
   runSlashCommand: (name: SlashCommandName, args?: Record<string, unknown>) => Promise<void>;
   approvePermission: (requestId: string) => Promise<void>;
   rejectPermission: (requestId: string) => Promise<void>;
@@ -675,7 +713,11 @@ export interface AppState {
   /** Cancel the current run and send `content` immediately ("stop and send"). */
   stopAndSend: (content: string) => void;
   /** Mark one Gateway run terminal and release queued work when capacity opens. */
-  finishGatewayRun: (runId?: string | null, phase?: RunPhase) => void;
+  finishGatewayRun: (
+    runId?: string | null,
+    phase?: RunPhase,
+    summary?: { filesChanged?: number; reason?: string | null },
+  ) => void;
   /** Accept a budget frame only when it belongs to the currently bound run. */
   updateRunBudget: (budget: AgentEvents.BudgetEvent) => void;
   /** Persist the completed Ask stream before the transient SSE buffer is cleared. */
@@ -1229,6 +1271,7 @@ export const useApp = create<AppState>((set, get) => ({
   plan: null,
   input: "",
   lastSentPrompt: "",
+  pendingRunMessageId: null,
   runStartedAt: null,
   runStage: null,
   trackedRuns: [],
@@ -1257,6 +1300,10 @@ export const useApp = create<AppState>((set, get) => ({
   acceptedHunks: {},
   appliedPatchIds: loadAppliedPatchIds(),
   liveMode: false,
+  agentSurfaceError: null,
+  invalidProviders: {},
+  composerSubmitSignal: 0,
+  sessionHistoryLoading: false,
   toolDescriptors: [],
   permissionGrants: [],
   toolGrants: [],
@@ -1275,7 +1322,8 @@ export const useApp = create<AppState>((set, get) => ({
   serverStates: new Map(),
 
   setWorkspaceRoot: async (root) => {
-    set({ workspaceRoot: root });
+    // A new workspace clears any prior workspace-scoped surface error.
+    set({ workspaceRoot: root, agentSurfaceError: null });
     if (isTauri()) await tauriSetWorkspaceRoot(root);
     void get().refreshGit();
   },
@@ -1711,9 +1759,42 @@ export const useApp = create<AppState>((set, get) => ({
     }
     try {
       set({ git: await gitStatus() });
-    } catch {
+      // The repository is reachable — clear any prior git-scoped surface error.
+      set((s) => (s.agentSurfaceError?.operation === "git" ? { agentSurfaceError: null } : {}));
+    } catch (err) {
       set({ git: null });
+      // A typed git-guard failure (git.rs `GitError`) drives the non-repo /
+      // command-failed surface state. stderr goes to the Logs panel only —
+      // never the chat feed (R14.3).
+      const gitError = gitErrorToAppError(err);
+      if (gitError) {
+        if (gitError.details) get().appendLog("error", `git: ${gitError.details}`);
+        set({
+          agentSurfaceError: {
+            operation: "git",
+            code: gitError.code,
+            message: gitError.message,
+            retryable: gitError.code === ErrorCodes.gitCommandFailed,
+          },
+        });
+      }
     }
+  },
+  setAgentSurfaceError: (error) => set({ agentSurfaceError: error }),
+
+  markProviderInvalid: (provider) => {
+    const id = provider.trim();
+    if (!id) return;
+    set((s) => (s.invalidProviders[id] ? {} : { invalidProviders: { ...s.invalidProviders, [id]: true } }));
+  },
+  clearProviderInvalid: (provider) => {
+    const id = provider.trim();
+    set((s) => {
+      if (!s.invalidProviders[id]) return {};
+      const next = { ...s.invalidProviders };
+      delete next[id];
+      return { invalidProviders: next };
+    });
   },
   stageFiles: async (paths) => {
     if (!isTauri() || paths.length === 0) return;
@@ -2222,11 +2303,14 @@ export const useApp = create<AppState>((set, get) => ({
     // 404/failure here is expected. Keep any locally-cached sessions in that
     // case and leave `liveMode` as the `/health` probe set it.
     let sessions: Session[];
+    set({ sessionHistoryLoading: true });
     try {
       sessions = await client.listSessions();
     } catch {
+      set({ sessionHistoryLoading: false });
       return;
     }
+    set({ sessionHistoryLoading: false });
 
     // R2.2: resolve the app-open intent from the persisted "last active"
     // pointer instead of unconditionally selecting sessions[0]. A `resume`
@@ -2261,7 +2345,14 @@ export const useApp = create<AppState>((set, get) => ({
       // can start working immediately. Best-effort: if the backend has no
       // session store, leave the panel empty (the user can start a local
       // session from the Sessions view).
-      const workspaceRoot = get().workspaceRoot || "/tmp";
+      //
+      // A session is scoped to a real folder. Without one there is nothing
+      // honest to scope it to, so no session is created — inventing "/tmp"
+      // here is what made later runs resolve against a throwaway directory.
+      const workspaceRoot = get().workspaceRoot;
+      // A session must be scoped to a real folder; "/" (or empty) is not one, so
+      // never auto-create against it (that made later runs resolve at the root).
+      if (!workspaceRoot || workspaceRoot.trim() === "" || workspaceRoot.trim() === "/") return;
       const { provider, model } = get().selectedModel;
       try {
         const session = await client.createSession({
@@ -2321,6 +2412,23 @@ export const useApp = create<AppState>((set, get) => ({
     // store (the Gateway does not persist sessions). A successful backend
     // fetch below refreshes it with authoritative data.
     const cached = get().sessions.find((s) => s.id === intent.sessionId);
+    // R15.7 — a session bound to a different workspace must not silently
+    // retarget the agent. When a workspace is resolved and the session belongs
+    // to a different one, require explicit confirmation before activating it.
+    const resolvedRoot = activeWorkspaceRoot(get());
+    if (cached?.workspace_root && resolvedRoot !== null) {
+      const origin = sessionOrigin(cached.workspace_root, resolvedRoot);
+      if (origin.kind === "foreign") {
+        const confirmed =
+          typeof window !== "undefined" && typeof window.confirm === "function"
+            ? window.confirm(
+                `This session belongs to a different workspace (${origin.basename}). ` +
+                  "Switching will point the agent at that project. Continue?",
+              )
+            : true;
+        if (!confirmed) return;
+      }
+    }
     set({
       activeSessionId: intent.sessionId,
       chat: cached ? entriesFromSession(cached) : [],
@@ -2348,12 +2456,21 @@ export const useApp = create<AppState>((set, get) => ({
   },
 
   createSession: async (title, workspaceRoot) => {
+    // R2.x — a session is scoped to a real project folder. Refuse to create one
+    // without a workspace: inventing "/" (or "") makes later runs resolve
+    // against the filesystem root. Surface the actionable guidance instead, and
+    // never fall through to a local session with a "/" root below.
+    const root = (workspaceRoot ?? "").trim();
+    if (root.length === 0 || root === "/") {
+      toast.message("Open a workspace first to start a session.");
+      return null;
+    }
     try {
       const client = await getAgentClient();
       const { provider, model } = get().selectedModel;
       const session = await client.createSession({
         title,
-        workspace_root: workspaceRoot,
+        workspace_root: root,
         provider,
         model,
       });
@@ -2381,7 +2498,7 @@ export const useApp = create<AppState>((set, get) => ({
         id: `local-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
         title,
         status: "active",
-        workspace_root: workspaceRoot,
+        workspace_root: root,
         provider: provider || null,
         model: model || null,
         created_at: now,
@@ -2546,60 +2663,96 @@ export const useApp = create<AppState>((set, get) => ({
       // Empty / whitespace-only (or otherwise invalid) input — send nothing.
       return;
     }
-    if (!canStartRun(state.trackedRuns, state.maxConcurrentRuns)) {
-      const id = `q-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
-      set((s) => ({ messageQueue: [...s.messageQueue, { id, content: request.input }] }));
+    // Single run-start gate (R5.1/R5.3/R5.5): one pure decision, evaluated
+    // BEFORE the user message is echoed, replaces the overlapping
+    // `validateRunRequest` check and the ad-hoc `ensureSelectedModelReady` throw
+    // (which fired mid-submit after the echo). Concurrency is this app's one
+    // carve-out: at capacity we queue rather than reject, so a `run_active`
+    // verdict routes to the queue instead of a system message.
+    const selected = state.selectedModel.model.trim()
+      ? { provider: state.selectedModel.provider, model: state.selectedModel.model }
+      : null;
+    const gate = evaluateRunGate({
+      input: request.input,
+      selected,
+      availability: selectionAvailabilityMap(selected, state.llamaCppStatus),
+      mode: request.mode,
+      workspaceRoot: activeWorkspaceRoot(state),
+      readOnly: false,
+      activeRunCount: activeRuns(state.trackedRuns).length,
+      maxConcurrentRuns: state.maxConcurrentRuns,
+    });
+    if (!gate.canStart) {
+      if (gate.code === "run_active") {
+        const id = `q-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+        set((s) => ({ messageQueue: [...s.messageQueue, { id, content: request.input }] }));
+        return;
+      }
+      appendSystemChat(set, gate.message);
       return;
     }
 
     const startedAt = Date.now();
-    const userMsg: Message = {
+    const reusableEntry = state.pendingRunMessageId
+      ? state.chat.find(
+          (entry) =>
+            entry.id === state.pendingRunMessageId &&
+            entry.kind === "message" &&
+            entry.message?.role === "user" &&
+            entry.message.content === request.input,
+        )
+      : undefined;
+    const userMsg: Message = reusableEntry?.message ?? {
       id: `local-${Date.now()}`,
       role: "user",
       content: request.input,
       created_at: new Date().toISOString(),
     };
+    const reuseUserMessage = reusableEntry?.message != null;
 
     // Gateway runs own independent SSE streams; starting another must not
     // abort or detach an already-running peer.
 
-    // Echo the user message into the panel and mark a run active. The Gateway
-    // issues the authoritative `runId` (set below once accepted); the single
-    // SSE client `useAgentStream` — mounted in the run feed — drives the feed
-    // from `GET /v1/agent/events` (R3.1). It renders text chunks while Ask is
-    // active and structured Event_Rows while Agent is active (R4.3, R4.4).
+    // Echo a new user message, or re-bind the existing bubble for an explicit
+    // Retry. The Gateway issues the authoritative `runId` below.
     set((s) => ({
-      chat: [...s.chat, { kind: "message", id: userMsg.id, message: userMsg }],
-      agentItems: upsertWorkflowMessage(s.agentItems, userMsg),
+      chat: reuseUserMessage
+        ? s.chat
+        : [...s.chat, { kind: "message", id: userMsg.id, message: userMsg }],
+      agentItems: reuseUserMessage
+        ? s.agentItems
+        : upsertWorkflowMessage(s.agentItems, userMsg),
       streaming: true,
       isRunning: true,
       runBudget: null,
       activeRunMode: request.mode,
       boundMessageId: userMsg.id,
+      pendingRunMessageId: null,
+      // Remember the prompt so a panel Retry can re-run the last one (R19.6).
+      lastSentPrompt: request.input,
       // Start of the wall-clock window reported as `duration_ms` (§11.2).
       runStartedAt: startedAt,
     }));
     await track("session.message_sent", { id: sessionId });
 
     if (!get().liveMode) {
-      // Mock fallback for browser preview (no sidecar reachable).
-      setTimeout(() => {
-        const reply: Message = {
-          id: `m-${Date.now() + 1}`,
-          role: "assistant",
-          content: "Got it. (Mock response — agent sidecar not reachable.)",
-          created_at: new Date().toISOString(),
-        };
-        set((s) => ({
-          chat: [...s.chat, { kind: "message", id: reply.id, message: reply }],
-          agentItems: upsertWorkflowMessage(s.agentItems, reply),
-          streaming: false,
-          isRunning: false,
-          runId: null,
-          runBudget: null,
-          activeRunMode: null,
-        }));
-      }, 400);
+      // The agent service is not reachable. Say so, in the same voice as any
+      // other failure — a fabricated assistant reply ("Got it.") used to appear
+      // here, which is indistinguishable from a real answer and hides the fact
+      // that nothing ran. No silent fallbacks.
+      appendSystemChat(
+        set,
+        "Can't reach the agent service, so this message was not sent. " +
+          "Check that the Zoc AI agent is running and try again.",
+      );
+      set({
+        streaming: false,
+        isRunning: false,
+        runId: null,
+        runBudget: null,
+        activeRunMode: null,
+        runStartedAt: null,
+      });
       return;
     }
 
@@ -2607,13 +2760,21 @@ export const useApp = create<AppState>((set, get) => ({
     // No legacy `agent-client` run/event/approval path is touched (R6.5).
     // `postAgentRun` resolves when the run is *accepted*; the run's lifecycle
     // (and completion) is observed on the SSE feed by `useAgentStream`.
+    let runStartStage: "model" | "checkpoint" | "gateway" = "model";
     try {
-      await ensureSelectedModelReady(get(), set);
       const modelContext = await resolveRunModelContext(get());
+      // R17.2/R17.3 — carry the persisted reasoning-effort selection only when
+      // the model can use it; omitted entirely for models without the parameter.
+      const reasoningEffort = buildReasoningEffortField(
+        modelSupportsReasoningEffort(modelContext.provider, modelContext.model),
+        getReasoningEffort(),
+      );
       const checkpointRunId = request.mode === "agent" ? createClientRunId() : null;
+      runStartStage = checkpointRunId ? "checkpoint" : "gateway";
       const checkpointHash = checkpointRunId
         ? await createAgentRunCheckpoint(checkpointRunId)
         : null;
+      runStartStage = "gateway";
       const { runId } = await postAgentRun({
         ...request,
         ...(checkpointRunId ? { runId: checkpointRunId } : {}),
@@ -2636,9 +2797,12 @@ export const useApp = create<AppState>((set, get) => ({
           ? { repeatPenalty: modelContext.repeatPenalty }
           : {}),
         ...(modelContext.maxTokens !== undefined ? { maxTokens: modelContext.maxTokens } : {}),
+        ...(reasoningEffort ? { reasoningEffort } : {}),
       });
       set((s) => ({
         runId,
+        // A successful start clears any prior run-start panel error (R19.6).
+        ...(s.agentSurfaceError?.operation === "run" ? { agentSurfaceError: null } : {}),
         agentRunCheckpoints: checkpointHash
           ? { ...s.agentRunCheckpoints, [runId]: checkpointHash }
           : s.agentRunCheckpoints,
@@ -2649,13 +2813,46 @@ export const useApp = create<AppState>((set, get) => ({
           mode: request.mode,
           phase: "running",
           title: content.split("\n")[0] ?? content,
+          prompt: request.input,
+          messageId: userMsg.id,
           startedAt,
         }),
+        pendingRunMessageId: null,
         focusedRunId: runId,
       }));
       if (checkpointHash) void get().refreshGit();
     } catch (err) {
-      appendErrorChat(set, "sendUserMessage", err);
+      const normalized = normalizeError(err);
+      const message =
+        normalized.code !== ErrorCodes.unknown
+          ? normalized.message
+          : runStartStage === "checkpoint"
+            ? `The pre-run Git checkpoint failed: ${normalized.message}`
+            : "The Gateway couldn't start this run. Verify the selected model is loaded, then retry.";
+      void track("error", {
+        stage: "sendUserMessage",
+        code: normalized.code,
+        message,
+        ...(normalized.details ? { details: normalized.details } : {}),
+      }).catch(() => undefined);
+      // R4.5/R13.x — a credential rejection (HTTP 401/403 or an auth code) marks
+      // ONLY the selected provider invalid, so the picker can name it; other
+      // providers are untouched. Cleared when that provider's key changes.
+      if (isAuthError(normalized)) {
+        const provider = get().selectedModel.provider;
+        if (provider) get().markProviderInvalid(provider);
+      }
+      // R19.6 — a run-start failure becomes a typed panel error carrying the
+      // operation + code + message, with a Retry that re-runs the last prompt.
+      set({
+        pendingRunMessageId: userMsg.id,
+        agentSurfaceError: {
+          operation: "run",
+          code: normalized.code,
+          message,
+          retryable: normalized.retryable ?? true,
+        },
+      });
       set((s) => {
         const remaining = activeRuns(s.trackedRuns);
         const fallback = remaining[remaining.length - 1];
@@ -2798,6 +2995,18 @@ export const useApp = create<AppState>((set, get) => ({
   },
 
   setInput: (value) => set({ input: value }),
+  requestComposerSubmit: (prompt, options) => {
+    const text = prompt.trim();
+    if (!text) return;
+    // Insert the prompt into the Composer input first, then bump the signal the
+    // Composer watches so it submits through its own current-mode path (mode,
+    // gate, queueing) rather than calling sendUserMessage directly (R21.3).
+    set((s) => ({
+      input: text,
+      pendingRunMessageId: options?.reuseMessageId ?? null,
+      composerSubmitSignal: s.composerSubmitSignal + 1,
+    }));
+  },
 
   approvePermission: async (requestId) => {
     const item = get().agentItems.find(
@@ -3352,7 +3561,7 @@ export const useApp = create<AppState>((set, get) => ({
     if (text) void get().sendUserMessage(text);
   },
 
-  finishGatewayRun: (finishedRunId, phase = "done") => {
+  finishGatewayRun: (finishedRunId, phase = "done", summary) => {
     const runId = finishedRunId ?? get().runId;
     if (!runId) return;
     const run = get().trackedRuns.find((item) => item.runId === runId);
@@ -3372,7 +3581,15 @@ export const useApp = create<AppState>((set, get) => ({
     });
 
     set((s) => {
-      const nextRuns = finishRun(s.trackedRuns, runId, phase, Date.now());
+      const nextRuns = finishRun(s.trackedRuns, runId, phase, Date.now()).map((run) =>
+        run.runId === runId && summary
+          ? {
+              ...run,
+              filesChanged: summary.filesChanged ?? run.filesChanged,
+              outcomeReason: summary.reason ?? run.outcomeReason,
+            }
+          : run,
+      );
       const remaining = activeRuns(nextRuns);
       const currentFinished = s.runId === runId;
       const fallback = remaining[remaining.length - 1];
@@ -3438,6 +3655,23 @@ export const useApp = create<AppState>((set, get) => ({
 
   focusRun: (runId) => set({ focusedRunId: runId }),
 
+  setRunPhase: (phase, runId) => {
+    const target = runId ?? get().runId;
+    if (!target) return;
+    set((s) => {
+      const tracked = s.trackedRuns.find((run) => run.runId === target);
+      // Terminal phases are absorbing: never reopen a settled run (R8.x). Only
+      // transient phases (stalled/reconnecting/running) are set through here;
+      // terminalization goes through finishGatewayRun/finishRun.
+      if (!tracked || isTerminal(tracked) || tracked.phase === phase) return {};
+      return {
+        trackedRuns: s.trackedRuns.map((run) =>
+          run.runId === target ? { ...run, phase } : run,
+        ),
+      };
+    });
+  },
+
   commitAskStreamMessage: (runId, content, createdAt) => {
     const trimmed = content.trim();
     if (!trimmed) return;
@@ -3463,6 +3697,9 @@ export const useApp = create<AppState>((set, get) => ({
 
   setAgentMode: (mode) => set({ agentMode: mode }),
   setSelectedModel: (m) => {
+    // Re-selecting a provider's model is a deliberate "use this again" — clear
+    // any prior credential-invalid flag so the picker stops naming it (R4.5).
+    if (m.provider) get().clearProviderInvalid(m.provider);
     // Drop any cached memory snapshot — it was computed against a
     // different model's context window, so showing it for the new model
     // would mislead the user. The next agent run / `loadMemoryStats`
@@ -3514,6 +3751,9 @@ export const useApp = create<AppState>((set, get) => ({
           local.max_tokens,
           local.host,
           local.port,
+          // R3.10 — forward the per-model Readiness_Deadline override so the
+          // Desktop_Shell waits the configured window for this model to load.
+          readinessDeadlineSecs(local),
         )
           .then((status) => set({ llamaCppStatus: status }))
           .catch((err: unknown) => {
@@ -4138,15 +4378,13 @@ async function consumeStream(
   // emits those events. Assistant message streaming is always honored.
   const mode: AgentMode = opts.mode ?? useApp.getState().agentMode;
   const isAsk = mode === "ask";
-  // The active run id the stream is bound to (R1.2). Events tagged with a
-  // different `run_id` are stale cross-run replays and are discarded by
-  // `decideIngest`. `null`/undefined (slash commands, retry) disables the
-  // cross-run rule, preserving the prior behavior for those callers.
+  // This legacy slash-command transport binds no run id (`activeRunId` is null
+  // for every `runSlashCommand` caller), so a cross-run replay cannot occur
+  // here; the Event_Normalizer owns the cross-run/duplicate-seq/malformed rules
+  // on the SSE feed (R9.1, R9.6). Kept for the `streamRunId` fallback below.
   const activeRunId: string | null = opts.activeRunId ?? null;
-  // Per-run ingest seq floor used by `decideIngest` to drop duplicate/stale
-  // deliveries (R1.4). The single shared `SeqCursor` authority in
-  // `agent-client` owns the resubscribe cursor; this mirrors the applied floor
-  // within this stream so re-delivered events are idempotently ignored.
+  // Local applied-seq floor: drop duplicate/stale re-deliveries within this
+  // stream so a re-delivered event is idempotently ignored (R9.1).
   let highestSeq = 0;
   let assistantId: string | null = null;
   let assistantText = "";
@@ -4157,7 +4395,10 @@ async function consumeStream(
   let sawWorkflowArtifact = false;
   const ensureAssistant = () => {
     if (assistantId) return assistantId;
-    assistantId = `assistant-${Date.now()}`;
+    // Derived, stable identity (mirrors the Event_Normalizer's
+    // `assistant:${runId}` fallback), not a `Date.now()` mint: the id must be a
+    // pure function of the stream so the same events fold to the same row id.
+    assistantId = `assistant:${streamRunId}`;
     assistantText = "";
     const msg: Message = {
       id: assistantId,
@@ -4190,17 +4431,13 @@ async function consumeStream(
       while (useApp.getState().agentPaused) {
         await new Promise((resolve) => setTimeout(resolve, 120));
       }
-      // Ingestion gate (R1.2, R1.4): discard events from a superseded run
-      // (cross-run `run_id` mismatch) and duplicate/stale re-deliveries before
-      // applying anything to the chat or workflow timeline. The pause gate
-      // above has already cleared, so the only outcomes here are apply/discard.
-      const decision = decideIngest(ev, {
-        highestSeq,
-        paused: false,
-        stopped: false,
-        activeRunId,
-      });
-      if (decision === "discard") continue;
+      // Ingestion gate (R9.1, R9.6): the Event_Normalizer now owns the
+      // cross-run / duplicate-seq / malformed discard rules on the SSE feed.
+      // This slash-command transport binds no run id, so cross-run replay
+      // cannot occur; the only rule that applies here is dropping duplicate or
+      // stale re-deliveries by sequence. The pause gate above is the
+      // transport-level hold and has already cleared.
+      if (ev.seq <= highestSeq) continue;
       highestSeq = Math.max(highestSeq, ev.seq);
       // Mirror sidecar log events into the Logs panel + the Agent output channel.
       if (ev.type === "log") {
@@ -4535,7 +4772,16 @@ function collectExcerptsForReview(state: AppState): Array<[string, string]> {
   return open.map((f) => [f.path, f.content] as [string, string]);
 }
 
-function activeWorkspaceRoot(state: AppState): string | null {
+/**
+ * The folder the app is currently working in.
+ *
+ * One resolver for every consumer — chat runs, backend sessions, and terminals.
+ * The explicit workspace wins; the active session's root is the fallback for a
+ * session restored before the config was hydrated. Terminals used to read
+ * `state.workspaceRoot` directly, so they could refuse to start while a chat run
+ * happily used the session's root (or the other way round).
+ */
+export function activeWorkspaceRoot(state: AppState): string | null {
   return (
     state.workspaceRoot ??
     state.sessions.find((s) => s.id === state.activeSessionId)?.workspace_root ??
@@ -4658,7 +4904,13 @@ async function ensureBackendSession(
   const current = get().activeSessionId;
   if (current) return current;
   if (typeof client.createSession !== "function") return current;
-  const workspaceRoot = activeWorkspaceRoot(get()) || "/tmp";
+  const workspaceRoot = activeWorkspaceRoot(get());
+  if (!workspaceRoot) {
+    // Fail loudly rather than scoping a backend session to a scratch path the
+    // user never chose. Callers surface this sentence in the chat / inline-edit
+    // error slot.
+    throw new Error("Open a project folder before starting a session.");
+  }
   const { provider, model } = get().selectedModel;
   const session = await client.createSession({
     title: "Agent Session",
@@ -4694,102 +4946,6 @@ interface RunModelContext extends ProviderCreds {
   topK?: number;
   repeatPenalty?: number;
   maxTokens?: number;
-}
-
-async function ensureSelectedModelReady(
-  state: AppState,
-  set: SetState,
-): Promise<LlamaCppStatus | null> {
-  const provider = state.selectedModel.provider;
-  const model = state.selectedModel.model?.trim() || null;
-  if (provider !== "llamacpp") {
-    return null;
-  }
-  if (!model) {
-    throw new Error("Select a local .gguf model before sending a llama.cpp run.");
-  }
-  const local = loadLocalModels().find((lm) => lm.id === model);
-  if (!local) {
-    throw new Error("The selected local .gguf model is no longer registered.");
-  }
-  const current = state.llamaCppStatus;
-  if (current?.running && current.loaded_model_id === local.id && current.base_url) {
-    return current;
-  }
-
-  const ngl = local.n_gpu_layers ?? DEFAULT_N_GPU_LAYERS;
-  set((s) => ({
-    llamaCppStatus: {
-      running: false,
-      host: s.llamaCppStatus?.host ?? local.host ?? null,
-      port: s.llamaCppStatus?.port ?? local.port ?? null,
-      base_url: s.llamaCppStatus?.base_url ?? null,
-      loaded_model_id: null,
-      loaded_model_path: null,
-      n_gpu_layers: ngl,
-      n_ctx: local.n_ctx ?? null,
-      n_threads: local.n_threads ?? null,
-      n_batch: local.n_batch ?? null,
-      temperature: local.temperature ?? DEFAULT_TEMPERATURE,
-      top_p: local.top_p ?? DEFAULT_TOP_P,
-      top_k: local.top_k ?? DEFAULT_TOP_K,
-      repeat_penalty: local.repeat_penalty ?? DEFAULT_REPEAT_PENALTY,
-      max_tokens: local.max_tokens ?? DEFAULT_MAX_TOKENS,
-      flash_attn: local.flash_attn ?? null,
-      last_error: null,
-    },
-  }));
-
-  let loaded: LlamaCppStatus;
-  try {
-    loaded = await llamacppLoad(
-      local.id,
-      local.path,
-      ngl,
-      local.n_ctx,
-      local.n_threads,
-      local.n_batch,
-      local.flash_attn,
-      local.temperature,
-      local.top_p,
-      local.top_k,
-      local.repeat_penalty,
-      local.max_tokens,
-      local.host,
-      local.port,
-    );
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    set((s) => ({
-      llamaCppStatus: {
-        running: false,
-        host: s.llamaCppStatus?.host ?? local.host ?? null,
-        port: s.llamaCppStatus?.port ?? local.port ?? null,
-        base_url: null,
-        loaded_model_id: null,
-        loaded_model_path: null,
-        n_gpu_layers: null,
-        n_ctx: null,
-        n_threads: null,
-        n_batch: null,
-        temperature: null,
-        top_p: null,
-        top_k: null,
-        repeat_penalty: null,
-        max_tokens: null,
-        flash_attn: null,
-        last_error: message,
-      },
-    }));
-    throw err;
-  }
-  set({ llamaCppStatus: loaded });
-  if (!loaded.running || !loaded.base_url) {
-    throw new Error(
-      loaded.last_error || "llama-server did not become ready for the selected model.",
-    );
-  }
-  return loaded;
 }
 
 /**

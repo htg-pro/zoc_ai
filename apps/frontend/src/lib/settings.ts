@@ -80,7 +80,22 @@ export const SETTINGS_REGISTRY: SettingSpec[] = [
     default: "agent",
     options: [
       { value: "ask", label: "Ask (read-only)" },
+      { value: "plan", label: "Plan (review before apply)" },
       { value: "agent", label: "Agent (full autonomy)" },
+    ],
+  },
+  {
+    key: "agent.reasoningEffort",
+    label: "Agent: Reasoning Effort",
+    description:
+      "How much reasoning budget a run uses. Higher trades speed for depth. Ignored by models with no reasoning-effort parameter.",
+    category: "Agent",
+    type: "enum",
+    default: "medium",
+    options: [
+      { value: "low", label: "Low" },
+      { value: "medium", label: "Medium" },
+      { value: "high", label: "High" },
     ],
   },
   {
@@ -237,4 +252,22 @@ function emit(): void {
 export function subscribeSettings(fn: () => void): () => void {
   listeners.add(fn);
   return () => listeners.delete(fn);
+}
+
+// ── typed accessors ────────────────────────────────────────────────────────
+
+/** The persisted key for the Reasoning_Effort selection (R17.3). */
+export const REASONING_EFFORT_KEY = "agent.reasoningEffort";
+
+export type ReasoningEffort = "low" | "medium" | "high";
+
+/** The persisted Reasoning_Effort level, defaulting to `medium`. */
+export function getReasoningEffort(): ReasoningEffort {
+  const value = getSetting(REASONING_EFFORT_KEY);
+  return value === "low" || value === "medium" || value === "high" ? value : "medium";
+}
+
+/** Persist the Reasoning_Effort level to the user scope (R17.3). */
+export function setReasoningEffort(effort: ReasoningEffort): void {
+  setSetting("user", REASONING_EFFORT_KEY, effort);
 }

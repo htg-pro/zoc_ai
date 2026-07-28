@@ -242,9 +242,11 @@ async def test_stream_replays_history_before_live_frames() -> None:
 
     frames = [frame async for frame in _event_stream(run, heartbeat_seconds=0.01, since_seq=0)]
     seqs = [json.loads(f["data"])["seq"] for f in frames if f["event"] != "ping"]
-    # 1 and 2 come from the buffer, 3 was still queued — and 3 must not be
-    # delivered twice even though it is in both places.
-    assert seqs == [1, 2, 3]
+    # 1 and 2 come from the buffer, 3 was still queued, and 4 is the terminal
+    # done frame emitted by close(). Frame 3 must not be delivered twice even
+    # though it is present in both the replay buffer and live queue.
+    assert seqs == [1, 2, 3, 4]
+    assert frames[-1]["event"] == "done"
 
 
 @pytest.mark.asyncio
@@ -258,7 +260,8 @@ async def test_resume_never_duplicates_a_sequence_number() -> None:
     seqs = [json.loads(f["data"])["seq"] for f in frames if f["event"] != "ping"]
 
     assert seqs == sorted(set(seqs)), "resumed stream must be gap-free and unique"
-    assert seqs == [3, 4, 5]
+    assert seqs == [3, 4, 5, 6]
+    assert frames[-1]["event"] == "done"
 
 
 # ── replay endpoint ──────────────────────────────────────────────────────────

@@ -18,12 +18,21 @@ import { resolveSlashCommand } from "@/lib/slash-commands";
 import { detectDestructiveIntent } from "@/lib/destructive-intent";
 import { setRunMode } from "@/lib/trust";
 import { activeRuns } from "./agent-runs";
+import { evaluateRunGate, selectionAvailabilityMap } from "./model-availability";
+import {
+  composerControls,
+  modelSupportsReasoningEffort,
+  type ReasoningEffort,
+} from "./composer-controls";
+import { getReasoningEffort, setReasoningEffort } from "@/lib/settings";
+import { currentViewerContext } from "./share-session";
 
 const AUTONOMY_CYCLE: AutonomyLevel[] = ["Low", "Medium", "High"];
 
 export function Composer() {
   const value        = useApp((s) => s.input);
   const setValue     = useApp((s) => s.setInput);
+  const composerSubmitSignal = useApp((s) => s.composerSubmitSignal);
   const [composing, setComposing] = useState(false);
   const send         = useApp((s) => s.sendUserMessage);
   const queueMessage = useApp((s) => s.queueUserMessage);
@@ -44,8 +53,16 @@ export function Composer() {
   const projectRules = useApp((s) => s.projectRules);
   const trackedRuns = useApp((s) => s.trackedRuns ?? []);
   const maxConcurrentRuns = useApp((s) => s.maxConcurrentRuns ?? 3);
+  const selectedModel = useApp((s) => s.selectedModel ?? { provider: "", model: "" });
+  const llamaCppStatus = useApp((s) => s.llamaCppStatus ?? null);
+  const workspaceRoot = useApp((s) => s.workspaceRoot ?? null);
+  const activeRunMode = useApp((s) => s.activeRunMode ?? null);
+  const viewer = useMemo(currentViewerContext, []);
+  const [effort, setEffort] = useState<ReasoningEffort>(() => getReasoningEffort());
 
   const ref = useRef<HTMLTextAreaElement>(null);
+  const submitRef = useRef<() => void>(() => {});
+  const lastSubmitSignal = useRef(composerSubmitSignal);
   const [submitting, setSubmitting]         = useState(false);
   const [validationError, setValidationError] = useState<string | null>(null);
   const [caretPos, setCaret]                = useState(0);
@@ -60,6 +77,46 @@ export function Composer() {
   const isPlan   = agentMode === "plan";
   const isAgent  = agentMode === "agent";
   const hasText  = !!value.trim();
+
+  // Single run-start gate + one control projection (R5.1/R16.x/R17.x): the send
+  // control and its disabled reason, the mode toggle's locked state, and the
+  // reasoning-effort control all derive from one source so no control's disabled
+  // reasoning can disagree with another's. Concurrency is not gated here — at
+  // capacity the composer queues (below), so the gate is consulted with the
+  // ceiling lifted (activeRunCount = 0).
+  const selected = selectedModel.model.trim()
+    ? { provider: selectedModel.provider, model: selectedModel.model }
+    : null;
+  const runGate = evaluateRunGate({
+    input: value,
+    selected,
+    availability: selectionAvailabilityMap(selected, llamaCppStatus),
+    mode: agentMode,
+    workspaceRoot,
+    readOnly: viewer.readOnly,
+    activeRunCount: 0,
+    maxConcurrentRuns,
+  });
+  const modelSupportsEffort = modelSupportsReasoningEffort(
+    selectedModel.provider,
+    selectedModel.model,
+  );
+  const controls = composerControls({
+    mode: agentMode,
+    activeRunMode,
+    effort,
+    modelSupportsEffort,
+    readOnly: viewer.readOnly,
+    gate: runGate,
+  });
+  // The send control is enabled exactly when the gate admits the run and no
+  // review/test/submit is holding the composer. At capacity `canSend` stays
+  // true so the click queues (see `submit`).
+  const canSend = controls.send.canStart && !blocked;
+  // Surface the gate's reason only when the user has typed but the run is still
+  // blocked for an actionable reason (no model, no workspace, read-only) — the
+  // empty-input case is obvious and needs no sentence.
+  const sendBlockedReason = hasText && !runGate.canStart ? runGate.message : null;
 
   // Part 7.1: scan the draft for destructive intent so we can warn inline and
   // drop to a cautious run mode before anything executes.
@@ -114,6 +171,17 @@ export function Composer() {
       ref.current?.focus();
     });
   };
+
+  // Keep a stable handle to the latest submit closure so a store-driven submit
+  // (a follow-up chip or a panel Retry via `requestComposerSubmit`) runs through
+  // this very path — the current mode, the run gate, and queueing — instead of
+  // calling sendUserMessage directly (R21.3, R12).
+  submitRef.current = submit;
+  useEffect(() => {
+    if (composerSubmitSignal === lastSubmitSignal.current) return;
+    lastSubmitSignal.current = composerSubmitSignal;
+    if (composerSubmitSignal > 0) submitRef.current();
+  }, [composerSubmitSignal]);
 
   const attachActiveFile = () => {
     if (!activeFile) return;
@@ -242,12 +310,13 @@ export function Composer() {
         </div>
 
         {/* Bottom toolbar */}
-        <div className="flex items-center gap-1.5 px-2 pb-2 pt-1">
+        <div className="flex flex-wrap items-center gap-1.5 px-2 pb-2 pt-1">
           {/* Mode toggle */}
           <div className="flex items-center rounded-lg border border-[#1E1E23] bg-[#0F0F14] p-0.5">
             <button
               type="button"
               onClick={() => setAgentMode("ask")}
+              disabled={controls.mode.disabled}
               className={cn(
                 "px-2.5 py-1 text-[11px] rounded-md font-medium transition-all",
                 isAsk
@@ -261,6 +330,7 @@ export function Composer() {
             <button
               type="button"
               onClick={() => setAgentMode("plan")}
+              disabled={controls.mode.disabled}
               className={cn(
                 "flex items-center gap-1 px-2.5 py-1 text-[11px] rounded-md font-medium transition-all",
                 isPlan
@@ -275,6 +345,7 @@ export function Composer() {
             <button
               type="button"
               onClick={() => setAgentMode("agent")}
+              disabled={controls.mode.disabled}
               className={cn(
                 "px-2.5 py-1 text-[11px] rounded-md font-medium transition-all",
                 isAgent
@@ -313,6 +384,59 @@ export function Composer() {
               {autonomy}
             </button>
           )}
+
+          {/* Reasoning effort — always rendered (R17.1). Interactive only for
+              models that carry the parameter (OpenAI reasoning markers /
+              Anthropic versions, mirrored from the Gateway); otherwise disabled
+              and clearly labelled, and the request omits the field (R17.4). */}
+          <div
+            className={cn(
+              "flex items-center gap-0.5 rounded-md border border-[#1E1E23] bg-[#0F0F14] p-0.5",
+              !controls.effort.supported && "opacity-60",
+            )}
+            role="group"
+            aria-label="Reasoning effort"
+            data-testid="reasoning-effort"
+            data-supported={controls.effort.supported}
+            title={
+              controls.effort.supported
+                ? "Reasoning effort"
+                : "This model has no reasoning-effort setting"
+            }
+          >
+            <span className="px-1 text-[9px] uppercase tracking-wider text-[#52525B]">
+              Effort
+            </span>
+            {controls.effort.options.map((level) => (
+              <button
+                key={level}
+                type="button"
+                onClick={() => {
+                  setEffort(level);
+                  setReasoningEffort(level);
+                }}
+                disabled={controls.effort.disabled}
+                aria-pressed={controls.effort.supported && controls.effort.value === level}
+                className={cn(
+                  "px-1.5 py-0.5 text-[10.5px] rounded font-medium capitalize transition-colors",
+                  controls.effort.supported && controls.effort.value === level
+                    ? "bg-[#2A1F4E] text-[#9B6AF1]"
+                    : "text-[#52525B] hover:text-[#A1A1AA]",
+                  controls.effort.disabled && "cursor-not-allowed",
+                )}
+                title={
+                  controls.effort.supported
+                    ? `Reasoning effort: ${level}`
+                    : "Not supported by this model"
+                }
+              >
+                {level}
+              </button>
+            ))}
+            {!controls.effort.supported && (
+              <span className="px-1 text-[9px] lowercase text-[#52525B]">n/a</span>
+            )}
+          </div>
 
           {/* Attach file */}
           {activeFile && (
@@ -372,10 +496,10 @@ export function Composer() {
               <button
                 type="button"
                 onClick={submit}
-                disabled={!hasText || blocked}
+                disabled={!canSend}
                 className={cn(
                   "flex h-7 w-7 items-center justify-center rounded-lg border transition-all",
-                  hasText && !blocked
+                  canSend
                     ? "bg-[#7C3AED] border-[#9B6AF1]/30 text-white shadow-[0_0_16px_rgba(124,58,237,0.4)] hover:bg-[#6D28D9]"
                     : "border-[#26262B] bg-[#15151A] text-[#3F3F46] cursor-not-allowed",
                 )}
@@ -392,6 +516,8 @@ export function Composer() {
       <div className="mt-1.5 px-1 text-[10.5px] text-[#3F3F46] leading-snug">
         {validationError ? (
           <span className="text-[var(--zoc-error)]" role="alert">{validationError}</span>
+        ) : sendBlockedReason ? (
+          <span className="text-[#fbbf24]" role="status">{sendBlockedReason}</span>
         ) : isAsk ? (
           "Ask mode is read-only — no files change."
         ) : (

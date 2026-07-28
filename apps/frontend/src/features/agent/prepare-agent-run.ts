@@ -88,11 +88,13 @@ export function isAgentMode(value: unknown): value is AgentMode {
 }
 
 /**
- * Modes that may read *and write* the workspace. Ask and Plan are read-only by
- * contract, so only `agent` requires an open folder.
+ * Modes that require a resolved workspace root. Ask is read-only Q&A that
+ * writes nothing and needs no directory (R1.7), so it is the one carve-out;
+ * Plan reads files to build a plan and stages diffs against real paths, so a
+ * root-less Plan run produces a plan about nothing and is refused (R1.4).
  */
 export function modeRequiresWorkspace(mode: AgentMode): boolean {
-  return mode === "agent";
+  return mode !== "ask";
 }
 
 export type RunRequestCheck =
@@ -104,8 +106,9 @@ export type RunRequestCheck =
  *
  * Checks the three things that can actually be wrong at this boundary and that
  * previously failed deeper in the stack with an unhelpful message: an
- * unrecognised mode, an empty message, and Agent mode with no workspace open.
- * Ask and Plan are allowed without a workspace because they never write.
+ * unrecognised mode, an empty message, and Plan/Agent mode with no workspace
+ * open. Ask is allowed without a workspace because it never reads or writes the
+ * project (R1.7).
  *
  * Returning a code plus a user-readable sentence — rather than throwing — is
  * what lets the composer show the reason and stay enabled.
@@ -133,7 +136,9 @@ export function validateRunRequest(params: {
     return {
       ok: false,
       code: "no_workspace",
-      message: "No workspace is open. Open a project folder before using Agent mode.",
+      message: `No workspace is open. Open a project folder before using ${
+        params.mode === "plan" ? "Plan" : "Agent"
+      } mode.`,
     };
   }
   return { ok: true, mode: params.mode };

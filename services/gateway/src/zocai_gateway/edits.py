@@ -49,6 +49,7 @@ from shared_schema.agent_events import (
     ThinkingEvent,
 )
 
+from zocai_gateway.atomic_fs import sha256_file
 from zocai_gateway.context.steering_compiler import is_write_preapproved
 from zocai_gateway.fsm import EmitSink
 from zocai_gateway.toolsets import FullToolset, ReadOnlyViolation
@@ -221,6 +222,9 @@ class EditCoordinator:
                     error=reason,
                 )
             try:
+                # R12.7: capture the target's pre-write hash so the edit-file
+                # event carries an honest base for stale detection.
+                base_hash = sha256_file(self.toolset.workspace_root / change.path)
                 self.toolset.write_file(change.path, change.content)
             except (ReadOnlyViolation, OSError, UnicodeDecodeError) as exc:
                 # R3.9: halt, retain already-applied changes, emit an error
@@ -231,7 +235,7 @@ class EditCoordinator:
                     applied=tuple(applied), failed=change, error=reason
                 )
             applied.append(change)
-            self._emit_edit_file(change)
+            self._emit_edit_file(change, base_hash=base_hash)
         return ApplyOutcome(applied=tuple(applied))
 
     def authorize_write(self, path: str) -> bool:
@@ -299,7 +303,7 @@ class EditCoordinator:
 
     # -- emission helpers ---------------------------------------------------
 
-    def _emit_edit_file(self, change: PlannedChange) -> None:
+    def _emit_edit_file(self, change: PlannedChange, *, base_hash: str | None = None) -> None:
         """Emit an ``edit-file`` event documenting an applied change (R3.7)."""
         event = EditFileEvent(
             seq=self.next_seq(),
@@ -310,6 +314,7 @@ class EditCoordinator:
             adds=_diff_stats(change.diff)[0],
             dels=_diff_stats(change.diff)[1],
             status="done",
+            base_hash=base_hash,
         )
         self._record(event)
 

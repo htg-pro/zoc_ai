@@ -35,7 +35,11 @@ class _SpyHost:
 def _bare_app(settings_obj: GatewaySettings, host: _SpyHost) -> FastAPI:
     app = FastAPI()
     setattr(app.state, STATE_SETTINGS_KEY, settings_obj)
-    app.include_router(create_mcp_router(host))  # type: ignore[arg-type]
+
+    async def _resolve() -> _SpyHost:
+        return host
+
+    app.include_router(create_mcp_router(_resolve))  # type: ignore[arg-type]
     return app
 
 
@@ -67,8 +71,11 @@ def test_rejected_admission_has_no_side_effect(
     assert spy.calls == []  # handler never ran → no config/session/status/toolset side effect
 
 
-def test_servers_admitted_on_loopback() -> None:
-    with TestClient(create_app()) as client:  # default loopback admits
+def test_servers_admitted_on_loopback(tmp_path) -> None:
+    # A workspace is now required for a real MCP host: servers are pinned to the
+    # workspace root, so the host lives in the WorkspaceScope (no /nonexistent
+    # sentinel). With a bound workspace the bundled servers are configured.
+    with TestClient(create_app(workspace_root=tmp_path)) as client:  # loopback admits
         resp = client.get("/v1/mcp/servers")
     assert resp.status_code == 200
     servers = {s["id"]: s for s in resp.json()["servers"]}
@@ -77,8 +84,26 @@ def test_servers_admitted_on_loopback() -> None:
     assert all(s["status"] == "stopped" for s in servers.values())
 
 
-def test_test_endpoint_invalid_and_unsupported() -> None:
+def test_servers_returns_empty_without_workspace() -> None:
+    """With no workspace open, /servers answers honestly empty — no sentinel host."""
+    with TestClient(create_app()) as client:  # conftest isolates → no workspace
+        resp = client.get("/v1/mcp/servers")
+    assert resp.status_code == 200
+    assert resp.json() == {"servers": []}
+
+
+def test_reload_and_test_refuse_without_workspace() -> None:
+    """Mutating MCP routes return a typed no_workspace 409 with no workspace open."""
     with TestClient(create_app()) as client:
+        reload_resp = client.post("/v1/mcp/reload")
+        test_resp = client.post("/v1/mcp/test", json={"id": "x", "command": "c"})
+    for resp in (reload_resp, test_resp):
+        assert resp.status_code == 409
+        assert resp.json()["detail"]["code"] == "no_workspace"
+
+
+def test_test_endpoint_invalid_and_unsupported(tmp_path) -> None:
+    with TestClient(create_app(workspace_root=tmp_path)) as client:
         invalid = client.post("/v1/mcp/test", json={"id": "x"})  # no command → invalid
         unsupported = client.post("/v1/mcp/test", json={"id": "y", "url": "http://x", "type": "sse"})
     assert invalid.status_code == 200

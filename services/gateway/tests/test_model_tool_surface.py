@@ -45,7 +45,7 @@ def _request(provider: str, **extra: object) -> AgentRunRequest:
 def test_openai_tools_payload_and_tool_call_parsing(monkeypatch) -> None:
     captured: dict = {}
 
-    def fake_post_json(url, headers, payload, timeout):
+    def fake_post_json(url, headers, payload, timeout, **_kwargs):
         captured["url"] = url
         captured["payload"] = payload
         return {
@@ -105,7 +105,7 @@ def test_openai_stop_finish_reason(monkeypatch) -> None:
 def test_anthropic_tools_payload_and_tool_use_parsing(monkeypatch) -> None:
     captured: dict = {}
 
-    def fake_post_json(url, headers, payload, timeout):
+    def fake_post_json(url, headers, payload, timeout, **_kwargs):
         captured["url"] = url
         captured["payload"] = payload
         return {
@@ -153,7 +153,7 @@ def test_anthropic_end_turn_maps_to_stop(monkeypatch) -> None:
 def test_prompted_fallback_on_capability_error(monkeypatch) -> None:
     calls = {"n": 0}
 
-    def fake_post_json(url, headers, payload, timeout):
+    def fake_post_json(url, headers, payload, timeout, **_kwargs):
         calls["n"] += 1
         if calls["n"] == 1:
             # The native tool attempt fails with a capability error.
@@ -185,7 +185,7 @@ def test_prompted_fallback_on_capability_error(monkeypatch) -> None:
 def test_prompted_fallback_for_non_native_provider(monkeypatch) -> None:
     calls = {"n": 0}
 
-    def fake_post_json(url, headers, payload, timeout):
+    def fake_post_json(url, headers, payload, timeout, **_kwargs):
         calls["n"] += 1
         return {"choices": [{"message": {"content": "All done, no tools needed."}}]}
 

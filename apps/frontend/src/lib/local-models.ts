@@ -62,6 +62,26 @@ export interface LocalModel {
   repeat_penalty?: number;
   /** Default completion cap sent as `max_tokens`. */
   max_tokens?: number;
+  /**
+   * The per-model Readiness_Deadline override, in seconds (R3.4, R3.10). Absent
+   * means the 120-second default applies (R3.11). This is the exact key the
+   * deadline-expiry error names; 300 suits a 70B Q4 cold load
+   * (`RECOMMENDED_LARGE_MODEL_DEADLINE_SECS` in `llama_server.rs`).
+   */
+  readiness_deadline_secs?: number;
+}
+
+/** The Readiness_Deadline applied when a `LocalModel` carries no override (R3.11). */
+export const DEFAULT_READINESS_DEADLINE_SECS = 120;
+/** The value the deadline-expiry error recommends for large quantised models. */
+export const RECOMMENDED_LARGE_MODEL_DEADLINE_SECS = 300;
+
+/** The effective Readiness_Deadline for a model, in seconds. */
+export function readinessDeadlineSecs(model: Pick<LocalModel, "readiness_deadline_secs">): number {
+  const override = model.readiness_deadline_secs;
+  return typeof override === "number" && override > 0
+    ? override
+    : DEFAULT_READINESS_DEADLINE_SECS;
 }
 
 /** llama.cpp's "offload all layers" sentinel, applied when a LocalModel

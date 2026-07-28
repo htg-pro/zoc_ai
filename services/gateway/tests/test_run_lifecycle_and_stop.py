@@ -16,6 +16,7 @@ from fastapi.testclient import TestClient
 from zocai_gateway.app import _Run, create_app
 from zocai_gateway.errors import ErrorCode
 from zocai_gateway.mode_router import AgentRunRequest, ModeRouter
+from zocai_gateway.run_pipeline import DefaultAgentBrain
 from zocai_gateway.run_state import (
     IllegalRunTransition,
     RunLifecycle,
@@ -131,6 +132,9 @@ def test_error_closed_stage_marker_produces_a_terminal_error_frame() -> None:
     # ...and is followed by exactly one terminal error frame.
     terminals = [f for f in frames if f.get("type") == "error"]
     assert len(terminals) == 1
+    marker = next(f for f in frames if f.get("command") == "<stage:error_closed>")
+    assert terminals[0]["seq"] > marker["seq"]
+    assert len({f["seq"] for f in frames}) == len(frames)
     assert terminals[0]["code"] == ErrorCode.RUN_FAILED
     # The user-facing message never contains the raw stage marker.
     assert "<stage:" not in str(terminals[0]["message"])
@@ -175,6 +179,22 @@ def test_cancel_after_completion_does_not_emit_another_frame() -> None:
     assert run.state is RunState.COMPLETED
 
 
+def test_later_typed_failure_upgrades_generic_terminal_classification() -> None:
+    run = _run(mode="agent")
+    run.record_failure("planner failed")
+    run.record_failure(
+        "The request is too large for this model's context window.",
+        code=ErrorCode.CONTEXT_WINDOW_EXCEEDED,
+    )
+    run.close()
+
+    terminal = _terminal_frames(run)[0]
+    assert terminal["type"] == "error"
+    assert terminal["code"] == ErrorCode.CONTEXT_WINDOW_EXCEEDED
+    assert "context window" in str(terminal["message"]).lower()
+    assert run.state is RunState.FAILED
+
+
 def test_recorded_failure_survives_into_the_terminal_frame() -> None:
     """An unexpected process exit becomes a failed run, not a stuck one."""
     run = _run(mode="agent")
@@ -207,7 +227,7 @@ def test_cancel_endpoint_reports_unknown_run_without_failing() -> None:
 
 
 def test_cancel_endpoint_is_idempotent_over_http() -> None:
-    client = TestClient(create_app(drive=False))
+    client = TestClient(create_app(drive=False, brain=DefaultAgentBrain()))
     run_id = client.post("/v1/agent/run", json={"prompt": "hi", "mode": "ask"}).json()["runId"]
 
     first = client.post(f"/v1/agent/runs/{run_id}/cancel").json()
@@ -236,7 +256,7 @@ def test_decision_for_unknown_run_returns_a_structured_error() -> None:
 
 
 def test_runtime_endpoint_publishes_run_states() -> None:
-    client = TestClient(create_app(drive=False))
+    client = TestClient(create_app(drive=False, brain=DefaultAgentBrain()))
     run_id = client.post("/v1/agent/run", json={"prompt": "hi", "mode": "ask"}).json()["runId"]
     body = client.get("/v1/agent/runtime").json()
     assert body["run_states"][run_id] in {state.value for state in RunState}

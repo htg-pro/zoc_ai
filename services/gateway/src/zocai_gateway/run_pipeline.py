@@ -40,7 +40,6 @@ import itertools
 import json
 import logging
 import os
-import re
 import shutil
 import tempfile
 import time
@@ -98,6 +97,7 @@ from zocai_gateway.atomic_fs import (
     AtomicFileTransaction,
     CheckpointError,
     git_checkpoint,
+    sha256_file,
 )
 from zocai_gateway.channel import ModeChannel, TextSink, channel_for
 from zocai_gateway.context.mcp_gateway import MCPGateway
@@ -128,6 +128,7 @@ from zocai_gateway.context.steering_compiler import (
     select_map_files,
 )
 from zocai_gateway.context.token_gate import (
+    CHARS_PER_TOKEN,
     TokenGateResult,
     estimate_tokens,
     fit_fragments,
@@ -136,6 +137,7 @@ from zocai_gateway.context.token_gate import (
 from zocai_gateway.context_mentions import expand_prompt_file_mentions
 from zocai_gateway.edits import EditCoordinator, EditPlan, PlannedChange
 from zocai_gateway.emit_gate import EmitGate
+from zocai_gateway.errors import ErrorCode
 from zocai_gateway.file_locks import (
     DEFAULT_LOCK_TIMEOUT_SECONDS,
     FileLockRegistry,
@@ -177,14 +179,19 @@ from zocai_gateway.mode_router import (
     AskError,
     AskPath,
     AskResponse,
+    Capability,
+    Decision,
     Mode,
     ModeRouter,
     SwitchToAgentMessage,
+    check_capability,
 )
 from zocai_gateway.model_allocator import Allocation, AllocationAborted, ModelAllocator
 from zocai_gateway.model_interface import Cloud, Edge, LocalSLM, ModelInterface, ModelTier
 from zocai_gateway.model_runtime import (
+    ModelContextWindowError,
     ModelRuntimeError,
+    ProviderAuthError,
     generate_text,
     generate_text_stream,
     generate_with_tools,
@@ -198,8 +205,10 @@ from zocai_gateway.project_tests import (
     run_project_tests,
 )
 from zocai_gateway.react import McpDispatch, PermissionGate, ReActExecutor, ToolModelFn
+from zocai_gateway.reasoning import split_reasoning
 from zocai_gateway.remediation import RemediationLoop
 from zocai_gateway.security import log_security_event
+from zocai_gateway.stage_view import StageState
 from zocai_gateway.stages import Stage
 from zocai_gateway.toolsets import FullToolset
 from zocai_gateway.verification import parse_verify_result
@@ -383,6 +392,25 @@ class DefaultAgentBrain:
         return prompt
 
 
+class ModelUnavailableError(RuntimeError):
+    """A model transport/provider failure that closes the run, naming the provider (R6.6).
+
+    This is the *real* failure that the old fail-closed thinking path conflated
+    with a merely-missing ``<think>`` block: the model endpoint could not be
+    reached or returned a provider-level error. It carries the provider id so the
+    run driver's ``fsm.fail(reason)`` → ``ERROR_CLOSED`` names it, and the error
+    frame the frontend renders points at the right provider. Missing reasoning
+    markup is *not* this — it degrades silently (see :func:`split_reasoning`).
+    """
+
+    def __init__(self, *, provider: str | None, cause: Exception | None = None) -> None:
+        self.provider = provider
+        self.cause = cause
+        name = provider or "unknown"
+        detail = f": {cause}" if cause is not None else ""
+        super().__init__(f"model provider {name!r} is unavailable{detail}")
+
+
 class RuntimeAgentBrain(DefaultAgentBrain):
     """Model-backed Agent brain used by the desktop runtime.
 
@@ -396,6 +424,11 @@ class RuntimeAgentBrain(DefaultAgentBrain):
         self._request: AgentRunRequest | None = None
         self._context: RunContext | None = None
         self._structured_plan: AgentPlan | None = None
+        #: The response body from the ANALYZE step when the model emitted no
+        #: reasoning block — treated as the analysis result (R6.2) and folded
+        #: into the planning prompt so a non-reasoning model's answer still
+        #: informs the plan.
+        self._last_analysis: str = ""
 
     def update_context(self, context: RunContext) -> None:
         self._context = context
@@ -405,34 +438,48 @@ class RuntimeAgentBrain(DefaultAgentBrain):
         try:
             text = generate_text(
                 thinking_request,
-                system_prompt=_thinking_system_prompt(context),
+                system_prompt=_thinking_system_prompt(
+                    context, user_prompt=thinking_request.prompt
+                ),
                 timeout=60.0,
             )
+        except ModelContextWindowError:
+            raise
         except ModelRuntimeError as exc:
-            raise RuntimeError(f"model thinking failed: {exc}") from exc
-        if not text:
-            # No provider configured (empty response): produce no scratchpad
-            # and proceed to ANALYZE like the DefaultAgentBrain path (R1.7/1.8).
-            return ""
-        if not _has_think_block(text):
-            # R2.4: a non-empty response that carries no complete
-            # <think>...</think> block (including an opening <think> with no
-            # matching close) fails closed.
-            raise RuntimeError(
-                "model thinking response did not contain a complete <think>...</think> block"
+            # R6.6: a transport/provider failure is a real failure and closes
+            # the run, naming the provider. Missing reasoning markup is not — it
+            # degrades silently below.
+            raise ModelUnavailableError(provider=request.provider, cause=exc) from exc
+        split = split_reasoning(text or "")
+        # R6.2: with no complete <think> block the whole response is the analysis
+        # result; keep it so the planning prompt still benefits from a
+        # non-reasoning model's answer. A missing block is logged at debug, not
+        # warning — it is the normal case for most GGUF models.
+        self._last_analysis = split.body
+        if not split.had_block and split.body:
+            logger.debug(
+                "thinking response carried no <think> block; treating the body "
+                "as the analysis result"
             )
-        # A complete-but-empty/whitespace block is a valid extraction that
-        # yields no scratchpad: proceed to ANALYZE with no ThinkingEvent, just
-        # like the no-provider path (the R1.3 vs R2.4 boundary).
-        return _extract_thinking(text)
+        # R6.2/R6.3: "" reasoning is a valid answer — the caller advances the
+        # Stage_Machine and emits no ThinkingEvent for it (R6.5).
+        return split.reasoning
 
     def structured_plan(self, request: AgentRunRequest, context: RunContext) -> AgentPlan:
         self._request = request
         self._context = context
+        # R6.2: when the ANALYZE step produced no reasoning block, the response
+        # body was kept as the analysis result. Fold it into the planning
+        # context (only when there is no reasoning scratchpad already) so a
+        # non-reasoning model's answer still informs the plan.
+        if not context.scratchpad and self._last_analysis:
+            context = replace(context, scratchpad=self._last_analysis)
         response_format = _agent_plan_response_format()
         supports_response_format = (request.provider or "").lower() != "anthropic"
         system_prompt = _structured_plan_system_prompt(
-            context, include_schema=not supports_response_format
+            context,
+            include_schema=not supports_response_format,
+            user_prompt=request.prompt,
         )
         try:
             text = generate_text(
@@ -441,13 +488,19 @@ class RuntimeAgentBrain(DefaultAgentBrain):
                 response_format=response_format if supports_response_format else None,
                 timeout=120.0,
             )
+        except ModelContextWindowError:
+            raise
         except ModelRuntimeError:
             if not supports_response_format:
                 raise
             supports_response_format = False
             text = generate_text(
                 request,
-                system_prompt=_structured_plan_system_prompt(context, include_schema=True),
+                system_prompt=_structured_plan_system_prompt(
+                    context,
+                    include_schema=True,
+                    user_prompt=request.prompt,
+                ),
                 timeout=120.0,
             )
         if not text:
@@ -468,7 +521,9 @@ class RuntimeAgentBrain(DefaultAgentBrain):
             retry = generate_text(
                 retry_request,
                 system_prompt=_structured_plan_system_prompt(
-                    context, include_schema=not supports_response_format
+                    context,
+                    include_schema=not supports_response_format,
+                    user_prompt=retry_request.prompt,
                 ),
                 response_format=response_format if supports_response_format else None,
                 timeout=120.0,
@@ -490,9 +545,15 @@ class RuntimeAgentBrain(DefaultAgentBrain):
         try:
             text = generate_text(
                 request,
-                system_prompt=_agent_system_prompt(context, self._structured_plan),
+                system_prompt=_agent_system_prompt(
+                    context,
+                    self._structured_plan,
+                    user_prompt=request.prompt,
+                ),
                 timeout=120.0,
             )
+        except ModelContextWindowError:
+            raise
         except ModelRuntimeError as exc:
             raise RuntimeError(f"model planner failed: {exc}") from exc
         if not text:
@@ -522,11 +583,18 @@ class RuntimeAgentBrain(DefaultAgentBrain):
             f"Test output:\n{output}"
         )
         try:
+            remediation_request = request.model_copy(update={"prompt": retry_prompt})
             text = generate_text(
-                request.model_copy(update={"prompt": retry_prompt}),
-                system_prompt=_agent_system_prompt(context, self._structured_plan),
+                remediation_request,
+                system_prompt=_agent_system_prompt(
+                    context,
+                    self._structured_plan,
+                    user_prompt=retry_prompt,
+                ),
                 timeout=120.0,
             )
+        except ModelContextWindowError:
+            raise
         except ModelRuntimeError as exc:
             raise RuntimeError(f"model remediation failed: {exc}") from exc
         if not text:
@@ -546,36 +614,92 @@ THINKING_SYSTEM_PROMPT = (
     "minimum set of changes? are there edge cases?"
 )
 
-_THINK_BLOCK_RE = re.compile(r"<think>(.*?)</think>", re.IGNORECASE | re.DOTALL)
+# The allocator's window covers the complete chat template, not only retrieved
+# RAG fragments. Reserve 40% for provider chat-template overhead and generation;
+# the remaining 60% is shared by the user prompt and system context. The
+# tokenizer-free estimate intentionally stays conservative for source code.
+_MODEL_INPUT_BUDGET_RATIO = 0.60
+_PROJECT_INSTRUCTIONS_TOKEN_CAP = 512
+_PROMPT_TRUNCATION_MARKER = "[Context trimmed to fit the model window.]"
 
 
-def _extract_thinking(text: str) -> str:
-    """Extract only the private scratchpad block from a thinking response.
+def _truncate_prompt_section(text: str, token_budget: int) -> str:
+    """Keep the start of one optional prompt section within ``token_budget``."""
+    if not text.strip() or token_budget <= 0:
+        return ""
+    if estimate_tokens(text) <= token_budget:
+        return text
+    clean = text.strip()
+    marker_cost = estimate_tokens(_PROMPT_TRUNCATION_MARKER) + 1
+    if token_budget <= marker_cost:
+        return ""
+    max_chars = max(0, (token_budget - marker_cost) * CHARS_PER_TOKEN)
+    return f"{clean[:max_chars].rstrip()}\n{_PROMPT_TRUNCATION_MARKER}"
 
-    Returns the stripped content between the first ``<think>`` and the first
-    ``</think>`` that follows it (R1.3, R2.3). Returns ``""`` when no complete
-    block is present *or* when the block is present but empty/whitespace; use
-    :func:`_has_think_block` to distinguish those two cases (the R1.3 vs R2.4
-    boundary).
+
+def _bounded_system_prompt(
+    context: RunContext,
+    *,
+    core_sections: Sequence[str],
+    optional_sections: Sequence[str] = (),
+    user_prompt: str = "",
+) -> str:
+    """Build a complete model system prompt within the allocator input budget.
+
+    Core output/protocol instructions are never displaced by workspace data.
+    Project instructions remain before the built-in prompt, but are capped;
+    optional sections are admitted in priority order and the first oversized
+    section is truncated. Conversation history is intentionally not a section:
+    the user prompt, scratchpad, selected files, and structured plan already
+    carry the same information and previously appeared twice in every planner
+    request.
     """
-    match = _THINK_BLOCK_RE.search(text)
-    return match.group(1).strip() if match is not None else ""
+    total_budget = max(512, int(context.allocation.context_window * _MODEL_INPUT_BUDGET_RATIO))
+    core = "\n\n".join(section.strip() for section in core_sections if section.strip())
+    user_cost = estimate_tokens(user_prompt)
+    core_cost = estimate_tokens(core)
+    required_cost = user_cost + core_cost + 1
+    if required_cost > total_budget:
+        raise ModelContextWindowError(required_cost, total_budget)
+    system_budget = max(1, total_budget - user_cost)
+
+    # Preserve the historical project-instructions-before-built-ins contract,
+    # while preventing a large instructions file from consuming the protocol.
+    project_budget = max(
+        0,
+        min(_PROJECT_INSTRUCTIONS_TOKEN_CAP, system_budget - core_cost - 1),
+    )
+    project = _truncate_prompt_section(context.project_instructions, project_budget)
+    prompt = prepend_project_instructions(core, project)
+    if estimate_tokens(prompt) > system_budget:
+        # Estimator rounding around the separator can overshoot by a token.
+        # Drop project text rather than truncating the non-negotiable protocol.
+        prompt = core
+
+    parts = [prompt]
+    used = estimate_tokens(prompt)
+    for section in optional_sections:
+        if not section.strip():
+            continue
+        remaining = system_budget - used - 1
+        if remaining <= 0:
+            break
+        fitted = _truncate_prompt_section(section, remaining)
+        if not fitted:
+            break
+        parts.append(fitted)
+        used += estimate_tokens(fitted) + 1
+        if fitted.endswith(_PROMPT_TRUNCATION_MARKER):
+            break
+    return "\n\n".join(parts)
 
 
-def _has_think_block(text: str) -> bool:
-    """Whether a *complete* ``<think>...</think>`` block is present (R2.4).
-
-    A complete block requires both the opening ``<think>`` and a following
-    ``</think>``; a response with an opening tag but no matching close has no
-    complete block and so returns ``False``. This is the signal that separates
-    "no complete block" (fail closed, R2.4) from "a complete but empty block"
-    (a valid extraction yielding no scratchpad, R1.3).
-    """
-    return _THINK_BLOCK_RE.search(text) is not None
-
-
-def _thinking_system_prompt(context: RunContext) -> str:
-    return prepend_project_instructions(THINKING_SYSTEM_PROMPT, context.project_instructions)
+def _thinking_system_prompt(context: RunContext, *, user_prompt: str = "") -> str:
+    return _bounded_system_prompt(
+        context,
+        core_sections=(THINKING_SYSTEM_PROMPT,),
+        user_prompt=user_prompt,
+    )
 
 
 def _agent_plan_response_format() -> dict[str, object]:
@@ -589,24 +713,33 @@ def _agent_plan_response_format() -> dict[str, object]:
     }
 
 
-def _structured_plan_system_prompt(context: RunContext, *, include_schema: bool) -> str:
-    parts = [
+def _structured_plan_system_prompt(
+    context: RunContext,
+    *,
+    include_schema: bool,
+    user_prompt: str = "",
+) -> str:
+    core = [
         "Create a concise, ordered edit plan for the coding task. Return only "
         "JSON matching the AgentPlan schema. Paths must be workspace-relative, "
         "rationales must be one sentence, and search strings must be exact.",
     ]
-    if context.scratchpad:
-        parts.append(f"Private planning scratchpad:\n{context.scratchpad}")
-    if context.read_files_payload:
-        parts.append(f"Selected workspace files:\n{context.read_files_payload}")
-    if context.conversation_history:
-        parts.append(f"Conversation history:\n{context.conversation_history}")
     if include_schema:
-        parts.append(
+        core.append(
             "AgentPlan schema (JSON, also valid YAML):\n"
             + json.dumps(AgentPlan.model_json_schema(), indent=2, sort_keys=True)
         )
-    return prepend_project_instructions("\n\n".join(parts), context.project_instructions)
+    optional: list[str] = []
+    if context.read_files_payload:
+        optional.append(f"Selected workspace files:\n{context.read_files_payload}")
+    if context.scratchpad:
+        optional.append(f"Private planning scratchpad:\n{context.scratchpad}")
+    return _bounded_system_prompt(
+        context,
+        core_sections=core,
+        optional_sections=optional,
+        user_prompt=user_prompt,
+    )
 
 
 def _agent_plan_from_model_text(text: str) -> AgentPlan:
@@ -634,35 +767,44 @@ def _ask_system_prompt(context: AskContext) -> str:
     return prepend_project_instructions("\n\n".join(parts), context.project_instructions)
 
 
-def _agent_system_prompt(context: RunContext, structured_plan: AgentPlan | None = None) -> str:
-    parts = [
+def _agent_system_prompt(
+    context: RunContext,
+    structured_plan: AgentPlan | None = None,
+    *,
+    user_prompt: str = "",
+) -> str:
+    core = [
         "You are Zoc Agent, a coding agent planner. Return only JSON with this "
         'shape: {"reasoning":"short explanation","changes":[{"path":"relative/path","content":"full replacement file content","diff":"short summary"}]}.',
         "Only include a change when you know the exact full replacement file "
         "content. If the request is only chat or you are unsure, return an "
         "empty changes array with useful reasoning.",
     ]
-    if context.scratchpad:
-        parts.append(f"Private planning scratchpad:\n{context.scratchpad}")
-    if context.read_files_payload:
-        parts.append(f"Selected workspace files:\n{context.read_files_payload}")
-    if context.conversation_history:
-        parts.append(f"Conversation history:\n{context.conversation_history}")
+    optional: list[str] = []
     if structured_plan is not None:
-        parts.append(
+        optional.append(
             "Approved structured plan:\n" + structured_plan.model_dump_json(exclude_none=True)
         )
+    if context.read_files_payload:
+        optional.append(f"Selected workspace files:\n{context.read_files_payload}")
+    if context.scratchpad:
+        optional.append(f"Private planning scratchpad:\n{context.scratchpad}")
     steering = context.steering.text.strip()
     if steering:
-        parts.append(f"Project steering:\n{steering}")
+        optional.append(f"Project steering:\n{steering}")
     if context.fragments:
-        fragments = []
-        for fragment in context.fragments[:8]:
-            fragments.append(f"{fragment.path}:\n{fragment.content}")
-        parts.append("Relevant code context:\n\n" + "\n\n".join(fragments))
+        fragments = [
+            f"{fragment.path}:\n{fragment.content}" for fragment in context.fragments[:8]
+        ]
+        optional.append("Relevant code context:\n\n" + "\n\n".join(fragments))
     if context.mcp_tools:
-        parts.append("Available MCP tools: " + ", ".join(context.mcp_tools))
-    return prepend_project_instructions("\n\n".join(parts), context.project_instructions)
+        optional.append("Available MCP tools: " + ", ".join(context.mcp_tools))
+    return _bounded_system_prompt(
+        context,
+        core_sections=core,
+        optional_sections=optional,
+        user_prompt=user_prompt,
+    )
 
 
 def _edit_plan_from_model_text(text: str) -> EditPlan:
@@ -991,6 +1133,7 @@ class ReActApplyExecutor:
     mcp_call: McpDispatch | None = None
     check_permission: PermissionGate | None = None
     wait_for_approval: ReviewDecisionWaiter | None = None
+    capability_gate: Callable[[Capability], Decision] | None = None
 
     def apply(self) -> ApplyResult:
         outcome = ReActExecutor(
@@ -1007,6 +1150,7 @@ class ReActApplyExecutor:
             mcp_call=self.mcp_call,
             check_permission=self.check_permission,
             wait_for_permission=self.wait_for_approval,
+            capability_gate=self.capability_gate,
         ).run()
         return ApplyResult(
             applied=outcome.applied_diffs,
@@ -1034,7 +1178,7 @@ class RunPipeline:
         gate: EmitGate,
         text_sink: TextSink,
         close: Callable[[], None],
-        workspace_root: Path | str = ".",
+        workspace_root: Path | str | None = ".",
         state_store: StateWrapperStore | None = None,
         evolution: EvolutionEngine | None = None,
         diary_sink: DiarySink | None = None,
@@ -1061,21 +1205,32 @@ class RunPipeline:
         file_locks: FileLockRegistry | None = None,
         project_memory: ProjectMemoryStore | None = None,
         hermes: HermesEvolution | None = None,
+        failure_sink: Callable[[str, str], None] | None = None,
     ) -> None:
         self.run_id = run_id
-        self.source_workspace_root = Path(workspace_root).resolve()
+        # R1.7: a root-less Ask run carries no workspace. Everything
+        # workspace-dependent below is guarded so Ask answers with empty context
+        # and creates nothing; Plan/Agent always resolve a real root upstream.
+        self.source_workspace_root: Path | None = (
+            Path(workspace_root).resolve() if workspace_root is not None else None
+        )
         self.original_request = request
         self.request = request.model_copy(
             update={
-                "prompt": expand_prompt_file_mentions(
-                    request.prompt,
-                    self.source_workspace_root,
-                    request.context_files,
+                "prompt": (
+                    expand_prompt_file_mentions(
+                        request.prompt,
+                        self.source_workspace_root,
+                        request.context_files,
+                    )
+                    if self.source_workspace_root is not None
+                    else request.prompt
                 )
             }
         )
         self._close = close
         self._text_sink = text_sink
+        self._failure_sink = failure_sink
         self._ask_streamed = False
         self._wait_for_review_decision = wait_for_review_decision
         self._wait_for_approval_decision = wait_for_approval_decision
@@ -1125,19 +1280,31 @@ class RunPipeline:
         self.path = ModeRouter().route(self.request)
         self._isolated_workspace_root: Path | None = None
         self._checkpoint_id: str | None = None
-        if self.path.mode is Mode.AGENT and self.request.review_changes:
+        if (
+            self.path.mode is Mode.AGENT
+            and self.request.review_changes
+            and self.source_workspace_root is not None
+        ):
             self._isolated_workspace_root = self._create_isolated_workspace(
                 self.source_workspace_root
             )
-            self.workspace_root = self._isolated_workspace_root
+            self.workspace_root: Path | None = self._isolated_workspace_root
             self._checkpoint_id = f"isolated-{run_id}"
         else:
             self.workspace_root = self.source_workspace_root
 
-        matrix = MemoryMatrix(self.source_workspace_root)
-        self.state_store = (
-            state_store if state_store is not None else StateWrapperStore(matrix.state_wrapper_path)
-        )
+        # A root-less Ask run has no matrix; state persistence is skipped and
+        # the read-only adapters below are never constructed (Ask uses none).
+        self.state_store: StateWrapperStore | None
+        if self.source_workspace_root is not None:
+            matrix = MemoryMatrix(self.source_workspace_root)
+            self.state_store = (
+                state_store
+                if state_store is not None
+                else StateWrapperStore(matrix.state_wrapper_path)
+            )
+        else:
+            self.state_store = state_store
 
         mcp_seam = (
             _RunMcpSeam(
@@ -1149,15 +1316,25 @@ class RunPipeline:
             if self._mcp_host is not None
             else None
         )
-        self.toolset = FullToolset(
-            self.workspace_root,
-            mcp=mcp_seam,
-            network_allowlist=self._network_allowlist,
-            run_id=self.run_id,
-        )
-        self._mcp_dispatch = self._make_mcp_dispatch()
-        self.fs_read = FSReadAdapter(self.workspace_root)
-        self.shell_spawner = ShellSpawner(self.path.mode, self.workspace_root)
+        # Write/shell/read adapters only exist for a rooted run. A root-less Ask
+        # run never touches them (it is read-only Q&A over empty context).
+        if self.workspace_root is not None:
+            self.toolset = FullToolset(
+                self.workspace_root,
+                mcp=mcp_seam,
+                network_allowlist=self._network_allowlist,
+                run_id=self.run_id,
+            )
+            self._mcp_dispatch = self._make_mcp_dispatch()
+            self.fs_read = FSReadAdapter(self.workspace_root)
+            self.shell_spawner = ShellSpawner(self.path.mode, self.workspace_root)
+        else:
+            # Root-less Ask never touches these; kept typed non-Optional because
+            # every *use* is on the Agent/Plan path, which always has a root.
+            self.toolset = None  # type: ignore[assignment]
+            self._mcp_dispatch = None
+            self.fs_read = None  # type: ignore[assignment]
+            self.shell_spawner = None  # type: ignore[assignment]
         self._channel: ModeChannel = channel_for(self.path, gate=gate, text_sink=text_sink)
         self._next_seq: Callable[[], int] = itertools.count().__next__
 
@@ -1381,6 +1558,7 @@ class RunPipeline:
                 seq=0,
                 run_id=self.run_id,
                 ts=_now(),
+                operation="apply_plan",
                 prompt=(
                     f"Ready to apply {len(steps)} change"
                     f"{'' if len(steps) == 1 else 's'} to {len(files)} file"
@@ -1474,6 +1652,23 @@ class RunPipeline:
         lines.append(f"Outcome: {'success' if succeeded else 'fail'}. {detail}")
         return "\n".join(lines)
 
+    def _report_provider_auth(self, exc: ProviderAuthError) -> str:
+        """Record a provider-auth failure with its typed code; return a safe reason.
+
+        The returned reason names the provider and HTTP status only — never the
+        response body or the API key (``ProviderAuthError`` redacts both) — and
+        the failure sink stamps the typed ``provider_auth_invalid`` code so the
+        streamed terminal error frame carries it instead of a generic
+        ``run_failed`` (R6).
+        """
+        reason = str(exc)
+        logger.warning(
+            "run %s: provider auth rejected (HTTP %s)", self.run_id, exc.status_code
+        )
+        if self._failure_sink is not None:
+            self._failure_sink(reason, exc.code)
+        return reason
+
     def _remember_failure(
         self,
         reason: str,
@@ -1481,8 +1676,11 @@ class RunPipeline:
         applied: Sequence[Diff] = (),
         checks: Sequence[tuple[str, int]] = (),
         tokens_used: int = 0,
+        code: str = ErrorCode.RUN_FAILED,
     ) -> None:
         """Teach Hermes about every ERROR_CLOSED outcome (§14.2)."""
+        if self._failure_sink is not None:
+            self._failure_sink(reason, code)
         transcript = self._learning_transcript(
             reason,
             succeeded=False,
@@ -1649,6 +1847,11 @@ class RunPipeline:
         )
 
     def _emit_review(self, applied: list[Diff], checks: list[tuple[str, int]]) -> None:
+        # R12.7: stamp each reviewed file with the SHA-256 of the *real* target's
+        # current bytes (the file in the user's workspace, not the isolated
+        # copy), so the renderer can detect a target that changed since the
+        # proposal. ``None`` when the target does not exist yet (a create).
+        root = self.source_workspace_root
         self._emit(
             ReviewEvent(
                 seq=0,
@@ -1661,6 +1864,7 @@ class RunPipeline:
                         adds=_diff_stats(diff.diff)[0],
                         dels=_diff_stats(diff.diff)[1],
                         summary=_diff_summary(diff.diff),
+                        base_hash=(sha256_file(root / diff.path) if root is not None else None),
                     )
                     for diff in applied
                 ],
@@ -1753,6 +1957,7 @@ class RunPipeline:
         return detail
 
     def _run_post_write_tests(self) -> ProjectTestResult | None:
+        assert self.workspace_root is not None  # Agent/Plan path always has a root.
         detected = detect_project_test_command(self.workspace_root)
         if detected is None:
             return None
@@ -1793,6 +1998,9 @@ class RunPipeline:
         isolated = self._isolated_workspace_root
         if isolated is None:
             return None
+        # An isolated workspace is only created for an Agent review run, which
+        # always has a real source root.
+        assert self.source_workspace_root is not None
         root = self.source_workspace_root.resolve()
         transaction = AtomicFileTransaction()
         seen: set[str] = set()
@@ -1847,27 +2055,34 @@ class RunPipeline:
             return str(exc)
         return None
 
-    def _review_and_maybe_apply(self, applied: list[Diff]) -> str:
+    def _review_and_maybe_apply(self, applied: list[Diff]) -> tuple[str, int]:
+        """Apply the reviewed changes and report ``(human summary, files changed)``.
+
+        The count is the number of distinct files actually changed; it is zero
+        for every branch that applies nothing (no edits, review unavailable,
+        review closed, or an explicit discard) and the summary then doubles as
+        the human reason the ``done`` event carries (R8.7/R8.8).
+        """
         if not applied:
             self._emit_plan_update("review", "done")
             self._emit_plan_update("summary", "active")
-            return "No file changes were needed."
+            return "No file changes were needed.", 0
         self._emit_plan_update("review", "active")
         waiter = self._wait_for_review_decision
         if waiter is None:
             self._emit_plan_update("review", "done")
             self._emit_plan_update("summary", "active")
-            return "Review is unavailable, so no isolated changes were applied."
+            return "Review is unavailable, so no isolated changes were applied.", 0
         decision = waiter(None)
         if decision is None:
             self._emit_plan_update("review", "done")
             self._emit_plan_update("summary", "active")
-            return "Review was closed before a decision, so no changes were applied."
+            return "Review was closed before a decision, so no changes were applied.", 0
         verdict = getattr(decision, "decision", None)
         if verdict == "discard":
             self._emit_plan_update("review", "done")
             self._emit_plan_update("summary", "active")
-            return "Discarded the isolated changes. Your workspace was left unchanged."
+            return "Discarded the isolated changes. Your workspace was left unchanged.", 0
         accepted_paths = list(getattr(decision, "accepted_paths", []) or [])
         reviewed_paths = {diff.path for diff in applied}
         unknown_paths = [path for path in accepted_paths if path not in reviewed_paths]
@@ -1879,12 +2094,12 @@ class RunPipeline:
         checkpoint_error = self._copy_review_paths(accepted_paths)
         self._emit_plan_update("review", "done")
         self._emit_plan_update("summary", "active")
-        count = len(accepted_paths)
-        noun = "file" if count == 1 else "files"
-        summary = f"Applied {count} reviewed {noun} to your workspace."
+        files_changed = len(set(accepted_paths))
+        noun = "file" if files_changed == 1 else "files"
+        summary = f"Applied {files_changed} reviewed {noun} to your workspace."
         if checkpoint_error is not None:
             summary += f" Checkpoint creation failed: {checkpoint_error}"
-        return summary
+        return summary, files_changed
 
     # -- entrypoint ---------------------------------------------------------
 
@@ -1988,6 +2203,11 @@ class RunPipeline:
         first (R8.5). The available MCP tool ids are recorded for the run.
         """
         fragments = self.rag_matcher.extract(self.request.prompt)
+        # Reached only on the Agent/Plan path, which always resolves a real root
+        # upstream (a root-less run is Ask, handled by _run_ask). The asserts
+        # narrow the Optional for the type checker and document that invariant.
+        assert self.workspace_root is not None
+        assert self.source_workspace_root is not None
         steering = compile_steering(self.workspace_root / DEFAULT_STEERING_DIR)
         gated = fit_fragments(fragments, allocation.context_window)
         return RunContext(
@@ -2025,7 +2245,7 @@ class RunPipeline:
             self.request.prompt,
             self._map_candidates(),
             select=selector,
-            workspace_root=self.workspace_root,
+            workspace_root=self.workspace_root,  # type: ignore[arg-type]
         )
 
     def _read_selected_files(self, event: MapFilesEvent) -> tuple[str, tuple[str, ...]]:
@@ -2116,7 +2336,12 @@ class RunPipeline:
             context = self._build_context(allocation)
         except AllocationAborted as exc:
             reason = f"{type(exc).__name__}: {exc}"
-            fsm = FSM(initial=Stage.INTAKE, run_id=self.run_id, emit=self._emit)
+            fsm = FSM(
+                initial=Stage.INTAKE,
+                run_id=self.run_id,
+                emit=self._emit,
+                emit_stage_reports=True,
+            )
             fsm.fail(reason)
             stages.append(Stage.ERROR_CLOSED)
             self._remember_failure(reason)
@@ -2141,6 +2366,7 @@ class RunPipeline:
             run_id=self.run_id,
             emit=self._emit,
             stage_event_factory=factory,
+            emit_stage_reports=True,
         )
         memory = self._new_conversation_memory(context)
         self._maybe_compress(memory, allocation.context_window)
@@ -2148,6 +2374,36 @@ class RunPipeline:
         thinking_started = time.monotonic()
         try:
             scratchpad = self.brain.think(self.request, context)
+        except ProviderAuthError as exc:
+            # R6: a provider auth rejection is surfaced with its typed code and a
+            # provider-named, body-free message so the renderer can prompt the
+            # user to fix the key rather than showing a generic run failure.
+            reason = self._report_provider_auth(exc)
+            fsm.fail(reason)
+            stages.append(Stage.ERROR_CLOSED)
+            self._remember_failure(reason)
+            self._close()
+            return RunResult(
+                mode=Mode.AGENT,
+                run_id=self.run_id,
+                stage=Stage.ERROR_CLOSED,
+                stages=tuple(stages),
+                allocation=allocation,
+            )
+        except ModelContextWindowError as exc:
+            reason = str(exc)
+            logger.warning("run %s analysis exceeded model context: %s", self.run_id, exc)
+            fsm.fail(reason)
+            stages.append(Stage.ERROR_CLOSED)
+            self._remember_failure(reason, code=exc.code)
+            self._close()
+            return RunResult(
+                mode=Mode.AGENT,
+                run_id=self.run_id,
+                stage=Stage.ERROR_CLOSED,
+                stages=tuple(stages),
+                allocation=allocation,
+            )
         except Exception as exc:
             reason = f"thinking failed: {type(exc).__name__}: {exc}"
             logger.exception("run %s failed during private thinking", self.run_id)
@@ -2254,7 +2510,7 @@ class RunPipeline:
             emit=self._emit,
         )
         tokens_used = estimate_tokens(self.request.prompt) + estimate_tokens(
-            _agent_system_prompt(context)
+            _agent_system_prompt(context, user_prompt=self.request.prompt)
         )
         self._emit_budget(context, orchestrator, tokens_used)
 
@@ -2324,11 +2580,20 @@ class RunPipeline:
             )
             context = self._context_with_memory(context, memory)
         except Exception as exc:
-            reason = f"edit_plan failed: {type(exc).__name__}: {exc}"
+            if isinstance(exc, ModelContextWindowError):
+                reason = str(exc)
+                failure_code = exc.code
+            else:
+                reason = f"edit_plan failed: {type(exc).__name__}: {exc}"
+                failure_code = ErrorCode.RUN_FAILED
             logger.exception("run %s failed while planning edits", self.run_id)
             fsm.fail(reason)
             stages.append(Stage.ERROR_CLOSED)
-            self._remember_failure(reason, tokens_used=tokens_used)
+            self._remember_failure(
+                reason,
+                tokens_used=tokens_used,
+                code=failure_code,
+            )
             self._close()
             return RunResult(
                 mode=Mode.AGENT,
@@ -2344,10 +2609,17 @@ class RunPipeline:
         # §12.2 Plan mode: the plan is complete, so stop here. Emit the whole
         # plan for review and wait for an explicit approval before *anything*
         # touches the workspace. A rejection ends the run without applying.
+        # Agent mode never enters this gate, so its approval state stays False —
+        # the capability table permits Agent writes regardless (R16.4), while
+        # Plan writes are permitted only once this flips True (R7.6/R7.7).
+        plan_approved = False
         if self.plan_only:
+            # R7.5: entering the approval gate is the Review stage going active.
+            fsm.report_review(StageState.ACTIVE)
             gate = self._await_plan_approval(structured_plan, plan)
             self._check_cancelled()
             if not gate.approved:
+                # R7.8: a rejected plan applies no staged change and ends the run.
                 self._emit_plan(plan, structured_plan)
                 fsm.plan_complete(has_changes=False)  # PLAN_EDITS → SUMMARY-ish
                 self._close()
@@ -2358,11 +2630,37 @@ class RunPipeline:
                     stages=tuple(stages),
                     allocation=allocation,
                 )
+            # R7.7: approval resumes the run with Edit-stage capabilities enabled.
+            plan_approved = gate.approved
+            fsm.report_review(StageState.SUCCEEDED)
             # Approved: honour any per-step deselection before applying.
             if gate.accepted_paths is not None:
                 structured_plan, plan = _restrict_plan_to_paths(
                     structured_plan, plan, gate.accepted_paths
                 )
+
+        # Mode capability gate (R7.6/R7.7/R16.2-16.4): file writes are permitted
+        # in agent mode and in plan mode only after approval. The verdict is
+        # driven by the *actual* approval state (``plan_approved``), not a
+        # hardcoded ``True`` — so a future path that reaches here in Plan mode
+        # without approval is rejected rather than silently writing. This is the
+        # one chokepoint every single-pass write passes through.
+        write_decision = check_capability(
+            self.request.mode, approved=plan_approved, capability=Capability.WRITE
+        )
+        if write_decision.rejected:
+            reason = write_decision.message or "file writes are not permitted in this mode"
+            fsm.fail(reason)
+            stages.append(Stage.ERROR_CLOSED)
+            self._remember_failure(reason)
+            self._close()
+            return RunResult(
+                mode=Mode.AGENT,
+                run_id=self.run_id,
+                stage=Stage.ERROR_CLOSED,
+                stages=tuple(stages),
+                allocation=allocation,
+            )
 
         # §12.3: claim the files this run intends to write before applying, so a
         # concurrent run cannot interleave writes into the same file. Contention
@@ -2421,6 +2719,9 @@ class RunPipeline:
                         mcp_call=self._mcp_dispatch,
                         check_permission=self._check_permission,
                         wait_for_approval=self._wait_for_approval_decision,
+                        capability_gate=lambda capability: check_capability(
+                            self.request.mode, approved=plan_approved, capability=capability
+                        ),
                     )
                 else:
                     executor = SinglePassApplyExecutor(
@@ -2535,11 +2836,18 @@ class RunPipeline:
                     self._emit_review(applied, checks)
                 try:
                     self._check_cancelled()
-                    summary = (
-                        self._review_and_maybe_apply(applied)
-                        if self.request.review_changes
-                        else "Completed the requested agent run."
-                    )
+                    if self.request.review_changes:
+                        summary, files_changed = self._review_and_maybe_apply(applied)
+                    else:
+                        # Auto-apply path: the edits were written during
+                        # APPLY_EDITS, so the distinct changed files are the
+                        # distinct diff paths.
+                        files_changed = len({diff.path for diff in applied})
+                        summary = (
+                            "Completed the requested agent run."
+                            if files_changed
+                            else "No file changes were needed."
+                        )
                     self._check_cancelled()
                 except Exception as exc:
                     reason = f"review apply failed: {type(exc).__name__}: {exc}"
@@ -2562,6 +2870,10 @@ class RunPipeline:
                     )
                 self._emit_human_summary(summary)
                 self._emit_plan_update("summary", "done")
+                # R8.7/R8.8: the terminal `done` event carries the real count of
+                # distinct files changed and, when none changed, a human reason.
+                fsm.done_files_changed = files_changed
+                fsm.done_reason = summary if files_changed == 0 else None
                 stages.append(fsm.advance())  # SUMMARY → DONE (R3.4)
                 self._close()
                 self._record_evolution(stages, applied, checks, reached_done=True)
@@ -2681,7 +2993,7 @@ class RunPipeline:
             compilation_logs=[],
         )
         coordinator = HotSwapCoordinator(
-            store=self.state_store,
+            store=self.state_store,  # type: ignore[arg-type]
             allocator=self.allocator,
             loader=self.model_loader,
             run_id=self.run_id,
@@ -2719,7 +3031,7 @@ def execute_run(
     gate: EmitGate,
     text_sink: TextSink,
     close: Callable[[], None],
-    workspace_root: Path | str = ".",
+    workspace_root: Path | str | None = ".",
     state_store: StateWrapperStore | None = None,
     evolution: EvolutionEngine | None = None,
     diary_sink: DiarySink | None = None,
@@ -2742,6 +3054,7 @@ def execute_run(
     file_locks: FileLockRegistry | None = None,
     project_memory: ProjectMemoryStore | None = None,
     hermes: HermesEvolution | None = None,
+    failure_sink: Callable[[str, str], None] | None = None,
 ) -> RunResult:
     """Build a :class:`RunPipeline` for ``request`` and drive it to completion.
 
@@ -2788,6 +3101,7 @@ def execute_run(
             file_locks=file_locks,
             project_memory=project_memory,
             hermes=hermes,
+            failure_sink=failure_sink,
         )
         try:
             return pipeline.run()

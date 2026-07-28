@@ -5,6 +5,11 @@
  * hardware-derived copy here — pure, no React — means the navigation contract is
  * testable and the component stays presentational.
  */
+import {
+  type LocalModel,
+  deriveNameFromPath,
+  makeModelId,
+} from "@/lib/local-models";
 
 export const WIZARD_STEPS = [
   "welcome",
@@ -85,12 +90,13 @@ export function previousStep(step: WizardStep): WizardStep {
 /**
  * Whether the user may advance from `step`.
  *
- * Only the model step can actually block: every other step either has nothing to
- * fill in or offers a documented skip (the workspace step falls back to the home
- * directory). Blocking on a half-configured model is deliberate — continuing
- * without one produces a wizard that "finished" into an unusable app.
+ * The model step blocks until a model is configured, and — once a workspace has
+ * been committed and the sidecar is coming back up — every step blocks until the
+ * sidecar reports ready (R2.4). An `idle`/`ready` sidecar never blocks.
  */
-export function canAdvance(state: WizardState): boolean {
+export function canAdvance(state: WizardState, sidecar: SidecarWait = { kind: "idle" }): boolean {
+  // Readiness clause (R2.4): a restarting/failed sidecar gates the next continue.
+  if (sidecar.kind === "waiting" || sidecar.kind === "failed") return false;
   switch (state.step) {
     case "model":
       if (state.modelChoice === "local") return state.modelPath.trim().length > 0;
@@ -99,6 +105,134 @@ export function canAdvance(state: WizardState): boolean {
     default:
       return true;
   }
+}
+
+/* ── Commit reducers (R2.1–R2.3, R3.1, R4.1) ──────────────────────────────
+ *
+ * Leaving a step produces an ordered list of effects the component runs in
+ * sequence. `advance` is always last: the step never changes before its commit
+ * has been issued.
+ */
+
+export type CommitEffect =
+  | { kind: "persist-workspace"; root: string }
+  | { kind: "mirror-workspace"; root: string }
+  | { kind: "reload-explorer"; root: string }
+  | { kind: "register-local-model"; model: LocalModel }
+  | { kind: "store-provider-key"; provider: string }
+  | { kind: "fetch-runtime" }
+  | { kind: "advance"; to: WizardStep };
+
+/** Canonicalize a workspace path: trim whitespace and trailing separators. */
+export function canonicalizeWorkspace(path: string): string {
+  const trimmed = path.trim();
+  return trimmed.replace(/[/\\]+$/, "") || trimmed;
+}
+
+/**
+ * Effects for leaving the workspace step, in required order (R2.1–R2.3). When a
+ * path is chosen: persist → mirror (identical canonical path) → reload explorer
+ * → advance. Skipping (empty path) advances with no workspace bound.
+ */
+export function commitWorkspaceStep(state: WizardState): CommitEffect[] {
+  const root = canonicalizeWorkspace(state.workspace);
+  const advance: CommitEffect = { kind: "advance", to: nextStep(state.step) };
+  if (root.length === 0) return [advance];
+  return [
+    { kind: "persist-workspace", root },
+    { kind: "mirror-workspace", root },
+    { kind: "reload-explorer", root },
+    advance,
+  ];
+}
+
+/**
+ * Effects for leaving the model step (R3.1, R4.1). A local choice writes the
+ * `LocalModel` record; a cloud choice stores the provider key. Both re-fetch the
+ * runtime, then advance.
+ */
+export function commitModelStep(state: WizardState): CommitEffect[] {
+  const advance: CommitEffect = { kind: "advance", to: nextStep(state.step) };
+  if (state.modelChoice === "local" && state.modelPath.trim().length > 0) {
+    const path = state.modelPath.trim();
+    const model: LocalModel = {
+      id: makeModelId(path),
+      name: deriveNameFromPath(path),
+      path,
+    };
+    return [{ kind: "register-local-model", model }, { kind: "fetch-runtime" }, advance];
+  }
+  if (state.modelChoice === "cloud" && state.cloudKey.trim().length > 0) {
+    return [
+      { kind: "store-provider-key", provider: state.cloudProvider },
+      { kind: "fetch-runtime" },
+      advance,
+    ];
+  }
+  return [advance];
+}
+
+/* ── Sidecar readiness (R2.4, R2.6, R2.7) ─────────────────────────────────
+ *
+ * After the workspace is committed the Desktop_Shell restarts the Gateway
+ * sidecar. The wizard waits for it to report ready before enabling the next
+ * step's continue control. The clock is an input, so the 30 s deadline is
+ * testable without a wall clock.
+ */
+
+export type SidecarPhase = "starting" | "restarting" | "ready" | "error";
+
+export type SidecarWait =
+  | { kind: "idle" }
+  | { kind: "waiting"; reason: string; sinceMs: number } // R2.7
+  | { kind: "ready" } // R2.4, R2.5
+  | { kind: "failed"; reason: string; retryable: true }; // R2.6
+
+/** Default readiness deadline: 30 seconds (R2.6). */
+export const SIDECAR_READINESS_DEADLINE_MS = 30_000;
+
+export type SidecarEvent =
+  | { kind: "phase"; phase: SidecarPhase; detail?: string; nowMs: number }
+  | { kind: "tick"; nowMs: number };
+
+function waitReason(phase: SidecarPhase, detail?: string): string {
+  if (detail && detail.trim().length > 0) return detail.trim();
+  return phase === "restarting"
+    ? "Restarting the agent for the new workspace…"
+    : "Starting the agent…";
+}
+
+export function reduceSidecarWait(
+  current: SidecarWait,
+  event: SidecarEvent,
+  deadlineMs = SIDECAR_READINESS_DEADLINE_MS,
+): SidecarWait {
+  if (event.kind === "phase") {
+    switch (event.phase) {
+      case "ready":
+        return { kind: "ready" };
+      case "error":
+        return {
+          kind: "failed",
+          reason: event.detail?.trim() || "The agent failed to start.",
+          retryable: true,
+        };
+      case "starting":
+      case "restarting": {
+        // Keep the original start time so the deadline measures the whole wait.
+        const sinceMs = current.kind === "waiting" ? current.sinceMs : event.nowMs;
+        return { kind: "waiting", reason: waitReason(event.phase, event.detail), sinceMs };
+      }
+      default:
+        return current;
+    }
+  }
+
+  // tick — only a waiting state can time out.
+  if (current.kind === "waiting" && event.nowMs - current.sinceMs >= deadlineMs) {
+    return { kind: "failed", reason: current.reason, retryable: true };
+  }
+  return current;
 }
 
 export interface HardwareInfo {

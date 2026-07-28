@@ -101,6 +101,15 @@ function baseState(overrides: Partial<AppState> = {}): AppState {
     agentMode: "ask",
     setAgentMode: vi.fn(),
     projectRules: null,
+    // The run gate now drives the send control: a ready model + an open
+    // workspace let a non-empty message send; the mock provider carries no
+    // reasoning-effort parameter, so that control stays hidden here.
+    selectedModel: { provider: "mock", model: "mock-model" },
+    llamaCppStatus: null,
+    workspaceRoot: "/ws",
+    activeRunMode: null,
+    trackedRuns: [],
+    maxConcurrentRuns: 3,
     ...overrides,
   };
 }
@@ -132,7 +141,7 @@ describe("Composer snapshot — control-bar structure (R1.2, R1.5, R1.6)", () =>
     const { container } = render(<Composer />);
     expect(controlBar(container)).toMatchInlineSnapshot(`
       <div
-        class="flex items-center gap-1.5 px-2 pb-2 pt-1"
+        class="flex flex-wrap items-center gap-1.5 px-2 pb-2 pt-1"
       >
         <div
           class="flex items-center rounded-lg border border-[#1E1E23] bg-[#0F0F14] p-0.5"
@@ -175,6 +184,52 @@ describe("Composer snapshot — control-bar structure (R1.2, R1.5, R1.6)", () =>
           Medium
         </button>
         <div
+          aria-label="Reasoning effort"
+          class="flex items-center gap-0.5 rounded-md border border-[#1E1E23] bg-[#0F0F14] p-0.5 opacity-60"
+          data-supported="false"
+          data-testid="reasoning-effort"
+          role="group"
+          title="This model has no reasoning-effort setting"
+        >
+          <span
+            class="px-1 text-[9px] uppercase tracking-wider text-[#52525B]"
+          >
+            Effort
+          </span>
+          <button
+            aria-pressed="false"
+            class="px-1.5 py-0.5 text-[10.5px] rounded font-medium capitalize transition-colors text-[#52525B] hover:text-[#A1A1AA] cursor-not-allowed"
+            disabled=""
+            title="Not supported by this model"
+            type="button"
+          >
+            low
+          </button>
+          <button
+            aria-pressed="false"
+            class="px-1.5 py-0.5 text-[10.5px] rounded font-medium capitalize transition-colors text-[#52525B] hover:text-[#A1A1AA] cursor-not-allowed"
+            disabled=""
+            title="Not supported by this model"
+            type="button"
+          >
+            medium
+          </button>
+          <button
+            aria-pressed="false"
+            class="px-1.5 py-0.5 text-[10.5px] rounded font-medium capitalize transition-colors text-[#52525B] hover:text-[#A1A1AA] cursor-not-allowed"
+            disabled=""
+            title="Not supported by this model"
+            type="button"
+          >
+            high
+          </button>
+          <span
+            class="px-1 text-[9px] lowercase text-[#52525B]"
+          >
+            n/a
+          </span>
+        </div>
+        <div
           class="ml-auto flex items-center gap-1.5"
         >
           <button
@@ -198,7 +253,7 @@ describe("Composer snapshot — control-bar structure (R1.2, R1.5, R1.6)", () =>
     const { container } = render(<Composer />);
     expect(controlBar(container)).toMatchInlineSnapshot(`
       <div
-        class="flex items-center gap-1.5 px-2 pb-2 pt-1"
+        class="flex flex-wrap items-center gap-1.5 px-2 pb-2 pt-1"
       >
         <div
           class="flex items-center rounded-lg border border-[#1E1E23] bg-[#0F0F14] p-0.5"
@@ -236,6 +291,52 @@ describe("Composer snapshot — control-bar structure (R1.2, R1.5, R1.6)", () =>
         >
           Read-only
         </span>
+        <div
+          aria-label="Reasoning effort"
+          class="flex items-center gap-0.5 rounded-md border border-[#1E1E23] bg-[#0F0F14] p-0.5 opacity-60"
+          data-supported="false"
+          data-testid="reasoning-effort"
+          role="group"
+          title="This model has no reasoning-effort setting"
+        >
+          <span
+            class="px-1 text-[9px] uppercase tracking-wider text-[#52525B]"
+          >
+            Effort
+          </span>
+          <button
+            aria-pressed="false"
+            class="px-1.5 py-0.5 text-[10.5px] rounded font-medium capitalize transition-colors text-[#52525B] hover:text-[#A1A1AA] cursor-not-allowed"
+            disabled=""
+            title="Not supported by this model"
+            type="button"
+          >
+            low
+          </button>
+          <button
+            aria-pressed="false"
+            class="px-1.5 py-0.5 text-[10.5px] rounded font-medium capitalize transition-colors text-[#52525B] hover:text-[#A1A1AA] cursor-not-allowed"
+            disabled=""
+            title="Not supported by this model"
+            type="button"
+          >
+            medium
+          </button>
+          <button
+            aria-pressed="false"
+            class="px-1.5 py-0.5 text-[10.5px] rounded font-medium capitalize transition-colors text-[#52525B] hover:text-[#A1A1AA] cursor-not-allowed"
+            disabled=""
+            title="Not supported by this model"
+            type="button"
+          >
+            high
+          </button>
+          <span
+            class="px-1 text-[9px] lowercase text-[#52525B]"
+          >
+            n/a
+          </span>
+        </div>
         <div
           class="ml-auto flex items-center gap-1.5"
         >

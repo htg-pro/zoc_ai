@@ -72,8 +72,19 @@ export const AGENT_DIARY_ENDPOINT = "/v1/agent/diary";
 /** Default delay before re-subscribing after a dropped stream. */
 export const DEFAULT_RECONNECT_DELAY_MS = 1000;
 
-/** Lifecycle of the underlying SSE subscription. */
-export type StreamStatus = "connecting" | "open" | "reconnecting" | "closed";
+/**
+ * Default bound on reconnect attempts before the transport is declared
+ * interrupted (R8.4). Finite by default so a Gateway that never comes back does
+ * not leave the run wedged in "reconnecting" forever; overridable per call.
+ */
+export const DEFAULT_MAX_RECONNECT_ATTEMPTS = 5;
+
+/**
+ * Lifecycle of the underlying SSE subscription. `interrupted` is terminal for
+ * the transport: the bounded reconnect budget (R8.4) was exhausted, so the
+ * client stopped retrying and the run lifecycle should settle as interrupted.
+ */
+export type StreamStatus = "connecting" | "open" | "reconnecting" | "interrupted" | "closed";
 
 /**
  * Minimal, injectable view of an SSE connection. The browser `EventSource`
@@ -115,6 +126,12 @@ export interface UseAgentStreamOptions {
   resolveBaseUrl?: BaseUrlResolver;
   /** Delay before re-subscribing after a drop. Defaults to 1000 ms. */
   reconnectDelayMs?: number;
+  /**
+   * Maximum reconnect attempts before the transport is declared `interrupted`
+   * (R8.4). Defaults to {@link DEFAULT_MAX_RECONNECT_ATTEMPTS}. A non-finite or
+   * ≤ 0 value is treated as the default so retries always terminate.
+   */
+  maxReconnectAttempts?: number;
   /** Active Gateway run id to subscribe to. Omitted/null opens the ping stream. */
   runId?: string | null;
   /** Whether the hook should open a stream. Defaults to true for feed tests. */
@@ -277,9 +294,16 @@ export function useAgentStream(options: UseAgentStreamOptions = {}): UseAgentStr
     recoverFromDiary = defaultRecoverFromDiary,
     resolveBaseUrl = defaultResolveBaseUrl,
     reconnectDelayMs = DEFAULT_RECONNECT_DELAY_MS,
+    maxReconnectAttempts = DEFAULT_MAX_RECONNECT_ATTEMPTS,
     runId = null,
     enabled = true,
   } = options;
+  // A non-finite or non-positive bound would defeat the point of bounding the
+  // retries, so fall back to the finite default.
+  const reconnectBudget =
+    Number.isFinite(maxReconnectAttempts) && maxReconnectAttempts > 0
+      ? Math.floor(maxReconnectAttempts)
+      : DEFAULT_MAX_RECONNECT_ATTEMPTS;
 
   const [events, setEvents] = useState<AgentEvent[]>([]);
   const [status, setStatus] = useState<StreamStatus>("connecting");
@@ -292,6 +316,7 @@ export function useAgentStream(options: UseAgentStreamOptions = {}): UseAgentStr
     recoverFromDiary,
     resolveBaseUrl,
     reconnectDelayMs,
+    reconnectBudget,
     runId,
     enabled,
   });
@@ -302,6 +327,7 @@ export function useAgentStream(options: UseAgentStreamOptions = {}): UseAgentStr
     recoverFromDiary,
     resolveBaseUrl,
     reconnectDelayMs,
+    reconnectBudget,
     runId,
     enabled,
   };
@@ -316,6 +342,9 @@ export function useAgentStream(options: UseAgentStreamOptions = {}): UseAgentStr
     let cancelled = false;
     let stream: AgentEventStream | null = null;
     let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+    // Bounded reconnect budget (R8.4): counts consecutive failed attempts and
+    // resets on a successful open. Exhaustion declares the transport interrupted.
+    let reconnectAttempts = 0;
     // Resolved once before the first subscribe; the events/diary endpoints are
     // appended to it so reconnects reuse the same loopback origin.
     let baseUrl = "";
@@ -350,6 +379,9 @@ export function useAgentStream(options: UseAgentStreamOptions = {}): UseAgentStr
       };
       next.onopen = () => {
         if (!cancelled) {
+          // A live connection clears the reconnect budget so a later, unrelated
+          // drop gets the full allotment again.
+          reconnectAttempts = 0;
           setStatus("open");
         }
       };
@@ -366,11 +398,18 @@ export function useAgentStream(options: UseAgentStreamOptions = {}): UseAgentStr
         if (appendEventData(ev)) {
           return;
         }
-        // Tear down the dropped stream and schedule a reconnect that first
-        // rebuilds from the diary (Rebuild-R10.2) before re-subscribing.
+        // Tear down the dropped stream. Within the bounded budget, schedule a
+        // reconnect that first rebuilds from the diary (Rebuild-R10.2); once the
+        // budget is exhausted (R8.4), stop retrying and declare the transport
+        // interrupted so the run lifecycle can settle it as interrupted.
         next.close();
         if (stream === next) {
           stream = null;
+        }
+        reconnectAttempts += 1;
+        if (reconnectAttempts > optionRefs.current.reconnectBudget) {
+          setStatus("interrupted");
+          return;
         }
         setStatus("reconnecting");
         reconnectTimer = setTimeout(() => {

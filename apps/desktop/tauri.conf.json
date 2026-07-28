@@ -51,6 +51,7 @@
     ],
     "externalBin": [
       "binaries/zoc-studio-agent",
+      "binaries/zoc-studio-agent-runtime",
       "binaries/zoc-studio-hotpath"
     ],
     "resources": [],

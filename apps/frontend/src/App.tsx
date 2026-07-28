@@ -9,6 +9,7 @@ import { getAgentClient } from "@/lib/agent-client";
 import { useApp } from "@/lib/store";
 import { getPlugins } from "@/lib/plugins";
 import { createDefaultPluginSandbox, initPluginRuntime } from "@/lib/plugin-runtime";
+import { migrateSecretShadow } from "@/lib/secure-store";
 import { desktopConfigGet, isTauri, setWorkspaceRoot } from "@/lib/tauri-bridge";
 import { startTelemetry, track } from "@/lib/telemetry";
 import { setTrustWorkspace } from "@/lib/trust";
@@ -41,6 +42,11 @@ export function App() {
   useEffect(() => {
     if (viewer.readOnly) return;
     void (async () => {
+      // R14.3: empty the `localStorage` secret shadow into the three-tier vault
+      // before anything reads a provider key. First, so a Run that starts
+      // immediately after boot resolves its key from the vault rather than from
+      // a store that is about to be swept out from under it.
+      await migrateSecretShadow().catch(() => undefined);
       // Warm the client + load real sessions if reachable.
       try {
         const c = await getAgentClient();

@@ -13,6 +13,7 @@ from zocai_gateway.file_locks import (
     normalize_lock_path,
 )
 from zocai_gateway.mode_router import Mode
+from zocai_gateway.run_pipeline import DefaultAgentBrain
 from zocai_gateway.settings import GatewaySettings
 
 
@@ -197,9 +198,12 @@ def test_default_cap_is_three_runs() -> None:
     assert RunRegistry().max_concurrent_runs == 3
 
 
-def test_run_endpoint_rejects_beyond_the_cap() -> None:
+def test_run_endpoint_rejects_beyond_the_cap(tmp_path) -> None:
     app = create_app(
-        drive=False, settings=GatewaySettings(max_concurrent_runs=1)
+        drive=False,
+        settings=GatewaySettings(max_concurrent_runs=1),
+        workspace_root=tmp_path,
+        brain=DefaultAgentBrain(),
     )
     client = TestClient(app)
 
@@ -211,8 +215,13 @@ def test_run_endpoint_rejects_beyond_the_cap() -> None:
     assert "limit 1" in second.json()["detail"]
 
 
-def test_runtime_endpoint_reports_concurrency_state() -> None:
-    app = create_app(drive=False, settings=GatewaySettings(max_concurrent_runs=2))
+def test_runtime_endpoint_reports_concurrency_state(tmp_path) -> None:
+    app = create_app(
+        drive=False,
+        settings=GatewaySettings(max_concurrent_runs=2),
+        workspace_root=tmp_path,
+        brain=DefaultAgentBrain(),
+    )
     client = TestClient(app)
     client.post("/v1/agent/run", json={"prompt": "one", "mode": "agent"})
 

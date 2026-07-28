@@ -135,7 +135,7 @@ export function Shell() {
       </div>
       <StatusBar />
       <CommandPalette />
-      <Toaster theme="dark" position="bottom-right" />
+      <Toaster theme="dark" position="top-right" />
     </div>
   );
 }

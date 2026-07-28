@@ -28,7 +28,7 @@ def _request() -> AgentRunRequest:
 def _capture_payload(monkeypatch) -> dict[str, Any]:
     captured: dict[str, Any] = {}
 
-    def fake_stream(url, headers, payload, timeout):
+    def fake_stream(url, headers, payload, timeout, **_kwargs):
         captured["payload"] = payload
         return iter([{"choices": [{"delta": {"content": "x"}}]}])
 

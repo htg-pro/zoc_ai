@@ -14,6 +14,7 @@ from zocai_gateway.context.token_gate import (
     looks_like_injection,
     sanitize_file_content,
 )
+from zocai_gateway.run_pipeline import DefaultAgentBrain
 from zocai_gateway.security import (
     MAX_USER_TEXT_LENGTH,
     RATE_LIMIT_PER_MINUTE,
@@ -214,10 +215,17 @@ def test_run_endpoint_rejects_an_over_length_prompt() -> None:
     assert "exceeds" in res.json()["detail"]
 
 
-def test_run_endpoint_rate_limits_repeated_starts() -> None:
+def test_run_endpoint_rate_limits_repeated_starts(tmp_path) -> None:
     # A high concurrency cap isolates the rate limiter from the 429-at-capacity
-    # rule, so this test proves the *rate* limit specifically.
-    app = create_app(drive=False, settings=GatewaySettings(max_concurrent_runs=99))
+    # rule, so this test proves the *rate* limit specifically. A bound workspace
+    # and injected brain let each run clear the workspace/readiness gates (R1.4,
+    # R5.2) so the *rate* limit is what stops the excess starts.
+    app = create_app(
+        drive=False,
+        settings=GatewaySettings(max_concurrent_runs=99),
+        workspace_root=tmp_path,
+        brain=DefaultAgentBrain(),
+    )
     client = TestClient(app)
 
     statuses = [
@@ -230,8 +238,13 @@ def test_run_endpoint_rate_limits_repeated_starts() -> None:
     assert statuses[-1] == 429
 
 
-def test_rate_limited_response_carries_retry_after() -> None:
-    app = create_app(drive=False, settings=GatewaySettings(max_concurrent_runs=99))
+def test_rate_limited_response_carries_retry_after(tmp_path) -> None:
+    app = create_app(
+        drive=False,
+        settings=GatewaySettings(max_concurrent_runs=99),
+        workspace_root=tmp_path,
+        brain=DefaultAgentBrain(),
+    )
     client = TestClient(app)
     for i in range(RATE_LIMIT_PER_MINUTE):
         client.post("/v1/agent/run", json={"prompt": f"t{i}", "mode": "agent"})

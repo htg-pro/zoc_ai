@@ -67,13 +67,57 @@ test("renders a focused run stack with per-run controls", () => {
     </AgentStreamContext.Provider>,
   );
 
-  const cards = container.querySelectorAll<HTMLElement>("[data-testid='run-trace-card']");
+  const cards = container.querySelectorAll<HTMLElement>("[data-testid='run-card']");
   expect(cards).toHaveLength(2);
   expect(cards[0]).toHaveAttribute("data-run-id", "run-a");
   expect(cards[0]).toHaveAttribute("data-focused", "true");
-  expect(screen.getByTitle("320 of 4,096 tokens")).toBeInTheDocument();
-  expect(screen.getByLabelText("Expand run")).toBeInTheDocument();
+  // The finished run collapses; the active run is expanded.
+  expect(cards[0]).toHaveAttribute("data-collapsed", "false");
 
-  fireEvent.click(screen.getByLabelText("Stop Active A"));
+  fireEvent.click(screen.getByText("Stop"));
   expect(cancelRunById).toHaveBeenCalledWith("run-a");
+});
+
+
+test("retries the selected card with its own prompt and user message", () => {
+  const requestComposerSubmit = vi.fn();
+  useApp.setState({
+    runId: "run-newer",
+    focusedRunId: "run-older",
+    lastSentPrompt: "newer unrelated prompt",
+    requestComposerSubmit,
+    trackedRuns: [
+      {
+        runId: "run-older",
+        mode: "plan",
+        phase: "failed",
+        title: "Older plan",
+        prompt: "plan the parser migration",
+        messageId: "message-older",
+        startedAt: 1,
+        endedAt: 2,
+      },
+      {
+        runId: "run-newer",
+        mode: "ask",
+        phase: "done",
+        title: "Newer question",
+        prompt: "newer unrelated prompt",
+        messageId: "message-newer",
+        startedAt: 3,
+        endedAt: 4,
+      },
+    ],
+  });
+
+  render(
+    <AgentStreamContext.Provider value={{ status: "open", events: [] }}>
+      <RunRegion />
+    </AgentStreamContext.Provider>,
+  );
+
+  fireEvent.click(screen.getAllByRole("button", { name: /retry/i })[0]);
+  expect(requestComposerSubmit).toHaveBeenCalledWith("plan the parser migration", {
+    reuseMessageId: "message-older",
+  });
 });

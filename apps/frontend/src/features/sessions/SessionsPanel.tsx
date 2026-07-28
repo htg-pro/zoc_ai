@@ -1,9 +1,10 @@
 import { useEffect, useMemo, useState } from "react";
 import type { Session } from "@zoc-studio/shared-types";
-import { Check, ChevronsDownUp, Pencil, Pin, PinOff, Plus, Search, Trash2, X } from "lucide-react";
+import { Check, ChevronsDownUp, Folder, Pencil, Pin, PinOff, Plus, Search, Trash2, X } from "lucide-react";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { useApp } from "@/lib/store";
 import { groupSessions } from "@/lib/session-query";
+import { sessionListItem } from "@/features/agent/session-origin";
 import { cn } from "@/lib/utils";
 
 type Group = { key: "pinned" | "today" | "yesterday" | "older"; label: string; sessions: Session[] };
@@ -65,13 +66,26 @@ export function SessionsPanel() {
   const groups = useMemo(() => groupSessionsForPanel(sessions, pinned), [sessions, pinned]);
 
   const onNew = async () => {
-    const root =
+    // No "/" fallback: a session needs a real folder (R2.x). Disabled below when
+    // none is resolvable; guard here too.
+    const root = (
       workspaceRoot ??
       sessions.find((s) => s.id === active)?.workspace_root ??
-      "/";
+      ""
+    ).trim();
+    if (!root || root === "/") return;
     const title = `Session ${new Date().toLocaleTimeString()}`;
     await createSession(title, root);
   };
+
+  const canCreateSession = (() => {
+    const root = (
+      workspaceRoot ??
+      sessions.find((s) => s.id === active)?.workspace_root ??
+      ""
+    ).trim();
+    return root !== "" && root !== "/";
+  })();
 
   const onDelete = async (id: string, title: string) => {
     const ok = window.confirm(`Delete "${title}" and its chat history?`);
@@ -109,8 +123,10 @@ export function SessionsPanel() {
 
       {/* ── new session button ──────────────────── */}
       <button
-        className="mx-3 mt-2 flex h-7 shrink-0 items-center justify-center gap-1.5 rounded-md border border-[hsl(var(--border-muted))] bg-card text-[11.5px] font-medium text-muted-foreground hover:border-muted-foreground/30 hover:bg-accent"
+        className="mx-3 mt-2 flex h-7 shrink-0 items-center justify-center gap-1.5 rounded-md border border-[hsl(var(--border-muted))] bg-card text-[11.5px] font-medium text-muted-foreground hover:border-muted-foreground/30 hover:bg-accent disabled:cursor-not-allowed disabled:opacity-40"
         onClick={onNew}
+        disabled={!canCreateSession}
+        title={canCreateSession ? "New session" : "Open a workspace first to start a session"}
       >
         <Plus className="h-3 w-3" />
         New session
@@ -253,6 +269,14 @@ function SessionRow({
           <div className="mt-1 flex items-center justify-between gap-2 pl-[14px]">
             <span className="truncate rounded border border-[hsl(var(--border-muted))] bg-accent/60 px-1 py-px font-mono text-[9.5px] text-muted-foreground">
               {modelLabel(session.model)}
+            </span>
+            <span
+              data-testid="session-row-root"
+              title={session.workspace_root}
+              className="flex min-w-0 items-center gap-0.5 truncate font-mono text-[9.5px] text-muted-foreground/60"
+            >
+              <Folder className="h-2 w-2 shrink-0" />
+              <span className="truncate">{sessionListItem(session).rootBasename}</span>
             </span>
             <span className="shrink-0 font-mono text-[9.5px] text-muted-foreground/60">
               {timeLabel(session.updated_at)}

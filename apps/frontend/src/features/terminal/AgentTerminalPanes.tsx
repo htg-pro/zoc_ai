@@ -29,11 +29,18 @@ import {
   paneBadge,
   type CompletionBadge,
 } from "./agent-terminal";
+import { terminalHeader } from "@/features/agent/terminal-header";
+import {
+  startRun,
+  type RunPhase as LifecyclePhase,
+  type RunRecord,
+} from "@/features/agent/run-lifecycle";
+import { isTerminal, type TrackedRun } from "@/features/agent/agent-runs";
 import { AnnotatedOutput } from "./OutputParser";
 import { parseTerminalOutput } from "./output-parser";
 import { useAgentTerminal } from "./useAgentTerminal";
 import { leaves, type TerminalPane } from "@/lib/terminal-layout";
-import { useApp, type TerminalProfile } from "@/lib/store";
+import { activeWorkspaceRoot, useApp, type TerminalProfile } from "@/lib/store";
 import { requestReveal, revealPosition } from "@/lib/editor-actions";
 import { joinPath } from "@/lib/paths";
 import {
@@ -59,7 +66,29 @@ export function AgentTerminalPanes({
   const focusedPaneId = useApp((s) => s.focusedPaneId);
   const profiles = useApp((s) => s.terminalProfiles);
   const terminals = useApp((s) => s.terminals);
-  const workspaceRoot = useApp((s) => s.workspaceRoot);
+  const workspaceRoot = useApp(activeWorkspaceRoot);
+  const trackedRuns = useApp((s) => s.trackedRuns ?? []);
+
+  // The real run currently holding a terminal: the latest command frame that
+  // has not exited, mapped to its tracked run. Used to NAME the occupant and to
+  // clear occupancy the moment that run reaches any terminal phase (R13.3/R13.4)
+  // — cancellation/failure/interruption included — even if no command-exit
+  // frame ever arrives (a cancelled run often has none).
+  const activeCommandRunId = useMemo(() => {
+    for (let i = commandEvents.length - 1; i >= 0; i--) {
+      if (commandEvents[i].exitCode == null) return commandEvents[i].runId;
+    }
+    return null;
+  }, [commandEvents]);
+  const holderRecord = useMemo<RunRecord | null>(() => {
+    const run: TrackedRun | undefined = trackedRuns.find((r) => r.runId === activeCommandRunId);
+    if (!run) return null;
+    // A run that already settled no longer holds the terminal.
+    if (isTerminal(run)) return null;
+    // Map the one tracked-only phase; the rest are valid lifecycle phases.
+    const phase: LifecyclePhase = run.phase === "initializing" ? "starting" : (run.phase as LifecyclePhase);
+    return { ...startRun({ runId: run.runId, mode: run.mode, startedAt: run.startedAt }), phase };
+  }, [trackedRuns, activeCommandRunId]);
 
   const sessionIdOf = useCallback(
     (paneId: string): string | null =>
@@ -98,6 +127,7 @@ export function AgentTerminalPanes({
           agentActive={isPaneAgentActive(state, pane.id)}
           followAgent={state.followAgent}
           onToggleFollow={() => setFollowAgent(!state.followAgent)}
+          holder={holderRecord}
           profile={
             profiles.find(
               (profile) =>
@@ -117,6 +147,7 @@ interface AgentTerminalPaneSurfaceProps {
   agentActive: boolean;
   followAgent: boolean;
   onToggleFollow: () => void;
+  holder: RunRecord | null;
   profile: TerminalProfile | undefined;
   workspaceRoot: string | null;
 }
@@ -128,6 +159,7 @@ function AgentTerminalPaneSurface({
   agentActive,
   followAgent,
   onToggleFollow,
+  holder,
   profile,
   workspaceRoot,
 }: AgentTerminalPaneSurfaceProps): JSX.Element {
@@ -142,6 +174,18 @@ function AgentTerminalPaneSurface({
   );
   const readOutput = useCallback(() => getTerminalOutput(sessionId), [sessionId]);
   const output = useSyncExternalStore(subscribeOutput, readOutput, () => "");
+  // R13.1/R13.5 — the terminal header reports the resolved workspace root as
+  // cwd and the exit status when a process exited non-zero. Occupancy (R13.3/
+  // R13.4) names the actual holding run and is cleared the instant that run is
+  // terminal (holderRecord becomes null), even without a command-exit frame.
+  const header = terminalHeader({
+    resolvedRoot: workspaceRoot,
+    holder,
+    exitCode: badge.status === "fail" ? badge.exitCode : badge.status === "ok" ? 0 : null,
+  });
+  // The occupancy banner shows only on the pane the agent is writing to AND
+  // only while the holding run is non-terminal (header.occupancy != null).
+  const showOccupancy = agentActive && header.occupancy !== null;
   const insights = useMemo(() => {
     const lines = parseTerminalOutput(output.slice(-16 * 1024)).filter(
       (line) =>
@@ -206,15 +250,25 @@ function AgentTerminalPaneSurface({
     <div className="flex h-full min-h-0 min-w-0 flex-col bg-[#0a0a0d]">
       <div className="flex h-6 shrink-0 items-center justify-between gap-2 border-b border-border bg-card/40 px-2">
         <div className="flex min-w-0 items-center gap-2">
+          {header.cwd && (
+            <span
+              className="max-w-[180px] truncate font-mono text-[10px] text-muted-foreground"
+              title={header.cwd}
+              data-testid="terminal-cwd"
+            >
+              {header.cwd}
+            </span>
+          )}
           <CompletionBadgeView badge={badge} />
-          {agentActive && (
+          {showOccupancy && (
             <span
               role="status"
               data-testid="agent-active-warning"
+              data-run-id={header.occupancy?.runId}
               className="flex items-center gap-1 rounded bg-amber-500/15 px-1.5 py-0.5 text-[10px] font-medium text-amber-500"
             >
               <AlertTriangle className="h-3 w-3" />
-              Agent is using this terminal
+              {header.occupancy?.label ?? "A run is using this terminal"}
             </span>
           )}
         </div>

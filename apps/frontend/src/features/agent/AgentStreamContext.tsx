@@ -53,7 +53,7 @@ function RunStreamSubscription({
 
   // A viewer consumes telemetry only. It must never commit staged edits,
   // mutate the host's run state, or emit local approval/audit side effects.
-  useAgentRunLifecycle(events, !viewer.readOnly, runId);
+  useAgentRunLifecycle(events, !viewer.readOnly, runId, status);
 
   useEffect(() => {
     onUpdate(runId, { events, status });

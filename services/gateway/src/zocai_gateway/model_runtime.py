@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 import math
+import re
 import threading
 from collections.abc import Callable, Iterator, Mapping, Sequence
 from contextlib import contextmanager
@@ -18,20 +19,28 @@ from dataclasses import dataclass
 from time import monotonic
 from typing import Any, Literal
 
+from zocai_gateway.errors import ErrorCode
 from zocai_gateway.mode_router import AgentRunRequest
 
 __all__ = [
     "PROVIDER_NATIVE_TOOLS",
     "LiveInferenceMetrics",
+    "ModelContextWindowError",
+    "ModelReadiness",
     "ModelRuntimeError",
     "ModelToolResponse",
+    "ProviderAuthError",
     "StreamMetrics",
     "ToolCall",
     "ToolSpec",
     "generate_text",
     "generate_text_stream",
     "generate_with_tools",
+    "is_local_llamacpp",
     "live_inference_metrics",
+    "probe_local_health",
+    "readiness",
+    "reasoning_effort_capability",
 ]
 
 _DEFAULT_MAX_TOKENS = 512
@@ -40,6 +49,95 @@ _STREAM_DONE = object()
 
 class ModelRuntimeError(RuntimeError):
     """Raised when a configured model endpoint cannot produce text."""
+
+
+class ProviderAuthError(ModelRuntimeError):
+    """A provider rejected the request's credential (HTTP 401/403) — R6.
+
+    A :class:`ModelRuntimeError` subclass so existing ``except
+    ModelRuntimeError`` handlers still catch it, but it preserves the structured
+    provider/auth status so a run failure can be surfaced as a typed
+    ``provider_auth_invalid`` error rather than a generic ``run_failed``.
+
+    The message names the provider and status only — **never** the response body
+    or the API key — so nothing secret reaches a user-facing frame or a log.
+    """
+
+    #: The typed error code the streamed failure frame should carry.
+    code: str = ErrorCode.PROVIDER_AUTH_INVALID
+
+    def __init__(self, provider: str | None, status_code: int) -> None:
+        self.provider = (provider or "").strip() or "the model provider"
+        self.status_code = status_code
+        super().__init__(
+            f"{self.provider} rejected the API key (HTTP {status_code})."
+        )
+
+
+_CONTEXT_PROMPT_TOKENS_RE = re.compile(r'n_prompt_tokens\\?"?\s*:\s*(\d+)', re.IGNORECASE)
+_CONTEXT_SIZE_RE = re.compile(r'n_ctx\\?"?\s*:\s*(\d+)', re.IGNORECASE)
+
+
+class ModelContextWindowError(ModelRuntimeError):
+    """The provider rejected a prompt that exceeds its configured context.
+
+    Provider bodies are deliberately not retained in the exception text. The
+    parsed token counts are enough for a useful message and keep escaped JSON
+    out of the run feed.
+    """
+
+    code: str = ErrorCode.CONTEXT_WINDOW_EXCEEDED
+
+    def __init__(self, prompt_tokens: int | None, context_tokens: int | None) -> None:
+        self.prompt_tokens = prompt_tokens
+        self.context_tokens = context_tokens
+        if prompt_tokens is not None and context_tokens is not None:
+            message = (
+                f"The request needs {prompt_tokens:,} prompt tokens, but this model "
+                f"allows {context_tokens:,}. Reduce attached context or increase the "
+                "model context window in Settings, then retry."
+            )
+        else:
+            message = (
+                "The request is too large for this model's context window. Reduce "
+                "attached context or increase the model context window in Settings, "
+                "then retry."
+            )
+        super().__init__(message)
+
+
+def _context_window_error(detail: str) -> ModelContextWindowError | None:
+    """Parse known llama.cpp/OpenAI-compatible context overflow responses."""
+    if not re.search(
+        r"exceed_context_size_error|exceeds? the available context size|context window.*exceed",
+        detail,
+        re.IGNORECASE,
+    ):
+        return None
+    prompt_match = _CONTEXT_PROMPT_TOKENS_RE.search(detail)
+    context_match = _CONTEXT_SIZE_RE.search(detail)
+    return ModelContextWindowError(
+        int(prompt_match.group(1)) if prompt_match else None,
+        int(context_match.group(1)) if context_match else None,
+    )
+
+
+@dataclass(frozen=True, slots=True)
+class ModelReadiness:
+    """Whether a provider/model pair can serve a request right now (R5.2).
+
+    A structural check over what the run request names — provider, model, and a
+    serving endpoint — deciding whether a run *could* reach a model. Live health
+    (the endpoint answering a probe) is the Desktop_Shell Llama_Supervisor's job,
+    surfaced to the composer via ``evaluateRunGate``; this is the Gateway backstop
+    that refuses to create a run record for an obviously unservable request so
+    ``registry.create`` is never reached for one.
+    """
+
+    ready: bool
+    provider: str | None
+    model: str | None
+    reason: str | None = None
 
 
 @dataclass(frozen=True)
@@ -363,7 +461,10 @@ def _openai_tools_chat(
         "tool_choice": "auto",
     }
     payload.update(_sampling_payload(request, provider))
-    response = _post_json(_chat_completions_url(base_url, provider), headers, payload, timeout)
+    payload.update(_reasoning_effort_payload(request, provider, model))
+    response = _post_json(
+        _chat_completions_url(base_url, provider), headers, payload, timeout, provider=provider
+    )
     choices = response.get("choices")
     if not isinstance(choices, list) or not choices:
         raise ModelRuntimeError("provider returned no choices")
@@ -417,7 +518,10 @@ def _anthropic_tools_messages(
         payload["temperature"] = temperature
     if system_prompt:
         payload["system"] = system_prompt
-    response = _post_json(f"{base_url}/messages", headers, payload, timeout)
+    payload.update(_reasoning_effort_payload(request, "anthropic", model))
+    response = _post_json(
+        f"{base_url}/messages", headers, payload, timeout, provider="anthropic"
+    )
     content = response.get("content")
     text_parts: list[str] = []
     tool_calls: list[ToolCall] = []
@@ -734,9 +838,12 @@ def _openai_compatible_chat(
         "stream": False,
     }
     payload.update(_sampling_payload(request, provider))
+    payload.update(_reasoning_effort_payload(request, provider, model))
     if response_format is not None:
         payload["response_format"] = dict(response_format)
-    response = _post_json(_chat_completions_url(base_url, provider), headers, payload, timeout)
+    response = _post_json(
+        _chat_completions_url(base_url, provider), headers, payload, timeout, provider=provider
+    )
     choices = response.get("choices")
     if not isinstance(choices, list) or not choices:
         raise ModelRuntimeError("provider returned no choices")
@@ -784,6 +891,7 @@ def _openai_compatible_chat_stream(
         "stream": True,
     }
     payload.update(_sampling_payload(request, provider))
+    payload.update(_reasoning_effort_payload(request, provider, model))
     if stop:
         payload["stop"] = list(stop)
 
@@ -794,6 +902,7 @@ def _openai_compatible_chat_stream(
         headers,
         payload,
         timeout,
+        provider=provider,
     ):
         metrics = _stream_metrics(frame)
         if metrics is not None and on_metrics is not None:
@@ -879,6 +988,181 @@ def _sampling_payload(request: AgentRunRequest, provider: str) -> dict[str, Any]
     return payload
 
 
+# ── Model readiness gate (R5.2) ──────────────────────────────────────────────
+
+#: Providers served over an OpenAI-compatible chat endpoint. Anthropic is served
+#: over its native Messages API and is handled separately.
+_OPENAI_COMPATIBLE_PROVIDERS = frozenset(
+    {
+        "openai",
+        "google",
+        "google-ai-studio",
+        "googleaistudio",
+        "groq",
+        "xai",
+        "llamacpp",
+        "openai-compatible",
+        "openrouter",
+        "together",
+        "deepseek",
+        "mistral",
+        "fireworks",
+    }
+)
+
+
+def readiness(
+    provider: str | None, model: str | None, base_url: str | None
+) -> ModelReadiness:
+    """Whether a run naming ``(provider, model, base_url)`` could reach a model (R5.2).
+
+    Structural, so the run-start gate can refuse before creating a run record:
+
+    * no provider or no model → not ready (nothing is selected);
+    * Anthropic → ready (native Messages API; the key is checked at call time);
+    * any endpoint-backed provider with no ``base_url`` → not ready (no server).
+    """
+    p = (provider or "").strip()
+    m = (model or "").strip()
+    b = (base_url or "").strip()
+    if not p or not m:
+        return ModelReadiness(
+            ready=False, provider=p or None, model=m or None, reason="no model is selected"
+        )
+    if p.lower() == "anthropic":
+        return ModelReadiness(ready=True, provider=p, model=m)
+    if not b:
+        return ModelReadiness(
+            ready=False,
+            provider=p,
+            model=m,
+            reason="the selected model has no serving endpoint",
+        )
+    return ModelReadiness(ready=True, provider=p, model=m)
+
+
+#: Providers served by a locally-managed llama.cpp server the Desktop_Shell
+#: supervises. Only these get a live ``/health`` probe in the run-start gate;
+#: cloud providers keep the structural check (their key is verified at call time).
+_LOCAL_HEALTH_PROVIDERS = frozenset({"llamacpp"})
+
+#: Bounded wall-clock budget for the local readiness probe (seconds). Short so a
+#: dead endpoint fails the gate fast rather than stalling run start.
+LOCAL_HEALTH_TIMEOUT = 2.0
+
+
+def is_local_llamacpp(provider: str | None) -> bool:
+    """Whether ``provider`` names a locally-served llama.cpp endpoint (R5.2)."""
+    return (provider or "").strip().lower() in _LOCAL_HEALTH_PROVIDERS
+
+
+def probe_local_health(base_url: str, timeout: float = LOCAL_HEALTH_TIMEOUT) -> bool:
+    """Bounded live ``GET {base_url}/health`` for a local llama.cpp server (R5.2).
+
+    Returns ``True`` only when the server answers ``2xx`` within ``timeout``. A
+    ``503`` (llama.cpp reports this while the model is still loading) or an
+    unreachable endpoint returns ``False`` so the run-start gate rejects the run
+    *before* a run record is created. Never raises: any transport error is a
+    "not healthy" verdict.
+    """
+    clean = (base_url or "").strip().rstrip("/")
+    if not clean:
+        return False
+    httpx = _import_httpx()
+    bounded = max(0.1, float(timeout))
+    limit = httpx.Timeout(bounded, connect=bounded, read=bounded, write=bounded, pool=bounded)
+    try:
+        with httpx.Client(timeout=limit) as client:
+            response = client.get(f"{clean}/health")
+    except Exception:
+        return False
+    return bool(200 <= response.status_code < 300)
+
+
+# ── Reasoning effort mapping (R17.2, R17.4) ──────────────────────────────────
+
+#: Mapped thinking-token budgets for older Anthropic models that still take a
+#: manual budget. Claude 4.6+ ignores these in favour of adaptive thinking.
+_ANTHROPIC_EFFORT_BUDGET: dict[str, int] = {"low": 4096, "medium": 12288, "high": 24576}
+
+#: Model-name markers for OpenAI-compatible reasoning models that accept the
+#: ``reasoning_effort`` parameter (o-series, GPT-5+, and common open reasoning
+#: families served OpenAI-style).
+_OPENAI_REASONING_MARKERS = (
+    "o1",
+    "o3",
+    "o4",
+    "gpt-5",
+    "gpt-6",
+    "reason",
+    "think",
+    "deepseek-r",
+    "qwq",
+    "-r1",
+)
+
+
+def _anthropic_minor_version(model: str) -> tuple[int, int] | None:
+    """Parse a Claude major.minor from a model id (``claude-opus-4-6`` → ``(4, 6)``)."""
+    match = re.search(r"(\d+)[.\-](\d+)", model)
+    if match is None:
+        return None
+    return int(match.group(1)), int(match.group(2))
+
+
+def reasoning_effort_capability(
+    provider: str, model: str
+) -> Literal["openai", "anthropic_adaptive", "anthropic_budget", "none"]:
+    """The reasoning-effort parameter shape a model accepts, or ``"none"`` (R17.4).
+
+    Declared per provider capability:
+
+    * OpenAI-compatible reasoning models → the ``reasoning_effort`` parameter.
+    * Anthropic Claude 4.6+ → adaptive thinking + ``output_config.effort`` (the
+      2026 behaviour; the manual budget is deprecated on those models).
+    * Older Anthropic thinking models (3.7, 4.0-4.5) → a mapped
+      ``thinking.budget_tokens``.
+    * Anything else (base chat models, most local GGUF) → no parameter.
+    """
+    p = (provider or "").strip().lower()
+    m = (model or "").strip().lower()
+    if not m:
+        return "none"
+    if p == "anthropic":
+        version = _anthropic_minor_version(m)
+        if version is None:
+            return "none"
+        if version >= (4, 6):
+            return "anthropic_adaptive"
+        if version >= (4, 0) or version == (3, 7):
+            return "anthropic_budget"
+        return "none"
+    if p in _OPENAI_COMPATIBLE_PROVIDERS and any(mark in m for mark in _OPENAI_REASONING_MARKERS):
+        return "openai"
+    return "none"
+
+
+def _reasoning_effort_payload(
+    request: AgentRunRequest, provider: str, model: str
+) -> dict[str, Any]:
+    """Provider-specific fields for the selected Reasoning_Effort, or ``{}`` (R17.2, R17.4).
+
+    Returns an empty mapping — so no field is sent — when the run carries no
+    effort preference or the model has no reasoning-effort parameter.
+    """
+    level = request.reasoning_effort
+    if level is None:
+        return {}
+    capability = reasoning_effort_capability(provider, model)
+    if capability == "openai":
+        return {"reasoning_effort": level}
+    if capability == "anthropic_adaptive":
+        return {"thinking": {"type": "adaptive"}, "output_config": {"effort": level}}
+    if capability == "anthropic_budget":
+        return {"thinking": {"type": "enabled", "budget_tokens": _ANTHROPIC_EFFORT_BUDGET[level]}}
+    return {}
+
+
 def _anthropic_messages(
     *,
     request: AgentRunRequest,
@@ -912,7 +1196,10 @@ def _anthropic_messages(
         payload["top_p"] = top_p
     if system_prompt:
         payload["system"] = system_prompt
-    response = _post_json(f"{base_url}/messages", headers, payload, timeout)
+    payload.update(_reasoning_effort_payload(request, "anthropic", model))
+    response = _post_json(
+        f"{base_url}/messages", headers, payload, timeout, provider="anthropic"
+    )
     text = _content_to_text(response.get("content"))
     if not text:
         raise ModelRuntimeError("Anthropic returned an empty message")
@@ -973,6 +1260,8 @@ def _post_json(
     headers: Mapping[str, str],
     payload: Mapping[str, Any],
     timeout: float,
+    *,
+    provider: str | None = None,
 ) -> dict[str, Any]:
     httpx = _import_httpx()
 
@@ -981,8 +1270,16 @@ def _post_json(
             response = client.post(url, headers=dict(headers), json=dict(payload))
     except httpx.HTTPError as exc:
         raise ModelRuntimeError(str(exc)) from exc
+    if response.status_code in (401, 403):
+        # R6: an auth rejection carries only the provider + status. The response
+        # body (which can echo the sent key) and request headers are dropped, so
+        # nothing secret reaches a user-facing frame or a log.
+        raise ProviderAuthError(provider, response.status_code)
     if response.status_code >= 400:
         detail = response.text.strip().replace("\n", " ")[:500]
+        context_error = _context_window_error(detail)
+        if context_error is not None:
+            raise context_error
         raise ModelRuntimeError(f"http {response.status_code}: {detail}")
     try:
         parsed = response.json()
@@ -999,6 +1296,8 @@ def _stream_json_lines(
     headers: Mapping[str, str],
     payload: Mapping[str, Any],
     timeout: float,
+    *,
+    provider: str | None = None,
 ) -> Iterator[dict[str, Any]]:
     httpx = _import_httpx()
     try:
@@ -1012,9 +1311,15 @@ def _stream_json_lines(
                 json=dict(payload),
             ) as response,
         ):
+            if response.status_code in (401, 403):
+                # R6: redact — see _post_json.
+                raise ProviderAuthError(provider, response.status_code)
             if response.status_code >= 400:
                 detail = response.read().decode(errors="replace").strip()
                 detail = detail.replace("\n", " ")[:500]
+                context_error = _context_window_error(detail)
+                if context_error is not None:
+                    raise context_error
                 raise ModelRuntimeError(f"http {response.status_code}: {detail}")
             for line in response.iter_lines():
                 frame = _parse_stream_line(line)

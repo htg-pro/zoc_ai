@@ -38,6 +38,7 @@ EventType = Literal[
     "edit-file",
     "command",
     "review",
+    "stage",
     "summary",
     "approval",
     "done",
@@ -45,6 +46,14 @@ EventType = Literal[
 
 #: The model tier selected by the Allocator (R1.9).
 ModelTier = Literal["local-slm", "edge", "cloud"]
+
+#: The six user-facing stages the Stage_Machine reports (R7.1). The nine FSM
+#: stages are folded onto these by ``stage_view.project_stages`` in the Gateway.
+ReportedStage = Literal["analyze", "plan", "edit", "check", "review", "summary"]
+
+#: The state of one reported stage (R7.1). ``failed`` always carries a reason
+#: (R7.3); ``active`` is held by at most one stage at a time (R7.2).
+StageState = Literal["pending", "active", "succeeded", "failed", "skipped"]
 
 
 class BaseEvent(BaseModel):
@@ -175,6 +184,10 @@ class EditFileEvent(BaseEvent):
     adds: int = 0
     dels: int = 0
     status: Literal["running", "done", "failed"] = "done"
+    #: Hash of the target file's content when the proposal was produced (R12.7).
+    #: The renderer marks the proposal stale when this disagrees with the file's
+    #: current hash. ``None`` when the file did not exist at proposal time.
+    base_hash: str | None = Field(default=None, alias="baseHash")
 
 
 class CommandEvent(BaseEvent):
@@ -221,6 +234,10 @@ class ReviewFile(BaseModel):
     adds: int = 0
     dels: int = 0
     summary: str | None = None
+    #: SHA-256 of the real target file's bytes at review time (R12.7). The
+    #: renderer marks the reviewed change stale when this disagrees with the
+    #: file's current hash. ``None`` when the target did not exist at review time.
+    base_hash: str | None = Field(default=None, alias="baseHash")
 
 
 class ReviewEvent(BaseEvent):
@@ -238,6 +255,11 @@ class SummaryEvent(BaseEvent):
 class ApprovalEvent(BaseEvent):
     type: Literal["approval"] = "approval"
     prompt: str
+    #: Identifier of the operation awaiting approval (R11.5). The renderer's
+    #: approval row shows this so the user knows what they are approving; the
+    #: run stream carries a tool invocation as ``CommandEvent`` and its gate as
+    #: this event, so this is where the operation identity belongs.
+    operation: str | None = None
     decision: Literal["approve", "reject"] | None = None
 
 
@@ -287,10 +309,29 @@ class TestResultsEvent(BaseEvent):
     timed_out: bool = Field(default=False, alias="timedOut")
 
 
+class StageEvent(BaseEvent):
+    """A stage-machine transition, reported in the six user-facing stages (R7).
+
+    The Gateway FSM has nine stages; this frame carries the *reported* stage a
+    transition maps onto (see ``stage_view.project_stages``). Emitted alongside
+    the existing diary frames so the frontend stops inferring the stage from
+    thinking text.
+    """
+
+    type: Literal["stage"] = "stage"
+    stage: ReportedStage
+    state: StageState
+    #: Human-readable failure reason; required when ``state`` is ``failed`` (R7.3).
+    reason: str | None = None
+
+
 class DoneEvent(BaseEvent):
     type: Literal["done"] = "done"
     ok: bool
     reason: str | None = None
+    #: Count of files this run changed (R8.7). Zero for a run that applied no
+    #: edits; the run summary states that and names ``reason`` in agent mode (R8.8).
+    files_changed: int = Field(default=0, alias="filesChanged", ge=0)
 
 
 # ── Discriminated union + emit-gate entrypoint ──────────────────────────────
@@ -308,6 +349,7 @@ AgentEvent = Annotated[
     | EditFileEvent
     | CommandEvent
     | ReviewEvent
+    | StageEvent
     | SummaryEvent
     | ApprovalEvent
     | PermissionEvent
@@ -355,11 +397,14 @@ __all__ = [
     "ReadFileRef",
     "ReadFilesEvent",
     "RecoveryAttemptEvent",
+    "ReportedStage",
     "ReviewCheck",
     "ReviewCheckStatus",
     "ReviewEvent",
     "ReviewFile",
     "ReviewValidation",
+    "StageEvent",
+    "StageState",
     "SummaryEvent",
     "TestResultsEvent",
     "ThinkingEvent",

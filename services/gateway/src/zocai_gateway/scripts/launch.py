@@ -21,10 +21,13 @@ behavioral change (R10.2/R10.3):
    exact port the server listens on — there is no bind-twice race window.
 
 The workspace root the in-process memory matrix / diary workers run against is
-resolved from the optional :data:`WORKSPACE_ENV_VAR` environment variable; when
-unset, ``create_app`` runs without a workspace-backed matrix (its documented
-``workspace_root=None`` behavior). ``GatewaySettings`` intentionally does not
-carry the workspace root, so it is resolved here.
+**not** pinned here as an immutable override. ``create_app`` is called without a
+``workspace_root``, so its :class:`~zocai_gateway.workspace_binder.WorkspaceBinder`
+resolves the active root for every request from the persisted desktop config
+(``~/.zoc-studio/desktop.json``) and, as a fallback, the optional
+:data:`WORKSPACE_ENV_VAR` environment variable. A folder opened or changed in the
+desktop shell after launch therefore rebinds without a process restart (R1.2).
+``GatewaySettings`` intentionally does not carry the workspace root.
 """
 
 from __future__ import annotations
@@ -178,26 +181,39 @@ def main() -> int:
     settings = GatewaySettings.from_env()  # host, port, auth token (R12.1)
     settings.enforce_bind_policy()  # refuse non-loopback w/o auth (R12.2)
 
-    workspace_root = resolve_workspace_root()
+    # R1.2/R1.6: the production sidecar does NOT pin the workspace as an
+    # immutable ``create_app(workspace_root=...)`` override. Doing so froze the
+    # root for the process's life, so a folder opened (or changed) in the
+    # desktop shell after launch was invisible until a restart. Instead the
+    # WorkspaceBinder re-reads the desktop config (``~/.zoc-studio/desktop.json``)
+    # and the ``ZOC_STUDIO_WORKSPACE`` env var on every request, so a rebind
+    # needs no restart. The env var stays a *fallback* the supervisor may set —
+    # it is resolution source #3 inside the binder, never the override. We
+    # resolve it here only for a startup log line.
+    startup_root = resolve_workspace_root()
+    if startup_root is not None:
+        print(f"startup workspace (fallback): {startup_root}", file=sys.stderr)
     lazy_index = resolve_lazy_index(args)
     sock = bind_loopback_or_configured(settings)  # OS-assigned port if 0
     port = int(sock.getsockname()[1])
 
-    return asyncio.run(_serve(settings, workspace_root, sock, port, lazy_index))
+    return asyncio.run(_serve(settings, sock, port, lazy_index))
 
 
 async def _serve(
     settings: GatewaySettings,
-    workspace_root: Path | None,
     sock: socket.socket,
     port: int,
     lazy_index: bool = False,
 ) -> int:
     from zocai_gateway.app import create_app
 
+    # No ``workspace_root`` override: the binder resolves the active root
+    # dynamically (desktop config → ``ZOC_STUDIO_WORKSPACE`` env → none) for
+    # every request, so a workspace/config change rebinds without a restart
+    # (R1.2). Tests and explicit injection still pass ``create_app(workspace_root=…)``.
     app = create_app(
         settings=settings,
-        workspace_root=workspace_root,
         start_mcp=True,
         lazy_index=lazy_index,
         mcp_user_config_path=resolve_user_mcp_config_path(),

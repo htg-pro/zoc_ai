@@ -9,12 +9,43 @@ import { Kbd } from "@/components/ui/kbd";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Separator } from "@/components/ui/separator";
-import { AgentRunFeedView } from "@/features/agent/AgentRunFeed";
+import { RunCardView } from "@/features/agent/RunCardView";
+import { normalizeEvents } from "@/features/agent/normalize";
 import { ToolCallCard } from "@/features/agent/ToolCallCard";
 import { DiffCard } from "@/features/agent/DiffCard";
 import { MessageItem } from "@/features/agent/MessageItem";
 import { MOCK_DIFF, MOCK_MESSAGES, MOCK_TOOL_CALL } from "@/lib/mock-data";
 import type { ToolCall } from "@zoc-studio/shared-types";
+
+/**
+ * A small run card for the demo surfaces. Built through the real
+ * `normalizeEvents` fold so the story cannot drift from what the app renders.
+ */
+const DEMO_CARD = {
+  runId: "demo-run",
+  rows: normalizeEvents(
+    [
+      {
+        type: "intent",
+        seq: 0,
+        runId: "demo-run",
+        ts: "2024-01-01T00:00:00.000Z",
+        text: "Add a settings toggle",
+        modelTier: "local-slm",
+        contextWindowTokens: 4096,
+      },
+      {
+        type: "command",
+        seq: 1,
+        runId: "demo-run",
+        ts: "2024-01-01T00:00:01.000Z",
+        command: "pnpm test",
+        exitCode: 0,
+      },
+    ],
+    { activeRunId: "demo-run", boundMessageId: null, highestSeq: -1 },
+  ).rows,
+};
 
 const TOOL_STATES: ToolCall[] = (["pending", "running", "succeeded", "failed", "needs_approval"] as const).map((status, i) => ({
   ...MOCK_TOOL_CALL,
@@ -98,7 +129,7 @@ export function ShowcaseView() {
 
         <Story title="Agent workflow timeline">
           <div className="max-w-sm">
-            <AgentRunFeedView events={[]} />
+            <RunCardView card={DEMO_CARD} focused collapsed={false} />
           </div>
         </Story>
 

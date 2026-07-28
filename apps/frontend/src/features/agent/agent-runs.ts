@@ -23,6 +23,9 @@ export type RunPhase =
   | "running"
   | "stopping"
   | "paused"
+  | "stalled"
+  | "reconnecting"
+  | "interrupted"
   | "done"
   | "failed"
   | "cancelled";
@@ -34,6 +37,10 @@ export interface TrackedRun {
   phase: RunPhase;
   /** First line of the prompt, for the switcher label. */
   title: string;
+  /** Full originating prompt, used when retrying this specific run. */
+  prompt?: string;
+  /** User chat message this run answers; reused rather than duplicated on Retry. */
+  messageId?: string;
   /** Epoch ms when the run started. */
   startedAt: number;
   /** Epoch ms when the run reached a terminal phase, if it has. */
@@ -42,12 +49,18 @@ export interface TrackedRun {
   stage?: string;
   tokensUsed?: number;
   tokenLimit?: number;
+  /** Files changed, captured from the terminal DoneEvent (R8.7). */
+  filesChanged?: number;
+  /** Outcome reason for a zero-change or failed run (R8.8). */
+  outcomeReason?: string | null;
 }
 
 const TERMINAL: ReadonlySet<RunPhase> = new Set<RunPhase>([
   "done",
   "failed",
   "cancelled",
+  // Retries exhausted / connection lost: terminal from the user's view (R8.4).
+  "interrupted",
 ]);
 
 /** Whether a run has finished (and so should collapse to a summary card). */
@@ -55,12 +68,37 @@ export function isTerminal(run: Pick<TrackedRun, "phase">): boolean {
   return TERMINAL.has(run.phase);
 }
 
+/** Transient trouble states that keep the run alive but need surfacing (R8.3/R8.4). */
+export function isTroubled(run: Pick<TrackedRun, "phase">): boolean {
+  return run.phase === "stalled" || run.phase === "reconnecting";
+}
+
 /**
- * Whether the Stop control should be shown for this run: only while it is
- * initializing, running, or already stopping (Phase 3, stop-button rules).
+ * Whether a Retry control should be offered: a run that stalled, was
+ * interrupted, failed, or was stopped can be re-run (R8.3, R8.4).
+ */
+export function canRetryRun(run: Pick<TrackedRun, "phase">): boolean {
+  return (
+    run.phase === "stalled" ||
+    run.phase === "interrupted" ||
+    run.phase === "failed" ||
+    run.phase === "cancelled"
+  );
+}
+
+/**
+ * Whether the Stop control should be shown for this run: while it is
+ * initializing, running, stalled, reconnecting, or already stopping. A stalled
+ * or reconnecting run is still live, so the user must be able to cancel it.
  */
 export function canStopRun(run: Pick<TrackedRun, "phase">): boolean {
-  return run.phase === "initializing" || run.phase === "running" || run.phase === "stopping";
+  return (
+    run.phase === "initializing" ||
+    run.phase === "running" ||
+    run.phase === "stalled" ||
+    run.phase === "reconnecting" ||
+    run.phase === "stopping"
+  );
 }
 
 /**
@@ -82,6 +120,12 @@ export function runStatusLabel(run: Pick<TrackedRun, "phase">): string {
       return "Stopping…";
     case "paused":
       return "Paused";
+    case "stalled":
+      return "Stalled";
+    case "reconnecting":
+      return "Reconnecting…";
+    case "interrupted":
+      return "Interrupted";
     case "done":
       return "Completed";
     case "cancelled":

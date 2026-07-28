@@ -146,7 +146,7 @@ describe("AgentPanel preservation — header chrome (idle)", () => {
     expect(topBar).toBeInTheDocument();
     expect(topBar.className).toContain("px-3.5");
     expect(topBar.className).toContain("py-2");
-    expect(topBar.className).toContain("gap-3");
+    expect(topBar.className).toContain("gap-2");
   });
 
   it("preserves the purple Zap badge with its color tokens", () => {

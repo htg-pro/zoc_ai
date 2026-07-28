@@ -248,12 +248,25 @@ describe("app store", () => {
     vi.restoreAllMocks();
   });
 
-  it("appends a user message and a simulated assistant reply", async () => {
+  it("appends the user message, then reports that the agent is unreachable", async () => {
+    // The run gate must admit the run so the offline branch is what's exercised:
+    // Ask mode needs no workspace and the mock provider is always ready.
+    useApp.setState({
+      liveMode: false,
+      agentMode: "ask",
+      selectedModel: { provider: "mock", model: "mock-model" },
+      llamaCppStatus: null,
+    });
     const start = useApp.getState().chat.length;
     useApp.getState().sendUserMessage("hello agent");
     expect(useApp.getState().chat.length).toBe(start + 1);
     await new Promise((r) => setTimeout(r, 700));
     expect(useApp.getState().chat.length).toBe(start + 2);
+    // Offline used to produce a fabricated assistant answer; it is now a system
+    // line that says nothing was sent.
+    const last = useApp.getState().chat[start + 1];
+    expect(last.message?.role).toBe("system");
+    expect(last.message?.content).toContain("Can't reach the agent service");
     expect(useApp.getState().streaming).toBe(false);
   });
 

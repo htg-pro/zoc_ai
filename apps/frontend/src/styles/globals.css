@@ -7,11 +7,22 @@
 /* ── "Zoc Spark" design tokens (Zoc AI rebrand) ─────────────────
  * Additive brand layer used by the redesigned agent panel. These sit
  * alongside the existing hsl(var(--*)) system so the rest of the app is
- * untouched; only features/agent components reference --zoc-*.
+ * untouched; features/agent and features/chat are its only consumers.
  */
 :root {
-  --zoc-ember: #fb923c;       /* brand accent · running */
-  --zoc-agent: #8b7cf6;       /* agent-authored content */
+  /* Narrowed role (R17.2): "blocked on you" only — the approval dock and
+   * destructive confirmation. Value unchanged, so every existing consumer is
+   * unaffected; features/agent keeps its wider legacy usage until the panel is
+   * deleted. Nothing in features/chat may use ember for anything else. */
+  --zoc-ember: #fb923c;       /* blocked on you (approval / destructive) */
+  --zoc-agent: #8b7cf6;       /* agent-authored content · brand primary */
+  /* The three competing violets resolve here (R17.1, R17.2). --zoc-agent
+   * (#8B7CF6) wins because it is the value already resolving at runtime;
+   * #9B6AF1 — hard-coded across features/agent and the Monaco rules below —
+   * becomes --zoc-agent-strong; the #7c6af7 in doc/PROMPT.md is documentation
+   * drift and is not carried forward as a token. */
+  --zoc-agent-strong: #9b6af1; /* mark gradient stop · agent caret · focus ring */
+  --zoc-agent-soft: #b79bf9;   /* mark spark highlight · hover tints */
   --zoc-info: #60a5fa;        /* tool calls / reads / Ask mode */
   --zoc-success: #4ade80;     /* completed / applied / pass */
   --zoc-error: #f87171;       /* errors / validation fail */
@@ -29,6 +40,75 @@
   --zoc-text-secondary: #c8c8ce; /* tool labels, file paths */
   --zoc-text-muted: #a1a1aa;  /* secondary text, timestamps, badges */
   --zoc-text-faint: #71717a;  /* icons, empty states, section labels */
+}
+
+/* ── Chat_Surface token layer ────────────────────────────────────
+ * zoc-agent-chat-rebuild — R17.1, R17.2, R17.3, R18.7
+ *
+ * Extends the Spark layer above; it is not a third token system. The shadcn
+ * hsl(var(--*)) sets in @layer base stay untouched, and every value here is a
+ * CSS custom property so a theme flip is a property re-resolution rather than a
+ * React render (R17.3).
+ *
+ * Dark-first, matching the Spark neutrals above: the app ships
+ * <html class="dark">, and the surface values are the ones the design specifies
+ * for that theme. The .dark counterpart below pins the theme-dependent subset
+ * so a later light-theme pass edits :root alone and cannot silently move dark.
+ */
+:root {
+  /* Elevation. Three levels, no more — the panel, the decision card, the
+   * popover. A fourth level is what produced the undifferentiated card stack
+   * this rebuild exists to fix. */
+  --zoc-elev-0: transparent;                  /* message tier — unboxed */
+  --zoc-elev-1: #131318;                      /* decision card */
+  --zoc-elev-2: #1a1a21;                      /* popover / permission dock */
+  --zoc-shadow-1: 0 1px 2px rgb(0 0 0 / 0.24);
+  --zoc-shadow-2: 0 8px 24px rgb(0 0 0 / 0.36);
+
+  /* Transcript rhythm. Named so row spacing is one decision rather than a
+   * per-component guess. */
+  --zoc-row-gap: 12px;
+  --zoc-row-gap-tight: 4px;                   /* between activity entries */
+  --zoc-rail-inset: 20px;                     /* activity tier indent */
+  --zoc-rail-width: 1px;
+  --zoc-node-size: 8px;
+  --zoc-gutter: 16px;                         /* panel horizontal padding */
+
+  /* Type scale. Replaces the ad-hoc text-[12px] / text-[12.5px] literals that
+   * made an answer typographically identical to a read_file breadcrumb. */
+  --zoc-text-answer: 14px;
+  --zoc-leading-answer: 1.6;
+  --zoc-text-body: 13px;
+  --zoc-leading-body: 1.5;
+  --zoc-text-meta: 12px;
+  --zoc-leading-meta: 1.4;
+  --zoc-text-label: 11px;
+  --zoc-tracking-label: 0.04em;
+
+  /* Radii, derived from the existing --radius so the panel matches the app
+   * instead of declaring its own corner language. */
+  --zoc-radius-card: var(--radius);
+  --zoc-radius-chip: calc(var(--radius) - 4px);
+
+  /* Motion durations, all inside the 240ms entrance budget (R19.2). The two
+   * easings are the curves the .zoc-transition-* classes below already use. */
+  --zoc-dur-instant: 80ms;
+  --zoc-dur-fast: 140ms;
+  --zoc-dur-base: 200ms;
+  --zoc-dur-slow: 240ms;
+  --zoc-ease-out: cubic-bezier(0.2, 0, 0, 1);
+  --zoc-ease-inout: cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+/* Theme-dependent subset, pinned for the dark theme. The rhythm, type scale,
+ * radii, and motion tokens are theme-invariant and are declared once above —
+ * restating them here would give one value two homes. */
+.dark {
+  --zoc-elev-0: transparent;
+  --zoc-elev-1: #131318;
+  --zoc-elev-2: #1a1a21;
+  --zoc-shadow-1: 0 1px 2px rgb(0 0 0 / 0.24);
+  --zoc-shadow-2: 0 8px 24px rgb(0 0 0 / 0.36);
 }
 
 @keyframes zoc-pulse {
@@ -345,5 +425,69 @@
   .animate-fade-row,
   .motion-fade-row {
     animation: fade-row 0.2s ease-out both !important;
+  }
+}
+
+/* ── Chat surface: focus ring + transition tokens (R18.3, R18.6, R20.2) ──
+ * A single focus-visible ring utility applied by the shared interactive
+ * primitives, and the closed transition-token classes the Chat_Renderer draws
+ * from. `transitionClass()` in lib/reduced-motion.ts is the only producer of
+ * these class names.
+ */
+.zoc-focus-ring:focus-visible {
+  outline: 2px solid var(--zoc-accent, #a78bfa);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+.zoc-transition-row-enter {
+  transition: transform 160ms cubic-bezier(0.2, 0, 0, 1), opacity 160ms cubic-bezier(0.2, 0, 0, 1);
+}
+.zoc-transition-row-expand {
+  transition: max-height 200ms cubic-bezier(0.2, 0, 0, 1), opacity 200ms cubic-bezier(0.2, 0, 0, 1);
+}
+.zoc-transition-state-change {
+  transition: background-color 120ms cubic-bezier(0.4, 0, 0.2, 1), color 120ms cubic-bezier(0.4, 0, 0.2, 1);
+}
+/* Reduced motion: opacity only, capped at REDUCED_MOTION_MAX_MS (100ms). */
+.zoc-transition-reduced {
+  transition: opacity 100ms linear;
+}
+@media (prefers-reduced-motion: reduce) {
+  .zoc-transition-row-enter,
+  .zoc-transition-row-expand,
+  .zoc-transition-state-change {
+    transition: opacity 100ms linear !important;
+  }
+}
+
+/* Agent header is resized by a split-pane, so viewport media queries are not
+ * sufficient. Container rules hide secondary labels before they can overlap
+ * the active mode/model controls. */
+.agent-panel-header-row {
+  container-type: inline-size;
+}
+
+@container (max-width: 560px) {
+  .agent-panel-instructions-label {
+    display: none;
+  }
+  .agent-panel-model-picker button {
+    max-width: 150px;
+  }
+}
+
+@container (max-width: 440px) {
+  .agent-panel-idle {
+    display: none;
+  }
+  .agent-panel-header-brand {
+    gap: 0.5rem;
+  }
+  .agent-panel-header-subtitle {
+    max-width: 86px;
+  }
+  .agent-panel-model-picker button {
+    max-width: 124px;
   }
 }

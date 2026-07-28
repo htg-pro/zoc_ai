@@ -46,6 +46,7 @@ vi.mock("@/lib/agent-client", () => ({
 
 import { OnboardingWizard } from "@/features/onboarding/OnboardingWizard";
 import { FIRST_TASK_PROMPT } from "@/features/onboarding/wizard-steps";
+import { loadLocalModels } from "@/lib/local-models";
 import { useApp } from "@/lib/store";
 import * as bridge from "@/lib/tauri-bridge";
 
@@ -75,6 +76,13 @@ describe("OnboardingWizard", () => {
     expect(screen.getByRole("button", { name: /continue/i })).not.toBeDisabled();
     clickButton(/continue/i);
 
+    // Committing the model step registers the chosen .gguf in the model
+    // registry, so it appears in the picker and onboarding yields a usable
+    // model (defect #2). Loading it happens later when the user selects it.
+    await waitFor(() =>
+      expect(loadLocalModels().some((m) => m.path === "/models/qwen.gguf")).toBe(true),
+    );
+
     // 4 — hardware check, populated from the sidecar probe.
     await screen.findByRole("heading", { name: /hardware check/i });
     await waitFor(() =>
@@ -92,9 +100,13 @@ describe("OnboardingWizard", () => {
     expect(screen.getByText(FIRST_TASK_PROMPT)).toBeInTheDocument();
 
     await waitFor(() => expect(bridge.desktopConfigSet).toHaveBeenCalled());
-    const cfg = (
+    // The workspace step now commits (persists) the workspace, and finish
+    // records first-run completion while preserving the bound root. Assert on
+    // the final persisted config rather than the first call.
+    const calls = (
       bridge.desktopConfigSet as unknown as { mock: { calls: unknown[][] } }
-    ).mock.calls[0][0] as {
+    ).mock.calls;
+    const cfg = calls[calls.length - 1][0] as {
       workspace_root: string | null;
       first_run_done: boolean;
       telemetry_opt_in: boolean;
@@ -103,6 +115,9 @@ describe("OnboardingWizard", () => {
     expect(cfg.first_run_done).toBe(true);
     // Telemetry stays off unless the user turns it on.
     expect(cfg.telemetry_opt_in).toBe(false);
+    // The workspace step mirrored the root into the store (the explorer + git
+    // watch it), so the app is bound to the chosen folder after onboarding.
+    expect(useApp.getState().workspaceRoot).toBe("/tmp/proj");
 
     clickButton(/start exploring/i);
     expect(onComplete).toHaveBeenCalled();

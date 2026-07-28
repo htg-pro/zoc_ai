@@ -60,7 +60,7 @@ def test_agent_run_streams_ordered_events_and_mirrors_diary(tmp_path: Path) -> N
 
 
 def test_ask_run_streams_text_only(tmp_path: Path) -> None:
-    app = create_app(workspace_root=tmp_path)
+    app = create_app(workspace_root=tmp_path, brain=DefaultAgentBrain())
     with TestClient(app) as client:
         run_id = client.post(
             "/v1/agent/run", json={"prompt": "explain the design", "mode": "ask"}

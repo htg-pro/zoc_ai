@@ -48,6 +48,7 @@ class ErrorCode:
 
     NO_WORKSPACE: Final = "no_workspace"
     WORKSPACE_INVALID: Final = "workspace_invalid"
+    WORKSPACE_REBOUND: Final = "workspace_rebound"
     PATH_OUTSIDE_WORKSPACE: Final = "path_outside_workspace"
     RUN_NOT_FOUND: Final = "run_not_found"
     RUN_ALREADY_FINISHED: Final = "run_already_finished"
@@ -57,11 +58,17 @@ class ErrorCode:
     RUN_FAILED: Final = "run_failed"
     RUN_CANCELLED: Final = "run_cancelled"
     MODEL_PROCESS_EXITED: Final = "model_process_exited"
+    MODEL_NOT_READY: Final = "model_not_ready"
+    MODEL_UNAVAILABLE: Final = "model_unavailable"
+    CONTEXT_WINDOW_EXCEEDED: Final = "context_window_exceeded"
+    PROVIDER_AUTH_INVALID: Final = "provider_auth_invalid"
     MODE_NOT_PERMITTED: Final = "mode_not_permitted"
     INVALID_REQUEST: Final = "invalid_request"
     TERMINAL_NOT_FOUND: Final = "terminal_not_found"
     TERMINAL_SPAWN_FAILED: Final = "terminal_spawn_failed"
     TERMINAL_CWD_INVALID: Final = "terminal_cwd_invalid"
+    GIT_NOT_A_REPOSITORY: Final = "git_not_a_repository"
+    GIT_COMMAND_FAILED: Final = "git_command_failed"
     INTERNAL: Final = "internal_error"
 
 
@@ -73,6 +80,9 @@ ERROR_MESSAGES: Final[dict[str, str]] = {
     ),
     ErrorCode.WORKSPACE_INVALID: (
         "The selected workspace folder is missing or is not a directory. Open the folder again."
+    ),
+    ErrorCode.WORKSPACE_REBOUND: (
+        "The open workspace changed, so this request was resolved against the new folder."
     ),
     ErrorCode.PATH_OUTSIDE_WORKSPACE: (
         "That path is outside the open workspace, so the action was blocked."
@@ -89,12 +99,32 @@ ERROR_MESSAGES: Final[dict[str, str]] = {
     ErrorCode.MODEL_PROCESS_EXITED: (
         "The model process stopped unexpectedly. See logs for details."
     ),
+    ErrorCode.MODEL_NOT_READY: (
+        "No model is ready to serve this run yet. Wait for the selected model to "
+        "finish loading, or pick another."
+    ),
+    ErrorCode.MODEL_UNAVAILABLE: (
+        "The model provider could not be reached. Check the provider and try again."
+    ),
+    ErrorCode.CONTEXT_WINDOW_EXCEEDED: (
+        "The request is too large for this model's context window. Reduce the attached "
+        "context or increase the model's context window in Settings, then retry."
+    ),
+    ErrorCode.PROVIDER_AUTH_INVALID: (
+        "The provider rejected the API key. Check the key in Settings and try again."
+    ),
     ErrorCode.MODE_NOT_PERMITTED: ("That action is not available in the current chat mode."),
     ErrorCode.INVALID_REQUEST: "The request was incomplete or malformed.",
     ErrorCode.TERMINAL_NOT_FOUND: "That terminal session is no longer running.",
     ErrorCode.TERMINAL_SPAWN_FAILED: "The terminal could not be started.",
     ErrorCode.TERMINAL_CWD_INVALID: (
         "The terminal working directory is not inside the open workspace."
+    ),
+    ErrorCode.GIT_NOT_A_REPOSITORY: (
+        "This workspace is not a git repository, so git actions are unavailable."
+    ),
+    ErrorCode.GIT_COMMAND_FAILED: (
+        "A git command failed. See logs for the details."
     ),
     ErrorCode.INTERNAL: "Something went wrong. See logs for details.",
 }
@@ -107,6 +137,8 @@ _RETRYABLE: Final[frozenset[str]] = frozenset(
         ErrorCode.RUN_LIMIT_REACHED,
         ErrorCode.RUN_TIMEOUT,
         ErrorCode.MODEL_PROCESS_EXITED,
+        ErrorCode.MODEL_UNAVAILABLE,
+        ErrorCode.CONTEXT_WINDOW_EXCEEDED,
         ErrorCode.INTERNAL,
     }
 )

@@ -1,8 +1,11 @@
+import { useState } from "react";
 import type { Message } from "@zoc-studio/shared-types";
-import { Bot, MessageSquarePlus } from "lucide-react";
+import { Bot, Brain, ChevronRight, MessageSquarePlus } from "lucide-react";
 import { useApp } from "@/lib/store";
+import { cn } from "@/lib/utils";
 import { MarkdownMessage } from "./MarkdownMessage";
 import { FOLLOW_UP_PREFIX } from "./markdown";
+import { splitReasoning } from "./reasoning";
 
 const ROLE_LABEL = { user: "You", assistant: "Zoc", system: "System", tool: "Tool" } as const;
 
@@ -22,6 +25,14 @@ export function MessageItem({ message }: { message: Message }) {
       message.content.includes("llama-server"));
 
   const isEmpty = !message.content.trim();
+
+  // Defensive second boundary: the commit path already strips inline reasoning,
+  // but a message can also arrive here mid-stream (an unfinished `<think>` block
+  // whose close tag has not been received yet) or from a persisted session
+  // written before stripping existed. Splitting at render keeps reasoning out of
+  // the answer in every one of those cases.
+  const { answer, reasoning } = splitReasoning(message.content);
+  const answerEmpty = !answer.trim();
 
   if (isUser) {
     return (
@@ -75,11 +86,53 @@ export function MessageItem({ message }: { message: Message }) {
           </div>
         ) : (
           <>
-            <MarkdownMessage content={message.content} />
-            <FollowUpButton />
+            {reasoning ? <ReasoningDisclosure reasoning={reasoning} /> : null}
+            {answerEmpty ? (
+              // Reasoning has arrived but the answer has not. Keep showing the
+              // streaming indicator rather than an empty bubble.
+              <div className="flex items-center gap-1 text-[13px] leading-relaxed text-[#D4D4D8]">
+                <span className="inline-block h-1.5 w-1.5 rounded-full bg-[#8b7cf6] animate-typing-dot [animation-delay:0ms]" />
+                <span className="inline-block h-1.5 w-1.5 rounded-full bg-[#8b7cf6] animate-typing-dot [animation-delay:160ms]" />
+                <span className="inline-block h-1.5 w-1.5 rounded-full bg-[#8b7cf6] animate-typing-dot [animation-delay:320ms]" />
+              </div>
+            ) : (
+              <>
+                <MarkdownMessage content={answer} />
+                <FollowUpButton />
+              </>
+            )}
           </>
         )}
       </div>
+    </div>
+  );
+}
+
+/**
+ * Collapsed-by-default disclosure for a model's private reasoning.
+ *
+ * Reasoning is available but never in the reading path: the answer stays the
+ * first thing the user sees.
+ */
+function ReasoningDisclosure({ reasoning }: { reasoning: string }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <div className="mb-1.5" data-testid="reasoning-disclosure">
+      <button
+        type="button"
+        onClick={() => setOpen((value) => !value)}
+        aria-expanded={open}
+        className="inline-flex items-center gap-1 rounded px-1 py-0.5 text-[10.5px] text-[#71717A] transition-colors hover:bg-[#17171C] hover:text-[#C8C8CE]"
+      >
+        <Brain className="h-3 w-3" />
+        Reasoning
+        <ChevronRight className={cn("h-3 w-3 transition-transform", open && "rotate-90")} />
+      </button>
+      {open ? (
+        <p className="mt-1 whitespace-pre-wrap pl-1 text-[12px] leading-relaxed text-[#71717A] italic">
+          {reasoning}
+        </p>
+      ) : null}
     </div>
   );
 }

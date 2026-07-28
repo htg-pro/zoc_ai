@@ -23,13 +23,13 @@ from zocai_gateway.emit_gate import EmitGate
 from zocai_gateway.mode_router import AgentRunRequest, Mode
 from zocai_gateway.model_allocator import Allocation
 from zocai_gateway.model_interface import ModelTier
+from zocai_gateway.reasoning import split_reasoning
 from zocai_gateway.run_pipeline import (
     DefaultAgentBrain,
     RunContext,
     RunPipeline,
+    RuntimeAgentBrain,
     _agent_system_prompt,
-    _extract_thinking,
-    _has_think_block,
     _structured_plan_system_prompt,
 )
 
@@ -84,30 +84,41 @@ def _text_with_first_block(draw: st.DrawFn) -> tuple[str, str]:
 @settings(max_examples=200)
 @given(_text_with_first_block())
 def test_scratchpad_extraction_isolates_first_block(case: tuple[str, str]) -> None:
-    """Property 1: extraction returns the first block content, discarding the rest.
+    """Property 1: a complete block splits into its content plus the body.
 
     Feature: agent-reasoning-engine, Property 1
 
     **Validates: Requirements 1.3, 2.3**
+
+    Retargeted at ``split_reasoning`` (the fail-closed extractor it replaced is
+    gone): a complete block is reported as reasoning with ``had_block`` set.
     """
     text, expected = case
-    assert _extract_thinking(text) == expected
-    assert _has_think_block(text) is True
+    split = split_reasoning(text)
+    assert split.had_block is True
+    # The first block's content is present in the reasoning (split joins every
+    # complete block; the strategy may append a second one).
+    assert expected in split.reasoning
+    # None of the block markup survives into the answer body.
+    assert "<think>" not in split.body.lower()
 
 
 @settings(max_examples=200)
 @given(st.text(max_size=80))
 def test_scratchpad_extraction_empty_when_no_complete_block(text: str) -> None:
-    """Property 1 (contrapositive): no complete block ⇒ empty extraction.
+    """Property 1 (contrapositive): no complete block ⇒ ``had_block`` is False.
 
     Feature: agent-reasoning-engine, Property 1
 
     **Validates: Requirements 1.3, 2.3**
+
+    Retargeted at ``split_reasoning``: removing every closing tag guarantees no
+    complete ``<think>...</think>`` block, so ``had_block`` is False and the
+    split never raises (totality — R6.3).
     """
     # Removing every closing tag guarantees no complete <think>...</think> block.
     without_close = text.replace("</think>", " ")
-    assert _has_think_block(without_close) is False
-    assert _extract_thinking(without_close) == ""
+    assert split_reasoning(without_close).had_block is False
 
 
 # ── Property 3: malformed thinking fails closed ──────────────────────────────
@@ -120,32 +131,29 @@ _malformed = st.text(max_size=60).map(lambda s: ("noise:" + s).replace("</think>
 
 @settings(max_examples=200, deadline=None)
 @given(response=_malformed)
-def test_malformed_thinking_fails_closed(response: str) -> None:
-    """Property 3: a non-empty malformed thinking response reaches ERROR_CLOSED.
+def test_malformed_thinking_degrades_gracefully(response: str) -> None:
+    """Property 3 (superseded): a no-block thinking response degrades, never raises.
 
     Feature: agent-reasoning-engine, Property 3
 
-    **Validates: Requirements 2.4**
+    **Validates: Requirements 6.2, 6.3**
+
+    The old fail-closed behavior is gone: a non-empty response with no complete
+    ``<think>...</think>`` block is treated as the analysis result and ANALYZE
+    advances. ``think`` returns a plain string (never raising), and the split
+    reports no complete block.
     """
-    with tempfile.TemporaryDirectory() as tmp:
-        events: list[dict[str, object]] = []
-        request = AgentRunRequest(
-            prompt="edit the parser",
-            mode=Mode.AGENT,
-            provider="mock",
-            model="mock-model",
-            base_url="http://model.test",
-        )
-        with patch("zocai_gateway.run_pipeline.generate_text", return_value=response):
-            result = RunPipeline(
-                request,
-                "malformed-thinking",
-                gate=EmitGate(sink=lambda event: events.append(dict(event))),
-                text_sink=lambda _chunk: None,
-                close=lambda: None,
-                workspace_root=Path(tmp),
-            ).run()
-    assert result.stage.value == "error_closed"
+    request = AgentRunRequest(
+        prompt="edit the parser",
+        mode=Mode.AGENT,
+        provider="mock",
+        model="mock-model",
+        base_url="http://model.test",
+    )
+    with patch("zocai_gateway.run_pipeline.generate_text", return_value=response):
+        scratchpad = RuntimeAgentBrain().think(request, _context())
+    assert isinstance(scratchpad, str)
+    assert split_reasoning(response).had_block is False
 
 
 # ── Property 2: raw thinking never leaks beyond the thinking row ─────────────

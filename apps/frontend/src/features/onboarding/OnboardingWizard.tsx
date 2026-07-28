@@ -18,15 +18,19 @@ import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { useApp } from "@/lib/store";
 import { getAgentClient } from "@/lib/agent-client";
+import { resolveAgentPort } from "@/lib/agent-port";
+import { loadLocalModels, readinessDeadlineSecs, saveLocalModels } from "@/lib/local-models";
+import { secureStore } from "@/lib/secure-store";
 import {
+  agentRestart,
   desktopConfigGet,
   desktopConfigSet,
   isTauri,
   legacyDetect,
   legacyImport,
+  onAgentStatus,
   pickDirectory,
   pickGgufFile,
-  setWorkspaceRoot,
   type DesktopConfig,
   type LegacyDetection,
 } from "@/lib/tauri-bridge";
@@ -38,17 +42,37 @@ import {
   MODEL_DOWNLOADS,
   WIZARD_STEPS,
   canAdvance,
+  commitModelStep,
+  commitWorkspaceStep,
   describeHardware,
   describeRecommendation,
   nextStep,
   previousStep,
+  reduceSidecarWait,
   stepIndex,
   type HardwareInfo,
+  type SidecarWait,
   type WizardState,
 } from "./wizard-steps";
 
 interface Props {
   onComplete?: () => void;
+}
+
+/**
+ * Re-fetch `GET /v1/agent/runtime` after the sidecar reports ready (R2.5), so
+ * the bound workspace and model reflect the restart the workspace commit
+ * triggered. Best-effort: a failure here must never block onboarding.
+ */
+async function fetchAgentRuntime(): Promise<void> {
+  try {
+    const port = await resolveAgentPort();
+    await fetch(`http://127.0.0.1:${port}/v1/agent/runtime`, {
+      headers: { accept: "application/json" },
+    });
+  } catch {
+    // The runtime endpoint is a confirmation, not a gate; ignore failures.
+  }
 }
 
 /**
@@ -66,7 +90,25 @@ export function OnboardingWizard({ onComplete }: Props) {
   const [hardwareLoading, setHardwareLoading] = useState(false);
   const [busy, setBusy] = useState(false);
   const [keyStatus, setKeyStatus] = useState<"idle" | "testing" | "ok" | "bad">("idle");
+  // Sidecar readiness (R2.4–R2.7): a committed workspace restarts the Gateway
+  // sidecar; the wizard gates every subsequent step until it reports ready.
+  const [sidecar, setSidecar] = useState<SidecarWait>({ kind: "idle" });
+  // Local-model load wait (R3.x): persisting a local model selects it, loads it
+  // into llama-server (forwarding its readiness deadline), and waits for it to
+  // report ready before advancing — with retry/error feedback.
+  const [modelWait, setModelWait] = useState<
+    | { kind: "idle" }
+    | { kind: "loading"; modelId: string; sinceMs: number; deadlineMs: number }
+    | { kind: "failed"; reason: string }
+  >({ kind: "idle" });
   const setInput = useApp((s) => s.setInput);
+  const setSelectedModel = useApp((s) => s.setSelectedModel);
+  const llamaCppStatus = useApp((s) => s.llamaCppStatus);
+  // The store action is the single writer for the workspace root: it updates
+  // `workspaceRoot` in the app state *and* forwards to the Tauri supervisor.
+  // Calling the raw bridge here left the store's copy null, so every later run
+  // and session was created without a workspace.
+  const applyWorkspaceRoot = useApp((s) => s.setWorkspaceRoot);
 
   const patch = useCallback((next: Partial<WizardState>) => {
     setState((current) => ({ ...current, ...next }));
@@ -102,20 +144,97 @@ export function OnboardingWizard({ onComplete }: Props) {
     })();
   }, [state.step, hardware, hardwareLoading]);
 
+  // Drive the sidecar-readiness reducer from supervisor status transitions.
+  // Only meaningful after a workspace is committed (`sidecar.kind !== "idle"`):
+  // a pre-commit status must not gate the very first step.
+  useEffect(() => {
+    if (!isTauri()) return;
+    let unsub: (() => void) | undefined;
+    let cancelled = false;
+    void onAgentStatus((status) => {
+      setSidecar((prev) => {
+        if (prev.kind === "idle") return prev;
+        return reduceSidecarWait(prev, {
+          kind: "phase",
+          phase: status.running ? "ready" : status.last_error ? "error" : "restarting",
+          detail: status.last_error ?? undefined,
+          nowMs: Date.now(),
+        });
+      });
+    }).then((fn) => {
+      if (cancelled) fn();
+      else unsub = fn;
+    });
+    return () => {
+      cancelled = true;
+      unsub?.();
+    };
+  }, []);
+
+  // Deadline tick: only a waiting sidecar can time out (R2.6).
+  useEffect(() => {
+    if (sidecar.kind !== "waiting") return;
+    const timer = setInterval(() => {
+      setSidecar((prev) => reduceSidecarWait(prev, { kind: "tick", nowMs: Date.now() }));
+    }, 1000);
+    return () => clearInterval(timer);
+  }, [sidecar.kind]);
+
+  // On the sidecar reporting ready, re-fetch the runtime so the bound
+  // workspace/model reflect the restart before the user continues (R2.5).
+  useEffect(() => {
+    if (sidecar.kind !== "ready") return;
+    void fetchAgentRuntime();
+  }, [sidecar.kind]);
+
+  // Local-model load watch (R3.x): once the selected model reports ready, clear
+  // the wait and advance; a load error surfaces for retry.
+  useEffect(() => {
+    if (modelWait.kind !== "loading") return;
+    const st = llamaCppStatus;
+    if (!st) return;
+    if (st.loaded_model_id === modelWait.modelId && st.running) {
+      setModelWait({ kind: "idle" });
+      patch({ step: nextStep("model") });
+    } else if (st.last_error) {
+      setModelWait({ kind: "failed", reason: st.last_error });
+    }
+  }, [modelWait, llamaCppStatus, patch]);
+
+  // Model-load deadline (R3.x): fail the wait if the model never becomes ready
+  // within its readiness_deadline_secs window, so the Retry control appears.
+  useEffect(() => {
+    if (modelWait.kind !== "loading") return;
+    const timer = setInterval(() => {
+      setModelWait((prev) => {
+        if (prev.kind !== "loading") return prev;
+        if (Date.now() - prev.sinceMs >= prev.deadlineMs) {
+          return { kind: "failed", reason: "The model did not become ready in time." };
+        }
+        return prev;
+      });
+    }, 1000);
+    return () => clearInterval(timer);
+  }, [modelWait.kind]);
+
   const finish = async () => {
     setBusy(true);
     try {
+      // The workspace was persisted + mirrored at the workspace step
+      // (`commitWorkspace`), so finish no longer carries it — it records only
+      // first-run completion and the telemetry choice, preserving whatever root
+      // the workspace step bound (or none, if the user skipped).
+      const current = await desktopConfigGet();
       const cfg: DesktopConfig = {
-        workspace_root: state.workspace || null,
+        workspace_root: current.workspace_root ?? null,
         first_run_done: true,
         telemetry_opt_in: state.telemetry,
         legacy_imported: importedCount !== null,
       };
       await desktopConfigSet(cfg);
-      if (cfg.workspace_root) await setWorkspaceRoot(cfg.workspace_root);
       invalidateConsent();
       await track("onboarding.completed", {
-        workspace: state.workspace,
+        workspace: cfg.workspace_root ?? "",
         telemetry: state.telemetry,
         modelChoice: state.modelChoice,
       });
@@ -134,10 +253,162 @@ export function OnboardingWizard({ onComplete }: Props) {
   const advance = () => patch({ step: nextStep(state.step) });
   const back = () => patch({ step: previousStep(state.step) });
 
+  /**
+   * Commit the workspace step (R2.1–R2.3) then advance. `commitWorkspaceStep`
+   * returns the effects in required order — persist to `desktop.json`, mirror the
+   * identical canonical path to the store + supervisor (which reloads the
+   * explorer, since `FileTree` watches `workspaceRoot`), then advance. A chosen
+   * root restarts the sidecar, so the wizard enters the readiness wait; skipping
+   * (empty path) advances with no workspace bound and no wait.
+   */
+  const commitWorkspace = async (): Promise<void> => {
+    for (const effect of commitWorkspaceStep(state)) {
+      switch (effect.kind) {
+        case "persist-workspace": {
+          const current = await desktopConfigGet();
+          await desktopConfigSet({ ...current, workspace_root: effect.root });
+          break;
+        }
+        case "mirror-workspace":
+          // Updates the store's `workspaceRoot` (which the explorer + git watch)
+          // and forwards the identical canonical path to the supervisor.
+          await applyWorkspaceRoot(effect.root);
+          break;
+        case "reload-explorer":
+          // The File_Explorer re-reads whenever `workspaceRoot` changes, so the
+          // mirror above already reloaded it; nothing imperative to do here.
+          break;
+        case "advance":
+          patch({ step: effect.to });
+          break;
+        default:
+          break;
+      }
+    }
+    // A committed workspace restarts the sidecar; gate the next steps on it
+    // reporting ready. We call `agentRestart` explicitly rather than assuming
+    // persistence auto-restarts, then wait (R2.4). Skipping (empty path) leaves
+    // the sidecar untouched (stays idle).
+    if (isTauri() && state.workspace.trim().length > 0) {
+      setSidecar((prev) =>
+        reduceSidecarWait(prev, { kind: "phase", phase: "restarting", nowMs: Date.now() }),
+      );
+      try {
+        await agentRestart();
+      } catch {
+        // The status listener surfaces a genuine failure; a rejected restart
+        // request alone should not strand the wait — the deadline tick will
+        // fail it if the sidecar never comes back.
+      }
+    }
+  };
+
+  /**
+   * Retry a failed/stalled sidecar wait (R2.6): reset the deadline and restart
+   * the agent again. Reachable from the wait banner's Retry control.
+   */
+  const retrySidecar = async (): Promise<void> => {
+    if (!isTauri()) return;
+    setSidecar({
+      kind: "waiting",
+      reason: "Restarting the agent for the new workspace…",
+      sinceMs: Date.now(),
+    });
+    try {
+      await agentRestart();
+    } catch {
+      // Deadline tick will fail the wait if the sidecar never reports ready.
+    }
+  };
+
+  /**
+   * Commit the model step (R3.1, R4.1) then advance. A local choice registers
+   * the chosen `.gguf` in the Local_Model_Registry and selects it; a cloud
+   * choice stores the provider key in the OS secure store. Without this the
+   * wizard advanced with the model choice held only in local state and never
+   * committed — leaving the app with no usable model after onboarding (design
+   * defect #2). Advance is applied synchronously (last), so the model is
+   * registered before the step changes.
+   */
+  const commitModel = (): void => {
+    for (const effect of commitModelStep(state)) {
+      switch (effect.kind) {
+        case "register-local-model": {
+          const existing = loadLocalModels();
+          const model = existing.find((m) => m.id === effect.model.id) ?? effect.model;
+          if (!existing.some((m) => m.id === effect.model.id)) {
+            saveLocalModels([...existing, effect.model]);
+          }
+          // R3.x — persisting a local model immediately SELECTS it, which loads
+          // it into llama-server (forwarding readiness_deadline_secs via the
+          // store's setSelectedModel), then we WAIT for it to report ready
+          // before advancing. In the browser preview there is no runtime, so we
+          // register-only and let the (last) `advance` effect proceed.
+          if (isTauri()) {
+            setSelectedModel({ provider: "llamacpp", model: model.id });
+            setModelWait({
+              kind: "loading",
+              modelId: model.id,
+              sinceMs: Date.now(),
+              deadlineMs: readinessDeadlineSecs(model) * 1000,
+            });
+          }
+          break;
+        }
+        case "store-provider-key":
+          void secureStore.set(`provider.${effect.provider}.api_key`, state.cloudKey.trim());
+          break;
+        case "fetch-runtime":
+          break;
+        case "advance":
+          // A local choice in the desktop app defers the advance to the model-
+          // ready effect below; every other case advances synchronously here.
+          if (isTauri() && state.modelChoice === "local" && state.modelPath.trim().length > 0) {
+            break;
+          }
+          patch({ step: effect.to });
+          break;
+        default:
+          break;
+      }
+    }
+  };
+
+  /**
+   * Retry a failed local-model load (R3.x): re-select the model (re-issuing the
+   * load) and reset the wait deadline.
+   */
+  const retryModel = (): void => {
+    const model = loadLocalModels().find((m) => m.path === state.modelPath.trim());
+    if (!model) return;
+    setSelectedModel({ provider: "llamacpp", model: model.id });
+    setModelWait({
+      kind: "loading",
+      modelId: model.id,
+      sinceMs: Date.now(),
+      deadlineMs: readinessDeadlineSecs(model) * 1000,
+    });
+  };
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-background/95 backdrop-blur">
       <div className="w-full max-w-lg rounded-lg border border-border bg-card p-6 shadow-2xl">
         <Stepper step={state.step} />
+
+        {/* Sidecar readiness wait (R2.4/R2.6): labelled spinner + progress bar
+            while restarting, and a Retry that re-restarts + resets the deadline
+            on failure. Visible across the steps the wait gates. */}
+        {sidecar.kind === "waiting" && (
+          <WaitBanner label={sidecar.reason} spinning error={false} />
+        )}
+        {sidecar.kind === "failed" && (
+          <WaitBanner
+            label={sidecar.reason}
+            spinning={false}
+            error
+            onRetry={() => void retrySidecar()}
+          />
+        )}
 
         {state.step === "welcome" && (
           <section className="space-y-3">
@@ -228,10 +499,14 @@ export function OnboardingWizard({ onComplete }: Props) {
 
             <Footer
               onBack={back}
-              onNext={advance}
-              // Skipping is allowed: an empty path means "use the home dir".
+              onNext={() => void commitWorkspace()}
+              // Skipping advances with NO workspace bound — there is no
+              // home-dir fallback. The ready step notes the agent stays
+              // unavailable until a folder is opened.
               secondary={
-                state.workspace.trim() ? undefined : { label: "Skip", onClick: advance }
+                state.workspace.trim()
+                  ? undefined
+                  : { label: "Skip", onClick: () => void commitWorkspace() }
               }
             />
           </section>
@@ -374,14 +649,30 @@ export function OnboardingWizard({ onComplete }: Props) {
               </div>
             )}
 
+            {/* Local-model load wait (R3.x): while the selected model loads into
+                llama-server, show a labelled spinner; on failure/timeout offer
+                Retry. Advance is deferred until the model reports ready. */}
+            {modelWait.kind === "loading" && (
+              <WaitBanner label="Loading the model into llama-server…" spinning error={false} />
+            )}
+            {modelWait.kind === "failed" && (
+              <WaitBanner label={modelWait.reason} spinning={false} error onRetry={retryModel} />
+            )}
+
             <Footer
               onBack={back}
-              onNext={advance}
-              nextDisabled={!canAdvance(state)}
+              onNext={commitModel}
+              nextDisabled={!canAdvance(state, sidecar) || modelWait.kind === "loading"}
               nextHint={
-                canAdvance(state)
-                  ? undefined
-                  : "Pick a model and provide a path or key to continue"
+                modelWait.kind === "loading"
+                  ? "Waiting for the model to become ready…"
+                  : modelWait.kind === "failed"
+                    ? modelWait.reason
+                    : sidecar.kind === "waiting" || sidecar.kind === "failed"
+                      ? sidecar.reason
+                      : canAdvance(state, sidecar)
+                        ? undefined
+                        : "Pick a model and provide a path or key to continue"
               }
             />
           </section>
@@ -436,7 +727,16 @@ export function OnboardingWizard({ onComplete }: Props) {
                 )}
               </>
             )}
-            <Footer onBack={back} onNext={advance} />
+            <Footer
+              onBack={back}
+              onNext={advance}
+              nextDisabled={!canAdvance(state, sidecar)}
+              nextHint={
+                sidecar.kind === "waiting" || sidecar.kind === "failed"
+                  ? sidecar.reason
+                  : undefined
+              }
+            />
           </section>
         )}
 
@@ -465,7 +765,12 @@ export function OnboardingWizard({ onComplete }: Props) {
               onBack={back}
               onNext={() => void finish()}
               nextLabel="Finish"
-              nextDisabled={busy}
+              nextDisabled={busy || !canAdvance(state, sidecar)}
+              nextHint={
+                sidecar.kind === "waiting" || sidecar.kind === "failed"
+                  ? sidecar.reason
+                  : undefined
+              }
             />
           </section>
         )}
@@ -486,6 +791,57 @@ export function OnboardingWizard({ onComplete }: Props) {
           </section>
         )}
       </div>
+    </div>
+  );
+}
+
+/**
+ * A labelled readiness indicator (R2.4/R2.6, R3.x): a spinner + indeterminate
+ * progress bar while waiting, or an error line with a Retry control on failure.
+ */
+function WaitBanner({
+  label,
+  spinning,
+  error,
+  onRetry,
+}: {
+  label: string;
+  spinning: boolean;
+  error: boolean;
+  onRetry?: () => void;
+}) {
+  return (
+    <div
+      role="status"
+      aria-live="polite"
+      data-testid="wait-banner"
+      className={cn(
+        "mb-3 rounded border p-2.5 text-[12px]",
+        error
+          ? "border-destructive/40 bg-destructive/10 text-destructive"
+          : "border-primary/30 bg-primary/10 text-foreground",
+      )}
+    >
+      <div className="flex items-center gap-2">
+        {spinning && <Loader2 className="h-3.5 w-3.5 animate-spin text-primary" />}
+        <span>{label}</span>
+        {error && onRetry && (
+          <Button
+            size="sm"
+            variant="secondary"
+            className="ml-auto"
+            data-testid="wait-retry"
+            onClick={onRetry}
+          >
+            Retry
+          </Button>
+        )}
+      </div>
+      {spinning && (
+        <div className="mt-2 h-1 w-full overflow-hidden rounded bg-muted" aria-hidden="true">
+          <div className="h-full w-1/3 animate-pulse rounded bg-primary" />
+        </div>
+      )}
     </div>
   );
 }

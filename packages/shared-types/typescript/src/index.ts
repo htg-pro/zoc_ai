@@ -380,7 +380,7 @@ export interface RunAgentRequest {
   runId?: string | null;
   workspacePath?: string | null;
   activeFile?: string | null;
-  openFiles?: OpenFileContext[];
+  openFiles: OpenFileContext[];
   selectedText?: string | null;
   editorContent?: string | null;
   mode: string | null;
@@ -388,9 +388,9 @@ export interface RunAgentRequest {
   provider?: string | null;
   apiKey?: string | null;
   baseUrl?: string | null;
-  reviewChanges?: boolean;
-  maxIterations?: number;
-  maxRepairAttempts?: number;
+  reviewChanges: boolean;
+  maxIterations: number;
+  maxRepairAttempts: number;
 }
 
 export interface RunLifecycleEvent extends AgentEventBase {
@@ -538,6 +538,7 @@ export interface UpdateSessionRequest {
   title?: string | null;
   provider?: string | null;
   model?: string | null;
+  status?: SessionStatus | null;
 }
 
 export interface UpdateSettingsRequest {
@@ -581,3 +582,38 @@ export type AgentEvent =
 // ── Event_Contract (single source of truth for Gateway SSE events) ─────
 
 export * as AgentEvents from "./agent-events";
+
+// ── Wire_Protocol (Message_Part contract, Agent_Runtime ↔ Chat_Surface) 
+
+export * as MessageParts from "./message-parts";
+
+export type {
+  Capability,
+  Citation,
+  CompactionPart,
+  ConversationMode,
+  DiffPart,
+  ErrorPart,
+  Hunk,
+  HunkAction,
+  MessagePart,
+  PartBase,
+  PartType,
+  PermissionDecision,
+  PermissionRequestPart,
+  PlanFile,
+  PlanPart,
+  ReasoningPart,
+  RunLifecyclePart,
+  RunState,
+  SourceKind,
+  SourcePart,
+  TextPart,
+  ToolErrorPart,
+  ToolInputPart,
+  ToolKind,
+  ToolOutputPart,
+  UsagePart,
+  VisitedSource,
+  PermissionScope as GrantScope,
+} from "./message-parts";

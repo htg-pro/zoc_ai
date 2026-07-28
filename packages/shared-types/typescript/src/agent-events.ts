@@ -25,6 +25,7 @@ export type EventType =
   | "edit-file"
   | "command"
   | "review"
+  | "stage"
   | "summary"
   | "approval"
   | "done";
@@ -53,17 +54,33 @@ export type PlanItemStatus =
   | "active"
   | "done";
 
+export type ReportedStage =
+  | "analyze"
+  | "plan"
+  | "edit"
+  | "check"
+  | "review"
+  | "summary";
+
 export type ReviewCheckStatus =
   | "pass"
   | "fail"
   | "skipped"
   | "running";
 
+export type StageState =
+  | "pending"
+  | "active"
+  | "succeeded"
+  | "failed"
+  | "skipped";
+
 // ── Interfaces ────────────────────────────────────────────────────────
 
 export interface ApprovalEvent extends BaseEvent {
   type: "approval";
   prompt: string;
+  operation?: string | null;
   decision?: "approve" | "reject" | null;
 }
 
@@ -104,6 +121,7 @@ export interface DoneEvent extends BaseEvent {
   type: "done";
   ok: boolean;
   reason?: string | null;
+  filesChanged: number;
 }
 
 export interface EditFileEvent extends BaseEvent {
@@ -113,6 +131,7 @@ export interface EditFileEvent extends BaseEvent {
   adds: number;
   dels: number;
   status: "running" | "done" | "failed";
+  baseHash?: string | null;
 }
 
 export interface IntentEvent extends BaseEvent {
@@ -156,7 +175,7 @@ export interface PlanReadyEvent extends BaseEvent {
   steps: PlanReadyStep[];
   verificationCommand?: string | null;
   confidence: number;
-  fileCount?: number;
+  fileCount: number;
 }
 
 export interface PlanReadyStep {
@@ -206,12 +225,20 @@ export interface ReviewFile {
   adds: number;
   dels: number;
   summary?: string | null;
+  baseHash?: string | null;
 }
 
 export interface ReviewValidation {
   typecheck: ReviewCheck;
   build: ReviewCheck;
   tests: ReviewCheck;
+}
+
+export interface StageEvent extends BaseEvent {
+  type: "stage";
+  stage: "analyze" | "plan" | "edit" | "check" | "review" | "summary";
+  state: "pending" | "active" | "succeeded" | "failed" | "skipped";
+  reason?: string | null;
 }
 
 export interface SummaryEvent extends BaseEvent {
@@ -227,9 +254,9 @@ export interface TestResultsEvent extends BaseEvent {
   passed: number;
   failed: number;
   exitCode: number;
-  outputTail?: string;
-  durationMs?: number;
-  timedOut?: boolean;
+  outputTail: string;
+  durationMs: number;
+  timedOut: boolean;
 }
 
 export interface ThinkingEvent extends BaseEvent {
@@ -255,6 +282,7 @@ export type AgentEvent =
   | EditFileEvent
   | CommandEvent
   | ReviewEvent
+  | StageEvent
   | SummaryEvent
   | ApprovalEvent
   | PermissionEvent

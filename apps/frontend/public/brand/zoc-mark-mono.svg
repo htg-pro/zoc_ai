@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24" role="img" aria-labelledby="zoc-mark-mono-title">
+  <!--
+    Zoc AI mark — single-colour monochrome.
+    Feature: zoc-agent-chat-rebuild — R18.1, R18.2, R18.3, R18.4, R18.6
+
+    Identical geometry to zoc-mark.svg with the gradient dropped: the geometry
+    carries the identity, the gradient is decoration. This is the variant the
+    desktop icon pipeline (scripts/generate_icons.py) and every other
+    single-colour context reads.
+
+    Inherits its colour from `currentColor`, so a consumer sets it once on the
+    parent rather than editing the asset.
+  -->
+  <title id="zoc-mark-mono-title">Zoc AI</title>
+  <path
+    fill="currentColor"
+    fill-rule="nonzero"
+    d="M4 4H20V7L14.75 12H17.25L12 17H20V20H4V17H7.5L12.75 12H10.25L15.5 7H4Z"
+  />
+</svg>

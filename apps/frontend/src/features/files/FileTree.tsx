@@ -19,7 +19,6 @@ import {
   Trash2,
 } from "lucide-react";
 import { useVirtualizer } from "@tanstack/react-virtual";
-import { ScrollArea } from "@/components/ui/scroll-area";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -29,14 +28,14 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { MOCK_TREE, type FileNode as MockFileNode } from "@/lib/mock-data";
 import { getAgentClient } from "@/lib/agent-client";
-import { useApp } from "@/lib/store";
+import { activeWorkspaceRoot, useApp } from "@/lib/store";
 import {
   fsListDir,
   fsWatchStart,
   fsWatchStop,
   onFsChanged,
+  pickDirectory,
   type FileNode as LiveFileNode,
 } from "@/lib/tauri-bridge";
 import { basename, isWithin, sepOf } from "@/lib/paths";
@@ -87,86 +86,43 @@ function AgentEditingDot({ path }: { path: string }) {
 }
 
 export function FileTree({ root }: { root?: string }) {
-  const workspaceRoot = useApp((s) => s.workspaceRoot);
+  const workspaceRoot = useApp(activeWorkspaceRoot);
   const effectiveRoot = root ?? workspaceRoot ?? null;
   if (!effectiveRoot) {
-    // Workspace root not yet resolved — show mock tree as placeholder.
-    return <MockFileTreeView />;
+    // No folder open. This used to render a hard-coded sample tree, which looked
+    // like a real project and let the user click files that do not exist.
+    return <NoWorkspaceView />;
   }
   // LiveFileTree works in both Tauri (via IPC) and web (via HTTP fallback
   // in tauri-bridge's fsListDir / fsWatchStart / onFsChanged).
   return <LiveFileTree root={effectiveRoot} />;
 }
 
-function MockFileTreeView() {
-  return (
-    <ScrollArea className="h-full">
-      <div className="px-1 py-1 text-sm">
-        {MOCK_TREE.map((node) => (
-          <MockTreeNode key={node.id} node={node} depth={0} defaultOpen />
-        ))}
-      </div>
-    </ScrollArea>
-  );
-}
+/** Shown when no folder is open: says so, and offers the one useful action. */
+function NoWorkspaceView() {
+  const setWorkspaceRoot = useApp((s) => s.setWorkspaceRoot);
+  const [busy, setBusy] = useState(false);
 
-function MockTreeNode({
-  node,
-  depth,
-  defaultOpen = false,
-}: {
-  node: MockFileNode;
-  depth: number;
-  defaultOpen?: boolean;
-}) {
-  const [open, setOpen] = useState(defaultOpen);
-  const openFile = useApp((s) => s.openFile);
-  const activeFile = useApp((s) => s.activeFile);
-  const status = useApp((s) => s.fileStatus[node.path]);
-  const indent = { paddingLeft: `${depth * 12 + 6}px` };
+  const choose = async () => {
+    setBusy(true);
+    try {
+      const picked = await pickDirectory(null);
+      if (picked) await setWorkspaceRoot(picked);
+    } finally {
+      setBusy(false);
+    }
+  };
 
-  if (node.kind === "dir") {
-    return (
-      <div>
-        <button
-          type="button"
-          onClick={() => setOpen((o) => !o)}
-          className={cn(
-            "group flex w-full items-center gap-1 rounded py-0.5 text-left text-xs text-sidebar-foreground/90 hover:bg-accent/60",
-          )}
-          style={indent}
-        >
-          <ChevronRight className={cn("h-3 w-3 transition-transform", open && "rotate-90")} />
-          {open ? (
-            <FolderOpen className="h-3.5 w-3.5 text-primary/80" />
-          ) : (
-            <Folder className="h-3.5 w-3.5 text-muted-foreground" />
-          )}
-          <span className="truncate">{node.name}</span>
-        </button>
-        {open && node.children?.map((child) => <MockTreeNode key={child.id} node={child} depth={depth + 1} />)}
-      </div>
-    );
-  }
-  const active = activeFile === node.path;
   return (
-    <button
-      type="button"
-      onClick={() => openFile(node.path)}
-      className={cn(
-        "flex w-full items-center gap-1.5 rounded py-0.5 pr-2 text-left text-xs hover:bg-accent/60",
-        active && "bg-[hsl(var(--primary)/0.12)] text-foreground",
-      )}
-      style={indent}
-    >
-      <span className="w-3" aria-hidden />
-      {fileIcon(node.name, false)}
-      <span className={cn("truncate", active && "text-foreground")}>{node.name}</span>
-      <span className="ml-auto flex items-center">
-        <AgentEditingDot path={node.path} />
-        <StatusBadge status={status} />
-      </span>
-    </button>
+    <div className="flex h-full flex-col items-center justify-center gap-3 px-4 text-center">
+      <FolderOpen className="h-6 w-6 text-muted-foreground" />
+      <p className="text-xs text-muted-foreground">
+        No folder is open. Open a project to browse its files.
+      </p>
+      <Button size="sm" variant="secondary" onClick={() => void choose()} disabled={busy}>
+        {busy ? "Opening…" : "Open folder"}
+      </Button>
+    </div>
   );
 }
 

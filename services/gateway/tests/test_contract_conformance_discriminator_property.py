@@ -291,9 +291,10 @@ def test_contract_defines_exactly_the_rendered_row_kinds() -> None:
             "edit-file",
             "command",
             "review",
+            "stage",
             "summary",
             "approval",
             "done",
         }
     ) == RENDERED_ROW_KINDS
-    assert len(RENDERED_ROW_KINDS) == 13
+    assert len(RENDERED_ROW_KINDS) == 14

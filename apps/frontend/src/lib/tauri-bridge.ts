@@ -38,6 +38,12 @@ export interface CrashReport {
 /** Mirrors Rust `llama_server::LlamaServerStatus`. */
 export interface LlamaCppStatus {
   running: boolean;
+  /**
+   * R3.9 — exactly one of stopped | starting | ready | error. Optional here so
+   * the mirror stays compatible with a Desktop_Shell that has not yet been
+   * rebuilt with the four-state supervisor; consumers fall back to `running`.
+   */
+  state?: "stopped" | "starting" | "ready" | "error";
   host: string | null;
   port: number | null;
   base_url: string | null;
@@ -53,6 +59,8 @@ export interface LlamaCppStatus {
   repeat_penalty: number | null;
   max_tokens: number | null;
   flash_attn: boolean | null;
+  /** R3.4 — trailing captured process output, populated on the error state. */
+  log_tail?: string[];
   last_error: string | null;
 }
 
@@ -220,6 +228,86 @@ export async function secretSet(key: string, value: string): Promise<void> {
 
 export async function secretClear(key: string): Promise<void> {
   await callOrNull<void>("secret_clear", { key });
+}
+
+// ── Agent_Runtime (zoc-agent-chat-rebuild R3.4, R3.8, R13.6) ──────────────
+
+/** Mirrors Rust `sidecar::RuntimeStatus`. */
+export interface RuntimeStatus {
+  port: number | null;
+  running: boolean;
+  restarts: number;
+  last_error: string | null;
+  status?: "starting" | "running" | "crashed" | "stopped";
+  crash_report?: string | null;
+}
+
+/**
+ * Mirrors Rust `sidecar::RuntimeEndpoint`.
+ *
+ * `token` is the per-launch bearer credential. It is withheld until the child is
+ * actually running, so a `null` token with a `port` means "not ready yet" rather
+ * than "unauthenticated runtime".
+ */
+export interface RuntimeEndpoint {
+  port: number | null;
+  token: string | null;
+  status: "starting" | "running" | "crashed" | "stopped";
+}
+
+export async function agentRuntimeEndpoint(): Promise<RuntimeEndpoint | null> {
+  return callOrNull<RuntimeEndpoint>("agent_runtime_endpoint");
+}
+
+export async function agentRuntimeStatus(): Promise<RuntimeStatus | null> {
+  return callOrNull<RuntimeStatus>("agent_runtime_status");
+}
+
+/** Ask the supervisor to restart the Agent_Runtime now (R3.8). */
+export async function runtimeRestart(): Promise<void> {
+  await callOrNull<void>("runtime_restart");
+}
+
+export async function onRuntimeStatus(
+  cb: (ev: RuntimeStatus) => void,
+): Promise<() => void> {
+  const b = await bindings();
+  if (!b) return () => undefined;
+  try {
+    return await b.listen<RuntimeStatus>("runtime://status", (e) => cb(e.payload));
+  } catch {
+    return () => undefined;
+  }
+}
+
+/** Mirrors Rust `hardware_fit::HardwareFit` (R13.6). */
+export interface HardwareFit {
+  state: "fits" | "tight" | "exceeds";
+  reason: string;
+  model_size_gb: number;
+  required_gb: number;
+  total_memory_gb: number | null;
+  available_memory_gb: number | null;
+  vram_gb: number | null;
+  n_gpu_layers: number;
+  gpu_bound: boolean;
+}
+
+/**
+ * Probe whether a local GGUF will load on this machine (R13.6).
+ *
+ * Returns `null` outside the desktop shell rather than a synthetic verdict: the
+ * model picker renders no fit chip at all in a browser preview, which is honest,
+ * whereas a fabricated "fits" would be a claim about hardware we never saw.
+ */
+export async function localModelHardwareFit(
+  model: string,
+  nGpuLayers?: number,
+): Promise<HardwareFit | null> {
+  return callOrNull<HardwareFit>("local_model_hardware_fit", {
+    model,
+    nGpuLayers: nGpuLayers ?? 0,
+  });
 }
 
 // ── Web (non-Tauri) HTTP helpers ──────────────────────────────────────────
@@ -841,6 +929,7 @@ export async function llamacppLoad(
   maxTokens?: number,
   host?: string,
   port?: number,
+  readinessDeadlineSecs?: number,
 ): Promise<LlamaCppStatus> {
   const b = await bindings();
   if (!b) {
@@ -909,6 +998,9 @@ export async function llamacppLoad(
     maxTokens,
     host,
     port,
+    // R3.10 — the per-model Readiness_Deadline override; the Desktop_Shell
+    // falls back to DEFAULT_READINESS_DEADLINE when this is undefined (R3.11).
+    readinessDeadlineSecs,
   });
 }
 

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState, useSyncExternalStore } from "react";
-import { AlertTriangle, BarChart3, ChevronDown, Cpu, Loader2 } from "lucide-react";
+import { AlertTriangle, BarChart3, ChevronDown, Cpu, KeyRound, Loader2 } from "lucide-react";
 import {
   DropdownMenu,
   DropdownMenuTrigger,
@@ -18,7 +18,9 @@ import {
   subscribeProviders,
 } from "@/lib/providers";
 import { secureStore, subscribeSecrets } from "@/lib/secure-store";
+import { fsStat } from "@/lib/tauri-bridge";
 import { useApp } from "@/lib/store";
+import { localModelAvailability } from "./model-availability";
 import { ModelBenchmarkDialog } from "./ModelBenchmarkDialog";
 
 const LLAMACPP_PROVIDER = "llamacpp";
@@ -32,6 +34,9 @@ export function ModelPicker() {
   const selected = useApp((s) => s.selectedModel);
   const set = useApp((s) => s.setSelectedModel);
   const llamaStatus = useApp((s) => s.llamaCppStatus);
+  const openSettings = useApp((s) => s.openSettings);
+  const invalidProviders = useApp((s) => s.invalidProviders ?? {});
+  const clearProviderInvalid = useApp((s) => s.clearProviderInvalid);
 
   // Subscribe to the local-models store so the picker re-renders the moment
   // a user adds or removes a `.gguf` in Settings → Models, without needing
@@ -58,10 +63,46 @@ export function ModelPicker() {
   // on three triggers so the badge is never stale: the provider list changes,
   // a key is saved/cleared anywhere (subscribeSecrets), or the menu is opened.
   const [keyedProviders, setKeyedProviders] = useState<Record<string, boolean>>({});
-  const [secretsVersion, setSecretsVersion] = useState(0);
+  const [secretChange, setSecretChange] = useState({ version: 0, key: "" });
   const [open, setOpen] = useState(false);
   const [benchmarkOpen, setBenchmarkOpen] = useState(false);
-  useEffect(() => subscribeSecrets(() => setSecretsVersion((v) => v + 1)), []);
+  // R3.7 — existence of each registered `.gguf` on disk. A path we haven't
+  // probed yet (or can't stat, e.g. the browser preview) defaults to "present"
+  // so the picker never flashes a false "file missing" before the probe lands.
+  const [fileExists, setFileExists] = useState<Record<string, boolean>>({});
+  useEffect(
+    () =>
+      subscribeSecrets((key) =>
+        setSecretChange((current) => ({ version: current.version + 1, key })),
+      ),
+    [],
+  );
+
+  // Probe each registered GGUF path with `fsStat` (R3.7). Only a definitive
+  // `{ exists: false }` marks a model missing; a null stat (no desktop runtime)
+  // leaves it "present" so cloud-only / preview users aren't blocked.
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      const entries = await Promise.all(
+        localModels.map(async (m) => {
+          try {
+            const stat = await fsStat(m.path);
+            return [m.path, stat ? stat.exists : true] as const;
+          } catch {
+            return [m.path, true] as const;
+          }
+        }),
+      );
+      if (!cancelled) setFileExists(Object.fromEntries(entries));
+    })();
+    return () => {
+      cancelled = true;
+    };
+    // Re-probe when the registered set changes or the menu is (re)opened.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [localModelsRaw, open]);
+
   useEffect(() => {
     let cancelled = false;
     void (async () => {
@@ -74,12 +115,26 @@ export function ModelPicker() {
         const v = await secureStore.get(apiKeyName(p.id));
         out[p.id] = !!(v && v.trim());
       }
-      if (!cancelled) setKeyedProviders(out);
+      if (!cancelled) {
+        setKeyedProviders(out);
+      }
     })();
     return () => {
       cancelled = true;
     };
-  }, [cloudProviders, secretsVersion, open]);
+  }, [cloudProviders, secretChange.version, open]);
+
+  // R4.5 — clear only the provider whose API key CHANGED / was re-entered.
+  // A change to OpenAI must not make a still-rejected Anthropic key look valid.
+  // `version === 0` means no write happened on this mount, so a persisted
+  // invalid state is retained until that provider's key is actually edited.
+  useEffect(() => {
+    if (secretChange.version === 0) return;
+    const match = /^provider\.(.+)\.api_key$/.exec(secretChange.key);
+    if (match?.[1]) clearProviderInvalid(match[1]);
+  }, [clearProviderInvalid, secretChange]);
+
+  const fileExistsFn = (path: string) => fileExists[path] ?? true;
 
   const builtinCurrent = cloudProviders
     .flatMap((p) => p.models)
@@ -139,14 +194,19 @@ export function ModelPicker() {
           {localModels.length > 0 && (
             <>
               <DropdownMenuLabel>llama.cpp (local)</DropdownMenuLabel>
-              {localModels.map((m) => (
-                <LocalModelItem
-                  key={m.id}
-                  model={m}
-                  active={llamaStatus?.running === true && llamaStatus.loaded_model_id === m.id}
-                  onSelect={() => set({ provider: LLAMACPP_PROVIDER, model: m.id })}
-                />
-              ))}
+              {localModels.map((m) => {
+                const availability = localModelAvailability(m, llamaStatus, fileExistsFn);
+                const missing = availability.kind === "unavailable";
+                return (
+                  <LocalModelItem
+                    key={m.id}
+                    model={m}
+                    active={llamaStatus?.running === true && llamaStatus.loaded_model_id === m.id}
+                    missing={missing}
+                    onSelect={() => set({ provider: LLAMACPP_PROVIDER, model: m.id })}
+                  />
+                );
+              })}
               <DropdownMenuSeparator />
               <DropdownMenuItem
                 disabled={!canBenchmark}
@@ -171,6 +231,7 @@ export function ModelPicker() {
           )}
           {cloudProviders.map((p, pi) => {
             const hasKey = keyedProviders[p.id] ?? !p.requiresKey;
+            const keyInvalid = !!invalidProviders[p.id];
             return (
               <div key={p.id}>
                 {pi > 0 && <DropdownMenuSeparator />}
@@ -181,8 +242,34 @@ export function ModelPicker() {
                       no key
                     </span>
                   )}
+                  {hasKey && keyInvalid && (
+                    <span className="text-[9px] uppercase tracking-wider text-destructive">
+                      key invalid
+                    </span>
+                  )}
                 </DropdownMenuLabel>
-                {p.models.length === 0 && (
+                {/* Missing key: an interactive row that opens Settings → Providers
+                    (R4.4) — never a silent, unactionable hint. */}
+                {p.requiresKey && !hasKey && (
+                  <DropdownMenuItem
+                    onSelect={() => openSettings("providers")}
+                    className="gap-2 text-[11px]"
+                  >
+                    <KeyRound className="h-3.5 w-3.5 text-[#fbbf24]" />
+                    Add {p.name} API key in Settings → Providers
+                  </DropdownMenuItem>
+                )}
+                {/* Invalid key: name the provider and offer re-entry (R4.5). */}
+                {hasKey && keyInvalid && (
+                  <DropdownMenuItem
+                    onSelect={() => openSettings("providers")}
+                    className="gap-2 text-[11px] text-destructive"
+                  >
+                    <AlertTriangle className="h-3.5 w-3.5" />
+                    {p.name} rejected the key — re-enter it in Settings → Providers
+                  </DropdownMenuItem>
+                )}
+                {p.models.length === 0 && hasKey && (
                   <div className="px-2 py-1 text-[10px] text-muted-foreground">
                     No models — add some in Settings → Providers.
                   </div>
@@ -190,10 +277,9 @@ export function ModelPicker() {
                 {p.models.map((m) => (
                   <DropdownMenuItem
                     key={m.id}
+                    disabled={!hasKey}
                     onSelect={(e) => {
                       if (!hasKey) {
-                        // Don't silently no-op: keep the menu open so the
-                        // "configure key" hint stays visible.
                         e.preventDefault();
                         return;
                       }
@@ -205,6 +291,8 @@ export function ModelPicker() {
                     <span className="text-[10px] text-muted-foreground">
                       {!hasKey ? (
                         <>Configure API key in Settings → Providers</>
+                      ) : keyInvalid ? (
+                        <span className="text-destructive">Key was rejected — re-enter it</span>
                       ) : (
                         <>
                           {m.contextWindow ? `${(m.contextWindow / 1000).toFixed(0)}k ctx` : "model"}
@@ -233,27 +321,50 @@ export function ModelPicker() {
 function LocalModelItem({
   model,
   active,
+  missing,
   onSelect,
 }: {
   model: LocalModel;
   active: boolean;
+  missing: boolean;
   onSelect: () => void;
 }) {
   return (
-    <DropdownMenuItem onSelect={onSelect} className="flex flex-col items-start gap-0.5">
+    <DropdownMenuItem
+      disabled={missing}
+      onSelect={(e) => {
+        if (missing) {
+          // R3.7 — a model whose `.gguf` is gone can't be loaded; keep the menu
+          // open so the "file missing" state stays visible instead of silently
+          // selecting an unusable model.
+          e.preventDefault();
+          return;
+        }
+        onSelect();
+      }}
+      className="flex flex-col items-start gap-0.5"
+    >
       <span className="flex w-full items-center justify-between gap-2 font-mono text-xs">
         <span className="truncate">{model.name}</span>
-        {active && (
+        {missing ? (
+          <span className="shrink-0 text-[9px] uppercase tracking-wider text-destructive">
+            file missing
+          </span>
+        ) : active ? (
           <span className="shrink-0 text-[9px] uppercase tracking-wider text-emerald-400">
             loaded
           </span>
-        )}
+        ) : null}
       </span>
       <span
-        className="truncate font-mono text-[10px] text-muted-foreground"
+        className={
+          missing
+            ? "truncate font-mono text-[10px] text-destructive"
+            : "truncate font-mono text-[10px] text-muted-foreground"
+        }
         title={model.path}
       >
-        {model.path}
+        {missing ? `Not found: ${model.path}` : model.path}
       </span>
     </DropdownMenuItem>
   );

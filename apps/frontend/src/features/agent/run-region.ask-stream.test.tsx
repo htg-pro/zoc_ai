@@ -49,7 +49,8 @@ describe("RunRegion Ask stream rendering", () => {
     const { rerender } = render(<RunRegion />);
 
     expect(screen.getByText("OK.")).toBeInTheDocument();
-    expect(screen.getByText("Zoc")).toBeInTheDocument();
+    // The Ask answer renders as a coalesced assistant-message row inside the
+    // run card (no separate author-labelled bubble in the new seam).
     mockStream.events = [
       ...mockStream.events,
       { type: "token", seq: 3, runId: "run-ask", ts: TS, text: "", done: true },

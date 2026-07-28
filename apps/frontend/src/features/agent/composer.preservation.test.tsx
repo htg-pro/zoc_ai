@@ -98,6 +98,15 @@ function baseState(overrides: Partial<AppState> = {}): AppState {
     agentMode: "ask",
     setAgentMode: vi.fn(),
     projectRules: null,
+    // The run gate now drives the send control: a ready model + an open
+    // workspace let a non-empty message send; the mock provider carries no
+    // reasoning-effort parameter, so that control stays hidden here.
+    selectedModel: { provider: "mock", model: "mock-model" },
+    llamaCppStatus: null,
+    workspaceRoot: "/ws",
+    activeRunMode: null,
+    trackedRuns: [],
+    maxConcurrentRuns: 3,
     ...overrides,
   };
 }

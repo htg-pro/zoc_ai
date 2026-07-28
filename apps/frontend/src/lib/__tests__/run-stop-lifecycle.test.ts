@@ -216,13 +216,18 @@ describe("mode isolation at the submit boundary", () => {
     }
   });
 
-  it("allows Ask and Plan without a workspace", () => {
+  it("allows Ask, refuses Plan without a workspace", () => {
+    // R1.7 — Ask is the one rootless mode.
     expect(validateRunRequest({ input: "what is this?", mode: "ask", workspaceRoot: null }).ok).toBe(
       true,
     );
-    expect(
-      validateRunRequest({ input: "plan the change", mode: "plan", workspaceRoot: null }).ok,
-    ).toBe(true);
+    // R1.4 — Plan reads files and stages diffs against real paths, so it now
+    // requires an open folder like Agent.
+    const plan = validateRunRequest({ input: "plan the change", mode: "plan", workspaceRoot: null });
+    expect(plan.ok).toBe(false);
+    if (!plan.ok) {
+      expect(plan.code).toBe("no_workspace");
+    }
   });
 
   it("rejects an unrecognised mode and an empty message", () => {
