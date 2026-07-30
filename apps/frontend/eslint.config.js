@@ -71,7 +71,13 @@ const MOTION_RESTRICTED_PATHS = ["motion", "motion/react"].map((name) => ({
 // constant alike, and does not fire for one inside a comment. The `#rgb` and
 // `#rrggbbaa` forms are included because a three-digit literal is the one a
 // reviewer's eye skips.
-const COLOUR_LITERAL = String.raw`/(^|[^&\w])#(?:[0-9a-fA-F]{3,4}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})\b|\brgba?\s*\(|\bhsla?\s*\(/`;
+//
+// A functional notation whose argument is a `var(` is **exempt**, because
+// `hsl(var(--background))` is the shadcn token form R17.2 names as one of the two
+// layers the Chat_Surface extends — the value still lives in CSS, and the wrapper
+// is how a custom property carrying bare channel numbers is consumed. `rgb(0 0 0)`
+// with literal channels is still refused, which is the case the rule is for.
+const COLOUR_LITERAL = String.raw`/(^|[^&\w])#(?:[0-9a-fA-F]{3,4}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})\b|\b(?:rgba?|hsla?)\s*\((?!\s*var\()/`;
 
 const COLOUR_LITERAL_MESSAGE =
   "Hard-coded colour literal (R17.1). Every colour in features/chat comes from a " +
