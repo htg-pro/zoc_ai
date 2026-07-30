@@ -131,6 +131,20 @@ class InlineEditResult(_Base):
 # ── Project rules (.zoc/rules) ────────────────────────────────────────────
 
 
+class RuleDocument(_Base):
+    """One discovered rule source and its contents.
+
+    `content` is null when the file could not be read, and `error` then carries
+    the reason. Two fields rather than an empty string because an unreadable
+    file and an empty file are different facts, and the Agent_Runtime's
+    system-instruction assembler reports only the first as skipped (R30.3).
+    """
+
+    path: str
+    content: str | None = None
+    error: str | None = None
+
+
 class ProjectRulesInfo(_Base):
     """Whether per-project agent rules are active for a session, and which
     files they came from."""
@@ -138,6 +152,12 @@ class ProjectRulesInfo(_Base):
     active: bool = False
     sources: list[str] = Field(default_factory=list)
     rules: str = ""
+    #: Per-source contents, in discovery order. Added for the Agent_Runtime's
+    #: system-instruction assembler (R30.3), which orders and merges the
+    #: sources itself and therefore cannot use the pre-merged `rules` text.
+    #: Additive: `sources` and `rules` keep their meaning for the existing
+    #: renderer Rules display, per the plan's additive-until-deletion rule.
+    documents: list[RuleDocument] = Field(default_factory=list)
 
 
 # ── Checkpoints (restore points) ──────────────────────────────────────────
