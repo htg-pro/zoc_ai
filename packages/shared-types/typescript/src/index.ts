@@ -363,6 +363,7 @@ export interface ProjectRulesInfo {
   active: boolean;
   sources: string[];
   rules: string;
+  documents: RuleDocument[];
 }
 
 export interface ProviderDescriptor {
@@ -371,6 +372,12 @@ export interface ProviderDescriptor {
   base_url?: string | null;
   requires_api_key: boolean;
   models: ModelDescriptor[];
+}
+
+export interface RuleDocument {
+  path: string;
+  content?: string | null;
+  error?: string | null;
 }
 
 export interface RunAgentRequest {

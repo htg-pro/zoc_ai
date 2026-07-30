@@ -57,10 +57,7 @@ export function assertLoopback(baseUrl: string): string {
   if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
     throw new HttpError(
       422,
-      envelope(
-        ErrorCode.INVALID_REQUEST,
-        "The local model endpoint must use http or https.",
-      ),
+      envelope(ErrorCode.INVALID_REQUEST, "The local model endpoint must use http or https."),
     );
   }
   if (!LOOPBACK_HOSTS.has(parsed.hostname)) {
@@ -121,8 +118,7 @@ export const PROVIDERS: readonly ProviderSpec[] = Object.freeze([
     requiresKey: true,
     local: false,
     capabilities: { ...CLOUD_DEFAULTS, reasoning: true, search: true },
-    resolve: ({ apiKey, modelId }) =>
-      createOpenAI({ apiKey: apiKey ?? undefined })(modelId),
+    resolve: ({ apiKey, modelId }) => createOpenAI({ apiKey: apiKey ?? undefined })(modelId),
   },
   {
     id: "anthropic",
@@ -134,8 +130,7 @@ export const PROVIDERS: readonly ProviderSpec[] = Object.freeze([
     // `model_runtime.py` keeps `_anthropic_tools_messages` separate from
     // `_openai_tools_chat`. The shim loses tool-use blocks and extended
     // thinking, which are two of the three things this runtime is for.
-    resolve: ({ apiKey, modelId }) =>
-      createAnthropic({ apiKey: apiKey ?? undefined })(modelId),
+    resolve: ({ apiKey, modelId }) => createAnthropic({ apiKey: apiKey ?? undefined })(modelId),
   },
   {
     id: "google-ai-studio",
@@ -179,9 +174,7 @@ export const PROVIDERS: readonly ProviderSpec[] = Object.freeze([
   },
 ]);
 
-const BY_ID: ReadonlyMap<string, ProviderSpec> = new Map(
-  PROVIDERS.map((spec) => [spec.id, spec]),
-);
+const BY_ID: ReadonlyMap<string, ProviderSpec> = new Map(PROVIDERS.map((spec) => [spec.id, spec]));
 
 export function providerSpec(providerId: string): ProviderSpec {
   const spec = BY_ID.get(providerId);

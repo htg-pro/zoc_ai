@@ -27,11 +27,7 @@
 
 import type { Capability, ToolKind } from "@zoc-studio/shared-types";
 
-import {
-  capabilityOf,
-  checkCapability,
-  type CapabilityDecision,
-} from "./capability-policy.ts";
+import { capabilityOf, checkCapability, type CapabilityDecision } from "./capability-policy.ts";
 import { detectDestructiveIntent } from "./destructive-intent.ts";
 import {
   evaluatePermission,
@@ -197,9 +193,7 @@ export function describeAction(
 
 function declaredDeletion(args: Record<string, unknown>): boolean {
   const files = Array.isArray(args.files) ? args.files : [];
-  return files.some(
-    (file) => (file as { action?: string } | null)?.action === "delete",
-  );
+  return files.some((file) => (file as { action?: string } | null)?.action === "delete");
 }
 
 function actionKindFor(kind: ToolKind): ActionRequest["kind"] {
@@ -242,9 +236,7 @@ export function forcedApprovalReasonFor(
   ctx: Pick<GateContext, "planPaths">,
 ): ForcedReason | null {
   if (kind === "write") {
-    const outOfPlan = request.paths.some(
-      (path) => !ctx.planPaths.has(normalizePath(path)),
-    );
+    const outOfPlan = request.paths.some((path) => !ctx.planPaths.has(normalizePath(path)));
     // R11.5. An empty plan-path set means no plan was declared, so every write
     // is out of plan — which is the correct reading, not an edge case: a write
     // with no reviewed plan behind it is exactly what must prompt.
@@ -274,8 +266,7 @@ export function createGate(ctx: GateContext) {
   const now = ctx.now ?? (() => new Date());
   const timeoutMs = ctx.approvalTimeoutMs ?? APPROVAL_TIMEOUT_MS;
   let requestCounter = 0;
-  const newRequestId =
-    ctx.newRequestId ?? (() => `req_${ctx.runId}_${(requestCounter += 1)}`);
+  const newRequestId = ctx.newRequestId ?? (() => `req_${ctx.runId}_${(requestCounter += 1)}`);
 
   return function gated<A, R>(
     toolName: string,
@@ -349,11 +340,7 @@ export function createGate(ctx: GateContext) {
 
         if (outcome.decision === "timeout") {
           ctx.writer.approvalTimeout(toolName);
-          ctx.audit.record(
-            request,
-            { effect: "deny", reason: "approval timed out" },
-            ctx.runId,
-          );
+          ctx.audit.record(request, { effect: "deny", reason: "approval timed out" }, ctx.runId);
           return refusal(
             toolName,
             "permission_timeout",
@@ -361,11 +348,7 @@ export function createGate(ctx: GateContext) {
           ) as unknown as R;
         }
         if (outcome.decision === "reject") {
-          ctx.audit.record(
-            request,
-            { effect: "deny", reason: "rejected by the user" },
-            ctx.runId,
-          );
+          ctx.audit.record(request, { effect: "deny", reason: "rejected by the user" }, ctx.runId);
           return refusal(
             toolName,
             "permission_denied",

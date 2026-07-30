@@ -182,9 +182,7 @@ function describeExpectation(issue: ZodLikeIssue): string {
       if (values.length === 0) return "expected one of the declared values";
       const shown = values.slice(0, MAX_DECLARED_VALUES).map(renderLiteral).join(", ");
       const elided = values.length - Math.min(values.length, MAX_DECLARED_VALUES);
-      return elided > 0
-        ? `expected one of ${shown} (+${elided} more)`
-        : `expected one of ${shown}`;
+      return elided > 0 ? `expected one of ${shown} (+${elided} more)` : `expected one of ${shown}`;
     }
 
     case "too_big":

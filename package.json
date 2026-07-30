@@ -15,13 +15,14 @@
     "schema:generate": "python packages/shared-types/scripts/generate_ts.py",
     "schema:check": "python packages/shared-types/scripts/generate_ts.py --check",
     "deps:policy": "python3 scripts/deps_policy.py",
-    "check": "pnpm schema:check && pnpm lint && pnpm typecheck && pnpm deps:policy && cargo check --workspace",
+    "check": "pnpm schema:check && pnpm lint && pnpm lint:suppressions && pnpm typecheck && pnpm deps:policy && cargo check --workspace",
     "test": "pnpm -r test",
     "version:stamp": "python3 scripts/stamp_version.py",
     "sidecar:bundle": "python3 scripts/bundle_sidecar.py",
     "tauri:prepare": "bash scripts/prepare_tauri_build.sh",
     "release": "bash scripts/release.sh",
-    "zip": "bash scripts/release.sh && bash scripts/make_zip.sh"
+    "zip": "bash scripts/release.sh && bash scripts/make_zip.sh",
+    "lint:suppressions": "python3 scripts/lint_suppressions.py"
   },
   "devDependencies": {
     "prettier": "^3.3.3",

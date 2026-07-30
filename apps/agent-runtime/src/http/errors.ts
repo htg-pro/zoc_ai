@@ -42,6 +42,18 @@ export const ErrorCode = {
   RUN_NOT_FOUND: "run_not_found",
   RESUME_WINDOW_EXPIRED: "resume_window_expired",
   STREAM_LOST: "stream_lost",
+  /**
+   * The Run's terminal state after a cancel (design.md:3572).
+   *
+   * Distinct from {@link ErrorCode.CANCELLED} on purpose, and the distinction is the
+   * design's rather than an invention: the taxonomy table names the lifecycle code
+   * `run_cancelled`, while design.md:1310 says an abandoned tool's part carries
+   * `code: "cancelled"`. Both are followed literally instead of being collapsed,
+   * because guessing which of the two texts is the typo would silently change a wire
+   * code the Chat_Surface matches on.
+   */
+  RUN_CANCELLED: "run_cancelled",
+  /** An in-flight tool abandoned when the cancel grace expired (design.md:1310). */
   CANCELLED: "cancelled",
   RUNTIME_UNAVAILABLE: "runtime_unavailable",
   SLOT_QUEUE_FULL: "slot_queue_full",
@@ -56,21 +68,61 @@ export const ErrorCode = {
   // ── Tools and plan ───────────────────────────────────────────────────
   TOOL_SCHEMA_INVALID: "tool_schema_invalid",
   PLAN_INVALID: "plan_invalid",
+  /** A Workspace_Services call failed transiently; the Run continues (R6.6). */
   WORKSPACE_UNAVAILABLE: "workspace_unavailable",
-  HUNK_STALE: "hunk_stale",
+  /** A Workspace_Services call failed on its merits; no retry offered (R6.6). */
+  WORKSPACE_FAILED: "workspace_failed",
+  /** The file changed since the hunks were proposed (R10.8). */
+  DIFF_STALE: "diff_stale",
+  /** Apply refused and wrote nothing — the transaction is atomic (R10.4). */
+  APPLY_FAILED: "apply_failed",
+  /** Provider-native search failed; the Run continues without it (M2 R33.9). */
+  WEB_SEARCH_FAILED: "web_search_failed",
 
   // ── Provider ─────────────────────────────────────────────────────────
   PROVIDER_AUTH_FAILED: "provider_auth_failed",
   PROVIDER_RATE_LIMITED: "provider_rate_limited",
-  PROVIDER_UNAVAILABLE: "provider_unavailable",
-  PROVIDER_TIMEOUT: "provider_timeout",
-  CONTEXT_LENGTH_EXCEEDED: "context_length_exceeded",
-  CONTENT_FILTERED: "content_filtered",
+  /** 5xx, a network failure, an unknown model, or a timeout (R27.6). */
+  MODEL_UNAVAILABLE: "model_unavailable",
+  /** Retryable only after trimming, which is what R12.6's action does. */
+  CONTEXT_WINDOW_EXCEEDED: "context_window_exceeded",
+  PROVIDER_CONTENT_FILTERED: "provider_content_filtered",
+  /** llama-server is up but still loading the weights (R13.6). */
+  MODEL_NOT_READY: "model_not_ready",
+  /** Nothing is listening on the local endpoint; the user can start it (R13.4). */
+  LOCAL_ENDPOINT_UNREACHABLE: "local_endpoint_unreachable",
+  /** A provider id the registry does not know. An HTTP-level refusal, not a Run one. */
   MODEL_NOT_FOUND: "model_not_found",
   NO_KEY_CONFIGURED: "no_key_configured",
 
   // ── Compaction ───────────────────────────────────────────────────────
   COMPACTION_FAILED: "compaction_failed",
+  /**
+   * A Run is streaming on the Session the manual fold was requested for.
+   *
+   * Not a limitation: the Run's context was assembled and dispatched before the
+   * request arrived, so folding underneath it would make the transcript claim a
+   * fold the provider call never saw, with a `contextTokensAfter` describing a
+   * request nobody sent.
+   */
+  COMPACTION_RUN_ACTIVE: "compaction_run_active",
+  /** Fewer than `RETAINED_TURN_FLOOR + 1` turns exist, so nothing is foldable. */
+  COMPACTION_NOT_NEEDED: "compaction_not_needed",
+
+  // ── Session title ────────────────────────────────────────────────────
+  /**
+   * The Session has no messages, so there is nothing to name it after.
+   *
+   * Not rendered by the surface: the regenerate control is disabled on an empty
+   * Session, so this is the backstop for the race, not a state a user reaches.
+   */
+  TITLE_NOT_NEEDED: "title_not_needed",
+  /**
+   * The title model call failed. Retryable, and the previous title stands — R15.12
+   * leaves a Session never untitled, because the provisional first-message title is
+   * already there to fall back on.
+   */
+  TITLE_GENERATION_FAILED: "title_generation_failed",
 } as const;
 
 export type ZocErrorCode = (typeof ErrorCode)[keyof typeof ErrorCode];
@@ -88,9 +140,7 @@ export function boundDetails(details: unknown): string | null {
   const text = typeof details === "string" ? details : safeStringify(details);
   const trimmed = text.trim();
   if (trimmed.length === 0) return null;
-  return trimmed.length <= DETAILS_LIMIT
-    ? trimmed
-    : `${trimmed.slice(0, DETAILS_LIMIT - 1)}…`;
+  return trimmed.length <= DETAILS_LIMIT ? trimmed : `${trimmed.slice(0, DETAILS_LIMIT - 1)}…`;
 }
 
 function safeStringify(value: unknown): string {
@@ -152,5 +202,17 @@ export class HttpError extends Error {
 
   static gone(code: string, message: string): HttpError {
     return new HttpError(410, envelope(code, message));
+  }
+
+  /**
+   * An upstream call the runtime made on the caller's behalf failed.
+   *
+   * `retryable` defaults to true here and nowhere else: a 502 means the runtime
+   * reached something and that something did not answer usefully, which is the
+   * one class of failure where trying again is a reasonable thing for the
+   * surface to offer.
+   */
+  static badGateway(code: string, message: string, details?: unknown): HttpError {
+    return new HttpError(502, envelope(code, message, { details, retryable: true }));
   }
 }

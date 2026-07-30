@@ -100,15 +100,60 @@ export interface ContextSearchHit {
   readonly text: string;
 }
 
+/**
+ * One discovered rule source, as `GET /v1/sessions/{id}/rules` returns it.
+ *
+ * Structurally the wire model `RuleDocument`, restated here rather than imported
+ * from `@zoc/shared-types` so this module's shape matches the rest of the file
+ * (every other result shape is local). `content: null` with `error` set is an
+ * unreadable source, which the assembler skips with the reason recorded.
+ */
+export interface DiscoveredRule {
+  readonly path: string;
+  readonly content: string | null;
+  readonly error: string | null;
+}
+
+/**
+ * One recorded benchmark run, reduced to what the model picker reads.
+ *
+ * The Gateway's `ModelBenchmarkRun` carries eleven fields including a per-prompt
+ * breakdown; three of them answer R13.11's question. Narrowing here rather than
+ * forwarding the whole record keeps the runtime from having a second opinion about a
+ * shape it does not own — and keeps a future field on the Python side from silently
+ * becoming part of the runtime's wire contract.
+ */
+export interface BenchmarkRunSummary {
+  readonly id: string;
+  readonly createdAt: string;
+  readonly averageTokensPerSecond: number | null;
+}
+
+export interface BenchmarkHistory {
+  readonly modelId: string;
+  /** Newest first, as `BenchmarkStore.history` returns them. */
+  readonly runs: readonly BenchmarkRunSummary[];
+}
+
 export class WorkspaceClient {
   private readonly fetchImpl: typeof fetch;
+  // Not a constructor parameter property: `--experimental-strip-types` cannot generate the
+  // assignment one implies, so it is `ERR_UNSUPPORTED_TYPESCRIPT_SYNTAX` at boot.
+  private readonly options: WorkspaceClientOptions;
 
-  constructor(private readonly options: WorkspaceClientOptions) {
+  constructor(options: WorkspaceClientOptions) {
+    this.options = options;
     this.fetchImpl = options.fetchImpl ?? fetch;
   }
 
   /**
    * The one wrapper. Nothing in this class calls `fetch` directly.
+   *
+   * `body === undefined` means a GET: no `content-type`, no payload. Reads that
+   * carry no arguments are GETs on the Python side (R30.1's rules discovery is
+   * one), and forcing them through a POST would mean either inventing a body or
+   * a second unwrapped `fetch` — and a second `fetch` is the thing this class
+   * exists to prevent.
    */
   private async call<T>(
     base: string | null,
@@ -131,12 +176,12 @@ export class WorkspaceClient {
     let response: Response;
     try {
       response = await this.fetchImpl(`${base}${path}`, {
-        method: "POST",
+        method: body === undefined ? "GET" : "POST",
         headers: {
-          "content-type": "application/json",
+          ...(body === undefined ? {} : { "content-type": "application/json" }),
           ...(authenticate ? { authorization: `Bearer ${this.options.token}` } : {}),
         },
-        body: JSON.stringify(body),
+        ...(body === undefined ? {} : { body: JSON.stringify(body) }),
       });
     } catch (cause) {
       // Connection refused, reset, DNS — the service is not answering.
@@ -165,7 +210,12 @@ export class WorkspaceClient {
     const retryable = response.status >= 500 || RETRYABLE_STATUSES.has(response.status);
     return {
       ok: false,
-      code: envelope.code ?? (retryable ? ErrorCode.WORKSPACE_UNAVAILABLE : ErrorCode.INTERNAL),
+      // The taxonomy's two workspace codes, and they are two rather than one because
+      // the surface treats them differently: `workspace_unavailable` renders a
+      // tool-error row *with* a retry, `workspace_failed` renders one without. A
+      // refusal offered as retryable is a button that fails identically every time.
+      code:
+        envelope.code ?? (retryable ? ErrorCode.WORKSPACE_UNAVAILABLE : ErrorCode.WORKSPACE_FAILED),
       message: envelope.message ?? `${what} refused the request.`,
       retryable,
     };
@@ -269,6 +319,86 @@ export class WorkspaceClient {
       };
     });
     return { ok: true, value: hits };
+  }
+
+  /**
+   * Discovered project rules for a session (R30.1, R30.2).
+   *
+   * Goes to Workspace_Services because discovery and file reads belong where the
+   * filesystem is — R6.3 keeps the `rules` capability there, and design.md's
+   * assembler section is explicit that the runtime does not walk the tree
+   * itself. What comes back is per-source contents, not the pre-merged `rules`
+   * text the renderer displays, because ordering by convention precedence is the
+   * runtime's job and a merged blob cannot be reordered.
+   */
+  async discoverRules(sessionId: string): Promise<WorkspaceOutcome<readonly DiscoveredRule[]>> {
+    const outcome = await this.call<{ documents?: unknown[] }>(
+      this.options.servicesUrl,
+      `/v1/sessions/${encodeURIComponent(sessionId)}/rules`,
+      undefined,
+      "Reading the project rules",
+      false,
+    );
+    if (!outcome.ok) return outcome;
+
+    const documents = (outcome.value.documents ?? []).map((raw) => {
+      const row = raw as { path?: unknown; content?: unknown; error?: unknown };
+      return {
+        path: typeof row.path === "string" ? row.path : "",
+        content: typeof row.content === "string" ? row.content : null,
+        error: typeof row.error === "string" ? row.error : null,
+      };
+    });
+    return { ok: true, value: documents };
+  }
+
+  /**
+   * One model's recorded benchmark history (R13.11).
+   *
+   * **The path was verified before this was written**, because 9.9 records that the
+   * design specified the proxy against `BenchmarkStore.history`'s *signature* and never
+   * confirmed an HTTP route — so assuming one was the single way the task could ship
+   * broken. It is `GET /v1/model-benchmarks?modelId=<id>` in
+   * `zocai_gateway/app.py`, admission-gated, answering `ModelBenchmarkHistory`.
+   *
+   * Unauthenticated for the same reason `discoverRules` is: the Gateway's
+   * `require_admission` is a no-op on a loopback binding (R12.4), and the per-launch
+   * token belongs to Desktop_Core's bridge rather than to the Python surface.
+   *
+   * An unknown model is a **200 with no runs**, not a 404 — `history` returns an empty
+   * list for a model it has never seen — so "never measured" arrives here as data
+   * rather than as a failure, which is what lets R13.12's no-figure case be
+   * distinguished from a service that could not answer.
+   */
+  async benchmarkHistory(modelId: string): Promise<WorkspaceOutcome<BenchmarkHistory>> {
+    const outcome = await this.call<{ modelId?: unknown; runs?: unknown[] }>(
+      this.options.servicesUrl,
+      `/v1/model-benchmarks?modelId=${encodeURIComponent(modelId)}`,
+      undefined,
+      "Reading the model benchmark history",
+      false,
+    );
+    if (!outcome.ok) return outcome;
+
+    const runs = (outcome.value.runs ?? []).map((raw) => {
+      const row = raw as { id?: unknown; createdAt?: unknown; averageTokensPerSecond?: unknown };
+      return {
+        id: typeof row.id === "string" ? row.id : "",
+        createdAt: typeof row.createdAt === "string" ? row.createdAt : "",
+        averageTokensPerSecond:
+          typeof row.averageTokensPerSecond === "number" &&
+          Number.isFinite(row.averageTokensPerSecond)
+            ? row.averageTokensPerSecond
+            : null,
+      };
+    });
+    return {
+      ok: true,
+      value: {
+        modelId: typeof outcome.value.modelId === "string" ? outcome.value.modelId : modelId,
+        runs,
+      },
+    };
   }
 }
 

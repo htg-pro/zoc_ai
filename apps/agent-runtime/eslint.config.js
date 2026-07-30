@@ -2,21 +2,28 @@
 /**
  * Agent_Runtime lint config — zoc-agent-chat-rebuild R12.4, R22.5.
  *
- * Two rules beyond the recommended set carry policy rather than style:
+ * Three rules beyond the recommended set carry policy rather than style:
  *   - `no-restricted-imports` refuses the banned agent frameworks at the source
  *     level, so a violation surfaces at lint time rather than waiting for
  *     `deps:policy` to catch it in the lockfile.
  *   - `no-restricted-syntax` refuses `require(` so the esbuild → pkg pipeline
  *     cannot silently drop a module (R4.3).
+ *   - suppression discipline (R22.5, task 12.4): a `eslint-disable` that no longer
+ *     suppresses anything is an error, and one without a reason is unreviewable.
+ *     The first uses ESLint 9's own `linterOptions` rather than
+ *     `eslint-comments/no-unused-disable`, which the plugin deprecated in 4.7.0 and
+ *     removes in 5.0.0 in favour of exactly this setting.
  */
 
 import tsParser from "@typescript-eslint/parser";
 import tsPlugin from "@typescript-eslint/eslint-plugin";
+import eslintComments from "@eslint-community/eslint-plugin-eslint-comments";
 
 export default [
   { ignores: ["dist/**", "node_modules/**", "coverage/**", "**/*.config.ts", "**/*.config.js"] },
   {
     files: ["**/*.ts"],
+    linterOptions: { reportUnusedDisableDirectives: "error" },
     languageOptions: {
       parser: tsParser,
       ecmaVersion: 2022,
@@ -47,9 +54,10 @@ export default [
         performance: "readonly",
       },
     },
-    plugins: { "@typescript-eslint": tsPlugin },
+    plugins: { "@typescript-eslint": tsPlugin, "eslint-comments": eslintComments },
     rules: {
       ...tsPlugin.configs.recommended.rules,
+      "eslint-comments/require-description": "error",
       "no-unused-vars": "off",
       "@typescript-eslint/no-unused-vars": [
         "error",

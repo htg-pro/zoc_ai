@@ -107,11 +107,9 @@ export function classifyRuleSource(rel: string): RuleSource {
  * sides would silently disagree.
  */
 export function classifyRuleSources(paths: readonly string[]): RuleSource[] {
-  return paths
-    .map(classifyRuleSource)
-    .sort((a, b) => {
-      if (a.kind !== b.kind) return KIND_ORDER[a.kind] - KIND_ORDER[b.kind];
-      if (a.nested !== b.nested) return a.nested ? 1 : -1;
-      return a.path.localeCompare(b.path);
-    });
+  return paths.map(classifyRuleSource).sort((a, b) => {
+    if (a.kind !== b.kind) return KIND_ORDER[a.kind] - KIND_ORDER[b.kind];
+    if (a.nested !== b.nested) return a.nested ? 1 : -1;
+    return a.path.localeCompare(b.path);
+  });
 }

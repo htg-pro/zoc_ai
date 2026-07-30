@@ -840,6 +840,7 @@ __all__ = [
     "RunLifecycleEvent",
     "RunModelBenchmarkRequest",
     "RunSlashCommandRequest",
+    "RuleDocument",
     "Session",
     "SessionStatus",
     "SettingsSnapshot",

@@ -11,6 +11,8 @@
 
 import { describe, expect, it, vi } from "vitest";
 import fc from "fast-check";
+import { tool } from "ai";
+import { z } from "zod";
 import type { ToolKind } from "@zoc-studio/shared-types";
 
 import {
@@ -18,6 +20,8 @@ import {
   FORBIDDEN_TOOL_NAMES,
   MCP_PREFIX,
   MUTATION_TOOL,
+  PLAN_TOOL,
+  assertReadOnlyRegistry,
   assertRegistryIsWellFormed,
   buildToolDescriptors,
   kindOf,
@@ -39,9 +43,29 @@ function recordingGate() {
   return { gated, gate };
 }
 
+/** A stand-in for `tools/plan.ts`'s tool: this file tests the registry, not the plan. */
+const planStub = tool({
+  description: "stub",
+  inputSchema: z.object({ title: z.string() }),
+  execute: async () => ({ ok: true }),
+});
+
+/** A well-formed completion entry, for the assertion tests below. */
+const completionEntry = (): ToolDescriptor => ({
+  name: COMPLETION_TOOL,
+  kind: "read",
+  description: "",
+  tool: tool({ description: "", inputSchema: z.object({ summary: z.string() }) }),
+});
+
 function descriptors(client: WorkspaceClient): readonly ToolDescriptor[] {
   const { gate } = recordingGate();
-  return buildToolDescriptors({ workspace: client, sessionId: "sess_1", gated: gate });
+  return buildToolDescriptors({
+    workspace: client,
+    sessionId: "sess_1",
+    mode: "agent",
+    gated: gate,
+  });
 }
 
 function clientWith(fetchImpl: typeof fetch): WorkspaceClient {
@@ -74,6 +98,7 @@ describe("R10.16: exactly one mutation path", () => {
       expect(() =>
         assertRegistryIsWellFormed([
           { name: forbidden, kind: "write", description: "", tool: null },
+          completionEntry(),
         ]),
       ).toThrow(/R10\.16/);
     }
@@ -87,6 +112,7 @@ describe("R10.16: exactly one mutation path", () => {
           expect(() =>
             assertRegistryIsWellFormed([
               { name, kind: "write", description: "", tool: null },
+              completionEntry(),
             ]),
           ).toThrow(/single mutation path|R10\.16/);
         },
@@ -100,6 +126,7 @@ describe("R10.16: exactly one mutation path", () => {
       assertRegistryIsWellFormed([
         { name: "workspace_read", kind: "read", description: "", tool: null },
         { name: "workspace_read", kind: "read", description: "", tool: null },
+        completionEntry(),
       ]),
     ).toThrow(/collision/);
   });
@@ -122,7 +149,7 @@ describe("registry shape", () => {
     for (const descriptor of list) {
       const ok =
         descriptor.name.startsWith("workspace_") ||
-        descriptor.name === "propose_plan" ||
+        descriptor.name === PLAN_TOOL ||
         descriptor.name === COMPLETION_TOOL;
       expect(ok, `unexpected tool name ${descriptor.name}`).toBe(true);
     }
@@ -135,11 +162,46 @@ describe("registry shape", () => {
     }
   });
 
-  it("gives declare_complete no execute at all", () => {
+  it("gives declare_complete a callable tool with no execute (R11.3)", () => {
     const completion = list.find((descriptor) => descriptor.name === COMPLETION_TOOL);
     expect(completion).toBeDefined();
-    // The absence *is* the terminal signal.
-    expect(completion?.tool).toBeNull();
+    // Callable, so the model is told about it and `hasToolCall` can fire; and with
+    // no `execute`, so the call is never resolved. The absence *is* the signal —
+    // but only for a tool that reached the model in the first place.
+    expect(completion?.tool).not.toBeNull();
+    expect(completion?.tool?.execute).toBeUndefined();
+    expect(completion?.tool?.inputSchema).toBeDefined();
+  });
+
+  it("refuses a registry with no way to end, or one whose end is unreachable", () => {
+    const read: ToolDescriptor = {
+      name: "workspace_read",
+      kind: "read",
+      description: "",
+      tool: null,
+    };
+    expect(() => assertRegistryIsWellFormed([read])).toThrow(/missing/);
+    expect(() =>
+      assertRegistryIsWellFormed([
+        read,
+        { name: COMPLETION_TOOL, kind: "read", description: "", tool: null },
+      ]),
+    ).toThrow(/hasToolCall can never fire/);
+    expect(() =>
+      assertRegistryIsWellFormed([
+        read,
+        {
+          name: COMPLETION_TOOL,
+          kind: "read",
+          description: "",
+          tool: tool({
+            description: "",
+            inputSchema: z.object({ summary: z.string() }),
+            execute: async () => ({ ok: true }),
+          }),
+        },
+      ]),
+    ).toThrow(/has an execute/);
   });
 
   it("never gates read or search, and always gates the rest", () => {
@@ -149,11 +211,26 @@ describe("registry shape", () => {
     }
   });
 
-  it("omits the null-tool entries from the agent's tool map", () => {
+  it("puts the completion tool in the agent's map and omits an unsupplied plan tool", () => {
     const map = toToolMap(list);
-    expect(Object.keys(map)).not.toContain(COMPLETION_TOOL);
+    // The terminal signal has to be in the map or the model can never send it.
+    expect(Object.keys(map)).toContain(COMPLETION_TOOL);
     expect(Object.keys(map)).toContain("workspace_read");
     expect(Object.keys(map)).toContain(MUTATION_TOOL);
+    // `propose_plan` was not supplied here, so it is listed but not callable.
+    expect(list.some((descriptor) => descriptor.name === PLAN_TOOL)).toBe(true);
+    expect(Object.keys(map)).not.toContain(PLAN_TOOL);
+  });
+
+  it("carries the plan tool into the map once the Run supplies it", () => {
+    const withPlan = buildToolDescriptors({
+      workspace: clientWith(vi.fn()),
+      sessionId: "sess_1",
+      mode: "agent",
+      proposePlan: planStub,
+      gated: recordingGate().gate,
+    });
+    expect(Object.keys(toToolMap(withPlan))).toContain(PLAN_TOOL);
   });
 
   it("resolves a kind for every registered tool and null for anything else", () => {
@@ -168,14 +245,79 @@ describe("registry shape", () => {
     buildToolDescriptors({
       workspace: clientWith(vi.fn()),
       sessionId: "sess_1",
+      mode: "agent",
       gated: gate,
     });
     const wrapped = gated.map((entry) => entry.name).sort();
-    expect(wrapped).toEqual([
-      MUTATION_TOOL,
-      "workspace_run_command",
-      "workspace_run_tests",
-    ]);
+    expect(wrapped).toEqual([MUTATION_TOOL, "workspace_run_command", "workspace_run_tests"]);
+  });
+});
+
+describe("R32.5: Ask mode's registry is read-only", () => {
+  function ask(): { list: readonly ToolDescriptor[]; gated: Array<{ name: string }> } {
+    const { gated, gate } = recordingGate();
+    const list = buildToolDescriptors({
+      workspace: clientWith(vi.fn()),
+      sessionId: "sess_1",
+      mode: "ask",
+      proposePlan: planStub,
+      gated: gate,
+    });
+    return { list, gated };
+  }
+
+  it("offers reading, searching, and ending — and nothing else", () => {
+    const names = ask()
+      .list.map((descriptor) => descriptor.name)
+      .sort();
+    expect(names).toEqual([COMPLETION_TOOL, "workspace_read", "workspace_search_context"]);
+  });
+
+  it("omits propose_plan even when the Run supplies it (design.md:1536)", () => {
+    // Supplied above and still absent: the mode decides the registry, not the
+    // availability of an implementation.
+    expect(ask().list.some((descriptor) => descriptor.name === PLAN_TOOL)).toBe(false);
+    expect(Object.keys(toToolMap(ask().list))).not.toContain(PLAN_TOOL);
+  });
+
+  it("never builds a gated closure, because it offers nothing to gate", () => {
+    // Built, not filtered. A registry assembled in full and then trimmed would
+    // have called the gate for the mutation path on the way.
+    expect(ask().gated).toEqual([]);
+  });
+
+  it("still lets the model end the conversation", () => {
+    expect(Object.keys(toToolMap(ask().list))).toContain(COMPLETION_TOOL);
+  });
+
+  it("refuses an Ask registry that reaches the workspace or offers a plan", () => {
+    expect(() =>
+      assertReadOnlyRegistry([{ name: MUTATION_TOOL, kind: "write", description: "", tool: null }]),
+    ).toThrow(/R32\.5/);
+    expect(() =>
+      assertReadOnlyRegistry([
+        { name: "workspace_run_command", kind: "execute", description: "", tool: null },
+      ]),
+    ).toThrow(/R32\.5/);
+    expect(() =>
+      assertReadOnlyRegistry([{ name: PLAN_TOOL, kind: "read", description: "", tool: null }]),
+    ).toThrow(/no place in Ask mode/);
+  });
+
+  it("leaves Plan and Agent mode registries whole", () => {
+    for (const mode of ["plan", "agent"] as const) {
+      const list = buildToolDescriptors({
+        workspace: clientWith(vi.fn()),
+        sessionId: "sess_1",
+        mode,
+        proposePlan: planStub,
+        gated: recordingGate().gate,
+      });
+      const names = list.map((descriptor) => descriptor.name);
+      expect(names, mode).toContain(MUTATION_TOOL);
+      expect(names, mode).toContain(PLAN_TOOL);
+      expect(names, mode).toContain(COMPLETION_TOOL);
+    }
   });
 });
 
@@ -236,11 +378,9 @@ describe("Property 15: workspace failure is retryable and non-fatal (R6.6)", () 
   });
 
   it("surfaces a failure as a tool result the model can read", async () => {
-    const client = clientWith(
-      (async () => {
-        throw new Error("ECONNREFUSED");
-      }) as unknown as typeof fetch,
-    );
+    const client = clientWith((async () => {
+      throw new Error("ECONNREFUSED");
+    }) as unknown as typeof fetch);
     const list = descriptors(client);
     const read = list.find((descriptor) => descriptor.name === "workspace_read");
     const execute = read?.tool?.execute as (args: { path: string }) => Promise<unknown>;
@@ -255,7 +395,8 @@ describe("Property 15: workspace failure is retryable and non-fatal (R6.6)", () 
 
   it("does not mark a non-JSON error body as unreadable", async () => {
     const client = clientWith(
-      (async () => new Response("<html>gateway timeout</html>", { status: 504 })) as unknown as typeof fetch,
+      (async () =>
+        new Response("<html>gateway timeout</html>", { status: 504 })) as unknown as typeof fetch,
     );
     const outcome = await client.read("a");
     expect(outcome.ok).toBe(false);
@@ -290,12 +431,7 @@ describe("apply-hunks request shaping", () => {
     expect(body.plan_id).toBe("plan_1");
     expect(body.checkpoint).toBe(true);
     const files = body.files as Array<Record<string, unknown>>;
-    expect(files.map((file) => file.action)).toEqual([
-      "create",
-      "modify",
-      "delete",
-      "rename",
-    ]);
+    expect(files.map((file) => file.action)).toEqual(["create", "modify", "delete", "rename"]);
     expect(files[0]?.base_digest).toBe(ABSENT_DIGEST);
     expect(files[3]?.source_path).toBe("from.ts");
   });

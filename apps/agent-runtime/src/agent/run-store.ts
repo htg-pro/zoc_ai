@@ -373,9 +373,7 @@ export class RunStore {
 
   /** Active (non-terminal) Runs on one Session — the compact-now 409's input. */
   activeForSession(sessionId: string): readonly RunRecord[] {
-    return this.list().filter(
-      (run) => run.sessionId === sessionId && !run.finished,
-    );
+    return this.list().filter((run) => run.sessionId === sessionId && !run.finished);
   }
 
   delete(runId: string): boolean {

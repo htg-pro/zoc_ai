@@ -69,20 +69,14 @@ function statusFor(result: DecisionResult): number {
 function throwFor(result: DecisionResult): never {
   switch (result) {
     case "already-decided":
-      throw HttpError.conflict(
-        ErrorCode.ALREADY_DECIDED,
-        "That request has already been decided.",
-      );
+      throw HttpError.conflict(ErrorCode.ALREADY_DECIDED, "That request has already been decided.");
     case "expired":
       throw HttpError.gone(
         ErrorCode.DECISION_WINDOW_EXPIRED,
         "That request expired before it was decided, so the action was cancelled.",
       );
     case "unknown":
-      throw HttpError.notFound(
-        ErrorCode.NOT_FOUND,
-        "There is no pending request with that id.",
-      );
+      throw HttpError.notFound(ErrorCode.NOT_FOUND, "There is no pending request with that id.");
     case "resolved":
       // Not reachable: the caller checks for `resolved` first. Throwing rather
       // than falling through keeps the exhaustiveness real.
@@ -118,9 +112,7 @@ export function registerPermissionRoutes(router: Router, deps: PermissionRoutesD
 
   router.get("/v1/permissions/audit", ({ res, query }) => {
     const requested = Number.parseInt(query.get("limit") ?? "200", 10);
-    const limit = Number.isFinite(requested)
-      ? Math.min(Math.max(requested, 1), 500)
-      : 200;
+    const limit = Number.isFinite(requested) ? Math.min(Math.max(requested, 1), 500) : 200;
     json(res, 200, { entries: deps.auditEntries(limit) });
   });
 

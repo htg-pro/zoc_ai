@@ -59,6 +59,38 @@ export interface RuleDocument {
  */
 export type DiscoverRules = (sessionId: string) => Promise<readonly RuleDocument[]>;
 
+/**
+ * The shape of the client half of the port, structurally.
+ *
+ * Declared here rather than importing `WorkspaceClient` so this module keeps its
+ * one dependency (`rules-sources.ts`) and no path into `tools/`. `WorkspaceClient`
+ * satisfies it by shape, and 9.10 satisfies it with an object literal.
+ */
+export interface RulesDiscoveryClient {
+  discoverRules(
+    sessionId: string,
+  ): Promise<
+    | { readonly ok: true; readonly value: readonly RuleDocument[] }
+    | { readonly ok: false; readonly message: string }
+  >;
+}
+
+/**
+ * Adapt the Workspace_Services client to the discovery port.
+ *
+ * A failed call becomes one synthetic document carrying the reason rather than a
+ * thrown error, so an unreachable rules service lands in `skipped` through the
+ * same per-source path an unreadable file does — one reporting mechanism, and the
+ * Run still starts.
+ */
+export function discoverRulesVia(client: RulesDiscoveryClient): DiscoverRules {
+  return async (sessionId: string) => {
+    const outcome = await client.discoverRules(sessionId);
+    if (outcome.ok) return outcome.value;
+    return [{ path: "(discovery)", content: null, error: outcome.message }];
+  };
+}
+
 /** Workspace facts the loop cannot derive from a tool call. */
 export interface WorkspaceFacts {
   readonly workspaceRoot: string;

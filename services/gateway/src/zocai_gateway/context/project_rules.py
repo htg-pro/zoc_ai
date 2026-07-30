@@ -99,7 +99,9 @@ def _read(path: Path, root: Path) -> RuleDocument:
     try:
         size = path.stat().st_size
     except OSError as exc:
-        return RuleDocument(path=rel, content=None, error=f"Could not stat the file: {exc.strerror or exc}")
+        return RuleDocument(
+            path=rel, content=None, error=f"Could not stat the file: {exc.strerror or exc}"
+        )
 
     if size > MAX_RULE_BYTES:
         return RuleDocument(
@@ -112,7 +114,9 @@ def _read(path: Path, root: Path) -> RuleDocument:
     except UnicodeDecodeError:
         return RuleDocument(path=rel, content=None, error="The file is not valid UTF-8 text.")
     except OSError as exc:
-        return RuleDocument(path=rel, content=None, error=f"Could not read the file: {exc.strerror or exc}")
+        return RuleDocument(
+            path=rel, content=None, error=f"Could not read the file: {exc.strerror or exc}"
+        )
 
 
 def discover_rule_documents(workspace_root: Path | str) -> list[RuleDocument]:

@@ -198,11 +198,7 @@ export const CONVERSATION_MODES: readonly ConversationMode[] = Object.freeze([
   "agent",
 ]);
 
-export const CAPABILITIES: readonly Capability[] = Object.freeze([
-  "read",
-  "write",
-  "execute",
-]);
+export const CAPABILITIES: readonly Capability[] = Object.freeze(["read", "write", "execute"]);
 
 export const TOOL_KINDS: readonly ToolKind[] = Object.freeze([
   "read",

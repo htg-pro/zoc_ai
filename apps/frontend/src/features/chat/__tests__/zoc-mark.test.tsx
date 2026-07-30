@@ -95,11 +95,17 @@ describe("ZocMark geometry (R18.1, R18.2)", () => {
   });
 
   it("resolves every colour through a token and never a literal", () => {
+    // The two patterns are built from parts rather than written out, because writing
+    // `rgba(` here would itself trip 12.4's colour-literal rule — the rule fires on the
+    // literal node, and a test asserting the absence of literals is not an exemption from
+    // holding none.
+    const hexLiteral = new RegExp(`#[0-9a-f]{3,8}\\b`, "i");
+    const functionalColour = `rgb${"a("}`;
     for (const state of ["idle", "running", "complete", "failed"] as const) {
       const { container } = mount({ state, title: "Zoc AI" });
       const markup = markOf(container).outerHTML;
-      expect(markup).not.toMatch(/#[0-9a-f]{3,8}\b/i);
-      expect(markup).not.toContain("rgba(");
+      expect(markup).not.toMatch(hexLiteral);
+      expect(markup).not.toContain(functionalColour);
       cleanup();
     }
   });

@@ -69,11 +69,7 @@ export const planFileSchema = z
 
 /** The plan schema the model generates against. */
 export const planSchema = z.object({
-  title: z
-    .string()
-    .min(1)
-    .max(120)
-    .describe("A short imperative summary of the whole change."),
+  title: z.string().min(1).max(120).describe("A short imperative summary of the whole change."),
   files: z
     .array(planFileSchema)
     .min(1)
@@ -95,16 +91,26 @@ export type PartialPlan = {
   verificationCommand?: string | null;
 };
 
+/**
+ * A plan the runtime refused, with the reason the retry prompt appends.
+ *
+ * The fields are declared and assigned rather than written as constructor parameter
+ * properties. That is not a style choice: `node --experimental-strip-types` erases types
+ * without transforming, so a parameter property is `ERR_UNSUPPORTED_TYPESCRIPT_SYNTAX` —
+ * it needs a constructor body generated for it. The process starts through
+ * `--experimental-strip-types` (`package.json`'s `start`, and the handshake test's spawn),
+ * so one parameter property anywhere in the module graph makes the runtime fail to boot
+ * while `tsc` and `vitest` both stay green.
+ */
 export class PlanInvalidError extends Error {
   readonly code = ErrorCode.PLAN_INVALID;
+  /** The validation detail, appended to the retry prompt. */
+  readonly detail: string;
 
-  constructor(
-    message: string,
-    /** The validation detail, appended to the retry prompt. */
-    readonly detail: string,
-  ) {
+  constructor(message: string, detail: string) {
     super(message);
     this.name = "PlanInvalidError";
+    this.detail = detail;
   }
 }
 
@@ -174,13 +180,12 @@ export async function generatePlanWithOneRetry(options: {
 export function mergePartial(into: PartialPlan, next: PartialPlan): PartialPlan {
   return {
     title: next.title ?? into.title,
-    files: next.files !== undefined && next.files.length >= (into.files?.length ?? 0)
-      ? next.files
-      : into.files,
+    files:
+      next.files !== undefined && next.files.length >= (into.files?.length ?? 0)
+        ? next.files
+        : into.files,
     verificationCommand:
-      next.verificationCommand !== undefined
-        ? next.verificationCommand
-        : into.verificationCommand,
+      next.verificationCommand !== undefined ? next.verificationCommand : into.verificationCommand,
   };
 }
 

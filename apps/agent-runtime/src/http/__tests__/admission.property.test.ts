@@ -94,7 +94,7 @@ function replaceAt(token: string, index: number, code: number): string {
 
 /** Rotate within printable ASCII (33–126, 94 wide); a non-zero shift always moves. */
 function shiftPrintable(code: number, shift: number): number {
-  return 33 + (((code - 33) % 94 + 94 + shift) % 94);
+  return 33 + ((((code - 33) % 94) + 94 + shift) % 94);
 }
 
 function flipCase(code: number): number {
@@ -129,10 +129,7 @@ function nearMissFamily(token: string): fc.Arbitrary<string>[] {
     // Same length, exactly one byte different: the case a length check, a hash
     // prefix, or a truncated compare all wave through.
     fc
-      .tuple(
-        fc.integer({ min: 0, max: token.length - 1 }),
-        fc.integer({ min: 1, max: 93 }),
-      )
+      .tuple(fc.integer({ min: 0, max: token.length - 1 }), fc.integer({ min: 1, max: 93 }))
       .map(([index, shift]) =>
         replaceAt(token, index, shiftPrintable(token.charCodeAt(index), shift)),
       ),
@@ -521,8 +518,7 @@ const anyPath = fc.oneof(
  */
 function recordingRequest(peer: string | undefined, path: string, authorization?: string) {
   const reads: string[] = [];
-  const backing: IncomingHttpHeaders =
-    authorization === undefined ? {} : { authorization };
+  const backing: IncomingHttpHeaders = authorization === undefined ? {} : { authorization };
   const headers = new Proxy(backing, {
     get(target, property, receiver) {
       if (typeof property === "string") reads.push(property);
@@ -639,9 +635,7 @@ describe("Property 11: only loopback peers are admitted (R3.6)", () => {
     for (const peer of DECEPTIVE_PEERS) {
       for (const path of ["/v1/runs", "/health", "/health?probe=1"]) {
         expect(admit(request(peer, path, credential)), `${peer} ${path}`).toEqual(refused);
-        expect(admit(request(peer, path)), `${peer} ${path} (no credential)`).toEqual(
-          refused,
-        );
+        expect(admit(request(peer, path)), `${peer} ${path} (no credential)`).toEqual(refused);
       }
     }
   });
@@ -650,12 +644,10 @@ describe("Property 11: only loopback peers are admitted (R3.6)", () => {
     const credential = `Bearer ${LAUNCH_TOKEN}`;
     // Three ways a peer can be absent rather than wrong. Each lands closed: an
     // unreadable peer is the case where "no information" must not mean "local".
-    expect(admit({ headers: { authorization: credential }, url: "/v1/runs" })).toEqual(
+    expect(admit({ headers: { authorization: credential }, url: "/v1/runs" })).toEqual(refused);
+    expect(admit({ headers: { authorization: credential }, url: "/v1/runs", socket: {} })).toEqual(
       refused,
     );
-    expect(
-      admit({ headers: { authorization: credential }, url: "/v1/runs", socket: {} }),
-    ).toEqual(refused);
     expect(
       admit({
         headers: { authorization: credential },
@@ -672,9 +664,7 @@ describe("Property 11: only loopback peers are admitted (R3.6)", () => {
       // `/health` needs no credential (R3.5) …
       expect(admit(request(peer, "/health")).ok, peer).toBe(true);
       // … and a guarded path needs the token and nothing about the peer.
-      expect(admit(request(peer, "/v1/runs", `Bearer ${LAUNCH_TOKEN}`)).ok, peer).toBe(
-        true,
-      );
+      expect(admit(request(peer, "/v1/runs", `Bearer ${LAUNCH_TOKEN}`)).ok, peer).toBe(true);
     }
   });
 
@@ -682,11 +672,7 @@ describe("Property 11: only loopback peers are admitted (R3.6)", () => {
     // This assertion exists to fail. A trust-boundary allow-list that grows to
     // make something else pass is the wrong repair, so growing it breaks a test
     // whose only subject is its size.
-    expect([...LOOPBACK_PEERS].sort()).toEqual([
-      "127.0.0.1",
-      "::1",
-      "::ffff:127.0.0.1",
-    ]);
+    expect([...LOOPBACK_PEERS].sort()).toEqual(["127.0.0.1", "::1", "::ffff:127.0.0.1"]);
   });
 
   it("never reads the credential for a non-loopback peer", () => {

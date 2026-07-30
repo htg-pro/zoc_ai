@@ -88,7 +88,10 @@ export class Router {
    * because "you used the wrong verb" and "there is nothing here" are different
    * facts and conflating them makes a client debug the wrong thing.
    */
-  match(method: string, path: string): { route: Route; params: Record<string, string> } | 405 | 404 {
+  match(
+    method: string,
+    path: string,
+  ): { route: Route; params: Record<string, string> } | 405 | 404 {
     const segments = splitPath(path);
     let pathMatchedUnderOtherMethod = false;
 

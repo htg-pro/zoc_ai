@@ -11,10 +11,7 @@ import { describe, expect, it } from "vitest";
 
 import { createApprovalRegistry } from "../approvals.ts";
 
-function openToolRequest(
-  registry: ReturnType<typeof createApprovalRegistry>,
-  timeoutMs = 500,
-) {
+function openToolRequest(registry: ReturnType<typeof createApprovalRegistry>, timeoutMs = 500) {
   return registry.request({
     requestId: "req_1",
     toolName: "workspace_apply_hunks",
