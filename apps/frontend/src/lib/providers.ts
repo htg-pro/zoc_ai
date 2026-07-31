@@ -1,20 +1,40 @@
 /**
  * Cloud provider catalogue + persistence.
  *
- * Replaces the static MOCK_PROVIDERS list with an editable catalogue that
- * covers OpenAI, Google AI Studio (Gemini), Groq, xAI, Anthropic, plus any
- * number of user-added custom providers. Most providers here are reached
- * through an OpenAI-compatible `/chat/completions` endpoint (Google, Groq
- * and xAI all ship one); Anthropic is routed through its native Messages API.
+ * An editable catalogue covering OpenAI, Google AI Studio (Gemini), Groq, xAI,
+ * and Anthropic, plus any number of user-added custom providers. Most providers
+ * here are reached through an OpenAI-compatible `/chat/completions` endpoint
+ * (Google, Groq and xAI all ship one); Anthropic is routed through its native
+ * Messages API.
  *
- * - Provider config (base URL, model list, custom providers) is persisted in
- *   localStorage so it survives reloads in the browser preview.
- * - API keys are NOT stored here — they live in `secureStore` under
- *   `provider.{id}.api_key` (OS keychain in the desktop shell).
+ * Provider config — base URL, model list, custom providers — is persisted in
+ * `localStorage`. It is configuration, not a credential and not a fact about the
+ * machine, so it stays here.
+ *
+ * ## Keys — zoc-agent-chat-rebuild R13.2, R14.2, task 22.1
+ *
+ * **This module says nothing about where a key lives.** It pairs `requiresKey`
+ * with {@link ProviderKeyState.hasKey}, which is Desktop_Core's answer to "is
+ * there a key for this provider" and nothing more; the value itself never
+ * reaches the renderer. `providerKeyName` is the keychain key *format*, retained
+ * verbatim from the previous `secureStore` convention so keys saved by an earlier
+ * build still resolve (R23).
+ *
+ * ## Model ids — R13.1
+ *
+ * The ids below are the ones the AI SDK provider packages take as their model
+ * argument, which is what the Agent_Runtime's registry resolves against. For the
+ * OpenAI-compatible providers that is the same string the wire takes, so nothing
+ * is translated; the id in a row *is* the id sent. The runtime keeps its own
+ * transcription of this table for context-window figures, and divergence there
+ * is expected: a model a user adds here is absent from the runtime's table and
+ * falls through to its default-window chain.
  */
 
+import { secureStore, subscribeSecrets } from "./secure-store";
+
 export interface ProviderModel {
-  /** Wire id sent as the `model` field to the provider. */
+  /** Wire id sent as the `model` field to the provider, and the AI SDK model id. */
   id: string;
   /** User-facing label. */
   name: string;
@@ -98,8 +118,20 @@ export const BUILTIN_PROVIDERS: ProviderConfig[] = [
     requiresKey: true,
     builtin: true,
     models: [
-      { id: "claude-3-5-sonnet-latest", name: "Claude 3.5 Sonnet", contextWindow: 200_000, tools: true, vision: true },
-      { id: "claude-3-5-haiku-latest", name: "Claude 3.5 Haiku", contextWindow: 200_000, tools: true },
+      // The 200k figure is the standard window. Opus 5 and Sonnet 5 also offer a
+      // 1M-token variant, which is opt-in per request rather than a different
+      // model id — so listing it as a second row would offer a model that does
+      // not exist, and pinning 1M here would size the meter against a window the
+      // Run will not have.
+      { id: "claude-opus-5", name: "Claude Opus 5", contextWindow: 200_000, tools: true, vision: true },
+      { id: "claude-sonnet-5", name: "Claude Sonnet 5", contextWindow: 200_000, tools: true, vision: true },
+      {
+        id: "claude-haiku-4-5-20251001",
+        name: "Claude Haiku 4.5",
+        contextWindow: 200_000,
+        tools: true,
+        vision: true,
+      },
     ],
   },
 ];
@@ -214,4 +246,69 @@ export function parseModelList(raw: string): ProviderModel[] {
     .map((s) => s.trim())
     .filter(Boolean)
     .map((id) => ({ id, name: id, tools: true }));
+}
+
+// ── Key state, paired with `requiresKey` (R13.2, R14.2, task 22.1) ─────────
+
+/**
+ * The keychain key format for a provider's API key.
+ *
+ * `provider.{id}.api_key`, unchanged from the format earlier builds saved under,
+ * so a user upgrading keeps their keys (R23). The Agent_Runtime's
+ * `providers/keys.ts` builds the same string for the same reason; they are two
+ * readers of one convention, and the convention is what makes a key saved by the
+ * renderer resolvable by the runtime.
+ */
+export function providerKeyName(providerId: string): string {
+  return `provider.${providerId}.api_key`;
+}
+
+/** True when a provider-key change fired, rather than some unrelated secret. */
+function isProviderKey(key: string): boolean {
+  return key.startsWith("provider.") && key.endsWith(".api_key");
+}
+
+/**
+ * Does Desktop_Core hold a key for this provider?
+ *
+ * A boolean, never a value. This is the entire input to R13.2's submission gate,
+ * and the reason it is presence rather than validity is stated where the gate
+ * lives (`features/chat/header/model-catalogue.ts`): validity cannot be known
+ * without a provider call, and every guess is a way to block a Run that would
+ * have worked.
+ */
+export async function providerHasKey(providerId: string): Promise<boolean> {
+  return secureStore.has(providerKeyName(providerId));
+}
+
+/**
+ * Key presence for many providers at once, keyed by provider id.
+ *
+ * One pass so the picker's rows are built from a single consistent reading. Asked
+ * per row instead, a key saved mid-render would show against one provider and
+ * not the next, and the picker would be internally inconsistent for exactly as
+ * long as nobody re-rendered it.
+ */
+export async function providerKeyStates(
+  providers: readonly ProviderConfig[] = loadProviders(),
+): Promise<Map<string, boolean>> {
+  const answers = await Promise.all(
+    providers.map(async (provider) => [provider.id, await providerHasKey(provider.id)] as const),
+  );
+  return new Map(answers);
+}
+
+/**
+ * Subscribe to provider-key changes only.
+ *
+ * A filtered view of `subscribeSecrets`, so the model picker's key badge
+ * re-reads when a key is saved or cleared and stays put when an unrelated secret
+ * moves. The badge refreshing without a reload is existing behaviour the cutover
+ * has to keep (R13.3).
+ */
+export function subscribeProviderKeys(cb: (providerId: string) => void): () => void {
+  return subscribeSecrets((key) => {
+    if (!isProviderKey(key)) return;
+    cb(key.slice("provider.".length, key.length - ".api_key".length));
+  });
 }

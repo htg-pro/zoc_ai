@@ -28,6 +28,10 @@ portable-pty = "0.8"
 walkdir = "2.5"
 ignore = "0.4"
 regex = "1.10"
+# Pre-image digests inside a checkpoint manifest (R10.15): the blob is the
+# authority for rollback, and the digest is what makes a corrupted blob
+# detectable rather than silently restored.
+sha2 = "0.10"
 rayon = "1.10"
 
 [dev-dependencies]

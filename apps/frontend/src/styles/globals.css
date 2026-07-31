@@ -27,6 +27,15 @@
   --zoc-success: #4ade80;     /* completed / applied / pass */
   --zoc-error: #f87171;       /* errors / validation fail */
 
+  /* Diff line tints (zoc-agent-chat-rebuild R10.2, R17.1, R21.7 — task 18.2).
+   * Backgrounds only, and always paired with a gutter glyph: R21.7 forbids
+   * carrying "added" and "removed" in colour alone, so the tint is the second
+   * signal rather than the only one. Desaturated far below --zoc-success and
+   * --zoc-error because a diff body is many lines of prose-length text, and a
+   * saturated row background at that area makes the text on it unreadable. */
+  --zoc-diff-add-bg: #12271a; /* added diff line background */
+  --zoc-diff-del-bg: #2a1417; /* removed diff line background */
+
   /* Neutral surface + text scale. Aligned to the app's existing dark
    * palette (#101014 / #131318 / #26262B / #FAFAFA …) so the redesigned
    * agent cards blend with the rest of the shell instead of rendering with
@@ -458,6 +467,56 @@
   .zoc-transition-row-expand,
   .zoc-transition-state-change {
     transition: opacity 100ms linear !important;
+  }
+}
+
+/* Chat panel header (zoc-agent-chat-rebuild R11.1, task 22.2).
+ *
+ * Its own container, like the composer's row below it. The collapse order is
+ * the design's: the model name truncates to its family first, then the context
+ * figure leaves the row. Approval is deliberately absent from these rules —
+ * R11.1 requires the active permission mode visible at all times — and so are
+ * the mark, the status pill, and the menu. */
+.zoc-chat-header {
+  container-type: inline-size;
+}
+
+@container (max-width: 560px) {
+  .zoc-header-model-name {
+    max-width: 96px;
+  }
+}
+
+@container (max-width: 440px) {
+  .zoc-header-context {
+    display: none;
+  }
+  .zoc-header-session-title {
+    max-width: 88px;
+  }
+}
+
+/* Composer control row (zoc-agent-chat-rebuild R32.1, task 20.2).
+ *
+ * Its own container, independent of the header's, so the two mode axes degrade
+ * separately and neither can push the other out. The order is deliberate:
+ * Effort loses its value text first because it is discretionary, and Mode never
+ * loses its shapes at all — R32.1 requires the active Conversation_Mode to be
+ * visible at all times, so below 340px it keeps three glyphs rather than
+ * collapsing into a menu. */
+.zoc-composer-controls {
+  container-type: inline-size;
+}
+
+@container (max-width: 420px) {
+  .zoc-effort-value {
+    display: none;
+  }
+}
+
+@container (max-width: 340px) {
+  .zoc-mode-item-text {
+    display: none;
   }
 }
 

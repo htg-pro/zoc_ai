@@ -77,6 +77,15 @@ export interface DesktopConfig {
   first_run_done: boolean;
   telemetry_opt_in: boolean;
   legacy_imported: boolean;
+  /**
+   * The Desktop_Core-owned local-model list (R13.6, task 22.1).
+   *
+   * Optional and read-only in practice: `desktop_config_set` ignores whatever a
+   * caller sends here and carries the stored list across, so a config writer
+   * cannot wipe the models by omitting them. Read it through `localModelsGet`
+   * and write it through `localModelsSet`, which is the pair that owns it.
+   */
+  local_models?: unknown[];
 }
 
 export interface LegacyDetection {
@@ -782,6 +791,25 @@ export async function desktopConfigGet(): Promise<DesktopConfig> {
 export async function desktopConfigSet(config: DesktopConfig): Promise<DesktopConfig> {
   const out = await callOrNull<DesktopConfig>("desktop_config_set", { config });
   return out ?? config;
+}
+
+// ── Local-model list, Desktop_Core-owned (R13.6, task 22.1) ────────────────
+//
+// Two dedicated commands rather than a field on `desktopConfigSet`, because the
+// models list and the workspace root are edited from different surfaces at
+// different times: a whole-config write from either would carry the other's
+// stale copy. Shapes stay `unknown[]` here — `lib/local-models.ts` owns the
+// `LocalModel` type and narrows what comes back, so the bridge has no second
+// definition to keep in step.
+
+/** The stored list, or `null` outside the desktop shell. */
+export async function localModelsGet(): Promise<unknown[] | null> {
+  return callOrNull<unknown[]>("local_models_get");
+}
+
+/** Replace the stored list, returning what Desktop_Core wrote, or `null` outside the shell. */
+export async function localModelsSet(models: readonly unknown[]): Promise<unknown[] | null> {
+  return callOrNull<unknown[]>("local_models_set", { models });
 }
 
 export async function legacyDetect(): Promise<LegacyDetection> {

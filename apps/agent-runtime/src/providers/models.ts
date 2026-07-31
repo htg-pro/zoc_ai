@@ -73,10 +73,15 @@ export const MODELS: readonly ModelSpec[] = Object.freeze([
   cloud("openai", "gpt-4o", "GPT-4o", 128_000, { vision: true }),
   cloud("openai", "gpt-4o-mini", "GPT-4o mini", 128_000, { vision: true }),
   cloud("openai", "o3-mini", "o3-mini", 200_000, {}),
-  cloud("anthropic", "claude-3-5-sonnet-latest", "Claude 3.5 Sonnet", 200_000, {
+  cloud("anthropic", "claude-opus-5", "Claude Opus 5", 200_000, {
     vision: true,
   }),
-  cloud("anthropic", "claude-3-5-haiku-latest", "Claude 3.5 Haiku", 200_000, {}),
+  cloud("anthropic", "claude-sonnet-5", "Claude Sonnet 5", 200_000, {
+    vision: true,
+  }),
+  cloud("anthropic", "claude-haiku-4-5-20251001", "Claude Haiku 4.5", 200_000, {
+    vision: true,
+  }),
   cloud("google-ai-studio", "gemini-2.0-flash", "Gemini 2.0 Flash", 1_000_000, {
     vision: true,
   }),

@@ -170,6 +170,9 @@ importers:
       '@xterm/xterm':
         specifier: ^6.0.0
         version: 6.0.0
+      '@zoc-studio/agent-runtime':
+        specifier: workspace:*
+        version: link:../agent-runtime
       '@zoc-studio/shared-types':
         specifier: workspace:*
         version: link:../../packages/shared-types/typescript

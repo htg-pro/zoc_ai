@@ -200,7 +200,13 @@ mod tests {
         (n * BYTES_PER_GB) as u64
     }
 
-    fn inputs(size_gb: f64, total: Option<f64>, avail: Option<f64>, vram: Option<f64>, layers: u32) -> FitInputs {
+    fn inputs(
+        size_gb: f64,
+        total: Option<f64>,
+        avail: Option<f64>,
+        vram: Option<f64>,
+        layers: u32,
+    ) -> FitInputs {
         FitInputs {
             model_size_bytes: gb(size_gb),
             total_memory_gb: total,
@@ -296,7 +302,10 @@ mod tests {
     #[test]
     fn the_three_states_serialise_lowercase() {
         assert_eq!(serde_json::to_string(&FitState::Fits).unwrap(), "\"fits\"");
-        assert_eq!(serde_json::to_string(&FitState::Tight).unwrap(), "\"tight\"");
+        assert_eq!(
+            serde_json::to_string(&FitState::Tight).unwrap(),
+            "\"tight\""
+        );
         assert_eq!(
             serde_json::to_string(&FitState::Exceeds).unwrap(),
             "\"exceeds\""
@@ -310,7 +319,11 @@ mod tests {
         for layers in [0u32, 35] {
             for vram in [None, Some(0.5), Some(24.0)] {
                 let fit = classify_fit(inputs(7.0, Some(16.0), Some(9.0), vram, layers));
-                assert!(!fit.reason.contains('/'), "reason leaked a path: {}", fit.reason);
+                assert!(
+                    !fit.reason.contains('/'),
+                    "reason leaked a path: {}",
+                    fit.reason
+                );
                 assert!(!fit.reason.contains('\\'));
             }
         }

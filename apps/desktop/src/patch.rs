@@ -7,7 +7,7 @@ use std::path::Path;
 use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
-use zoc_studio_hotpath::checkpoint::git_checkpoint;
+use zoc_studio_hotpath::checkpoint::{git_checkpoint, CheckpointStore};
 use zoc_studio_hotpath::patch::apply_unified_fuzzy;
 use zoc_studio_hotpath::transaction::Transaction;
 
@@ -364,4 +364,44 @@ mod tests {
         );
         std::fs::remove_dir_all(root).ok();
     }
+}
+
+// ── Checkpoint rollback (zoc-agent-chat-rebuild R10.6, R10.7, task 18.7) ──
+
+#[derive(Deserialize, Debug)]
+pub struct RollbackArgs {
+    pub checkpoint_id: String,
+}
+
+#[derive(Serialize, Debug)]
+pub struct RollbackResult {
+    pub checkpoint_id: String,
+    /// Files restored — R10.7's figure, and the one the receipt reports.
+    pub restored_files: usize,
+    /// Paths restored. A rename is one file across two of them.
+    pub restored_paths: usize,
+}
+
+/// Restore one apply checkpoint (R10.6, R10.7).
+///
+/// The renderer's half of rollback, and it is a Tauri command rather than a bridge route because
+/// the *user* rolls back, from the receipt on a plan card. The Agent_Runtime's own path to the same
+/// store is `/workspace/rollback`, and both hold the same `CheckpointStore` — one store, or a
+/// checkpoint taken by an apply would be invisible to the control offering to undo it.
+///
+/// Rolling back is deliberately **not** offered as a model-facing tool: a Run undoing a change the
+/// user accepted is not something the review in R10.2 and R10.3 ever authorised.
+#[tauri::command]
+pub fn workspace_rollback(
+    checkpoints: tauri::State<'_, Arc<CheckpointStore>>,
+    args: RollbackArgs,
+) -> Result<RollbackResult, String> {
+    let report = checkpoints
+        .rollback(&args.checkpoint_id)
+        .map_err(|err| err.to_string())?;
+    Ok(RollbackResult {
+        checkpoint_id: report.checkpoint_id,
+        restored_files: report.restored_files,
+        restored_paths: report.restored_paths,
+    })
 }

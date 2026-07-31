@@ -21,25 +21,30 @@
  * space (R7.7). The only things that outlive a Run are the store, the Slot manager,
  * the audit log, and the completion cache.
  *
- * ## The history gap, stated rather than papered over
+ * ## The history gap, closed
  *
- * The design has the runtime **rehydrate history from Workspace_Services** — the
- * transport sends only the newest user message so a 500-message Session does not
- * re-upload every turn (design.md:1337). **That endpoint does not exist.** The live
- * FastAPI route table has 39 routes and none matching `message`; `SessionRegistry`
- * holds `Session` metadata only, with no transcript. `apps/frontend/src/lib/agent-client.ts`
- * declares a `listMessages` client against `/v1/sessions/{id}/messages` that would
- * 404, and nothing calls it.
+ * This header used to record a gap: the design has the runtime **rehydrate history
+ * from Workspace_Services** so a 500-message Session does not re-upload every turn
+ * (design.md:1337), and that endpoint did not exist. `SessionRegistry` held
+ * `Session` metadata in a dict with no transcript, `listMessages` would have 404'd,
+ * and the consequences were exact — every Run single-turn, compaction never
+ * triggering, `messagesOutOfWindow` reading 0.
  *
- * So {@link RuntimeDeps.loadHistory} is a port with a single-turn default: the Run
- * gets the prompt it was submitted with and no prior turns. The consequences are
- * exact, and none of them is silent — compaction never triggers because one turn is
- * never 85% of a window, `sessionMessageCount` equals the turn count, and
- * `messagesOutOfWindow` reads 0. Every Run works; multi-turn context does not.
- * Whoever adds the endpoint supplies this port and nothing else changes.
+ * The endpoint exists now: `GET`/`PUT /v1/sessions/{id}/messages` over a durable
+ * per-Session store (`zocai_gateway/transcripts.py`). {@link RuntimeDeps.loadTranscript}
+ * defaults to it, `transcript-history.ts` converts in both directions, and
+ * `RunContext.persistence` is supplied, so a completed Run is written down instead
+ * of being read once and lost. A test still injects its own port and gets its own
+ * history with no sidecar in sight.
+ *
+ * What a read failure costs is stated where it is handled rather than here: the
+ * Run starts single-turn and says so in the log. A *write* failure costs the
+ * transcript and not the answer — the alternative, failing a Run because a
+ * restarting sidecar refused a write, would lose something the user already read.
  */
 
 import { streamRun, type RunContext } from "./agent/build-agent.ts";
+import { createEditorGenerator } from "./agent/editor-generate.ts";
 import { CompletionCache } from "./agent/editor-inference.ts";
 import { createRunErrorClassifier } from "./agent/error-taxonomy.ts";
 import { createTokenRateMeter } from "./agent/token-rate.ts";
@@ -47,6 +52,12 @@ import { RunManager, type OpenRunStream } from "./agent/run-driver.ts";
 import { RunStore, SlotManager } from "./agent/run-store.ts";
 import { assembleInstructions, discoverRulesVia } from "./agent/system-instructions.ts";
 import type { AssembledRequest, HistoryMessage } from "./agent/compaction.ts";
+import { pinFrom } from "./agent/compaction.ts";
+import {
+  compactionPartsFrom,
+  createTranscriptHistory,
+  historyFrom,
+} from "./agent/transcript-history.ts";
 import { registerApiRoutes, type ApiDeps } from "./http/api.ts";
 import { buildRoutes } from "./http/routes.ts";
 import type { RunRequest } from "./http/run-routes.ts";
@@ -64,17 +75,27 @@ import type { RuntimeEnv } from "./main.ts";
 import type { RunWriter } from "./agent/writer.ts";
 
 /**
- * Prior turns for a Session, oldest first, excluding the one being submitted.
+ * A Session's stored transcript, oldest first, excluding the turn being submitted.
  *
- * The port the missing endpoint would fill. See the header: the default answers `[]`,
- * so every Run is single-turn until a real transcript store exists.
+ * The port the missing endpoint would fill, now filled. It answers the *stored
+ * records* rather than flattened history because one read has to serve two
+ * derivations — the prior turns (`historyFrom`) and the compaction pin
+ * (`pinFrom` over `compactionPartsFrom`) — and reading twice would let a Run
+ * assemble its messages from one snapshot and its pin from another.
+ *
+ * Records are `unknown` on purpose: they are AI SDK `UIMessage` documents, whose
+ * part union belongs to the Chat_Surface. `transcript-history.ts` is the one
+ * module that interprets them.
  */
-export type LoadHistory = (sessionId: string) => Promise<readonly HistoryMessage[]>;
+export type LoadTranscript = (sessionId: string) => Promise<readonly unknown[]>;
 
 export interface RuntimeDeps {
   readonly env: RuntimeEnv;
-  /** Prior turns. Defaults to none — the gap the header documents. */
-  readonly loadHistory?: LoadHistory;
+  /**
+   * Prior turns. Defaults to the Workspace_Services transcript store; a test
+   * supplies its own so a Run can be driven with history and without a sidecar.
+   */
+  readonly loadTranscript?: LoadTranscript;
   /** Injectable for tests. */
   readonly fetchImpl?: typeof fetch;
   readonly slots?: SlotManager;
@@ -189,6 +210,7 @@ function bindRun(
   const descriptors = buildToolDescriptors({
     workspace: options.workspace,
     sessionId: options.sessionId,
+    runId: options.runId,
     mode: options.mode,
     gated: createGate(gateContext),
     proposePlan: createProposePlanTool({
@@ -219,13 +241,32 @@ export function buildRuntimeRoutes(
 ) => Promise<void> {
   const { env } = deps;
   const now = deps.now ?? (() => new Date());
-  const loadHistory = deps.loadHistory ?? (async () => []);
 
   // ── Process-scoped ──────────────────────────────────────────────────
   // The client reads two *environment* variables, not `RuntimeEnv`'s three fields: the
   // Desktop_Core bridge URL is optional and never validated at startup, because a runtime
   // launched without it still serves catalogues and still fails workspace tools cleanly.
   const workspace = workspaceClientFromEnv(process.env, env.token, deps.fetchImpl);
+  // ── Transcript history (R15.6, R34.6) ───────────────────────────────
+  //
+  // The port this file's header used to describe as unfillable: the endpoint it
+  // needed did not exist, so `loadHistory` answered `[]` and every Run was
+  // single-turn. It exists now (`GET`/`PUT /v1/sessions/{id}/messages`), and the
+  // header's promise — "whoever adds the endpoint supplies this port and nothing
+  // else changes" — is what these three lines are.
+  //
+  // `deps.loadHistory` still wins when supplied, because a test drives history
+  // without a sidecar and the handshake test has no Python process at all.
+  const transcripts = createTranscriptHistory(workspace, (message, detail) => {
+    // `stderr` rather than `console`, matching `bin.ts` and the redacting logger in
+    // `providers/keys.ts`: the supervisor captures this stream, and nothing here can
+    // carry a credential — the detail is a taxonomy code and a sentence.
+    //
+    // Logged, never thrown: a Session whose transcript cannot be read starts
+    // single-turn and a Run whose transcript cannot be written still streams.
+    process.stderr.write(`agent-runtime ${message}: ${detail}\n`);
+  });
+  const loadTranscript = deps.loadTranscript ?? transcripts.loadRecords;
   // **The token is spread back in on purpose, and getting this wrong is silent.**
   // `main.ts` deletes `process.env.ZOC_RUNTIME_TOKEN` before the route table is built —
   // that is R3.4's scrub — and `secretSourceFromEnv` reads exactly that variable to
@@ -293,7 +334,10 @@ export function buildRuntimeRoutes(
     },
     editor: {
       cache: completions,
-      generate: () => editorGenerationUnavailable(),
+      // R6.2's inference path, live. The request names the model and the runtime resolves the key,
+      // which is the whole of R7.8 for the editor — see `agent/editor-generate.ts` for why the
+      // "no selected model" premise the old stub carried was wrong.
+      generate: createEditorGenerator({ secrets }),
     },
     compaction: {
       hasActiveRun: (sessionId) => manager.hasActiveRun(sessionId),
@@ -331,17 +375,22 @@ export function buildRuntimeRoutes(
         conversationMode: request.mode,
       });
 
-      const prior = await loadHistory(request.sessionId);
+      // One read, two derivations: the prior turns and the compaction pin come
+      // from the same snapshot, so a Run cannot assemble its messages from one
+      // state of the transcript and its pin from another.
+      const stored = await loadTranscript(request.sessionId);
       const messages: HistoryMessage[] = [
-        ...prior,
+        ...historyFrom(stored),
         { id: binding.messageId, role: "user", text: request.prompt },
       ];
 
       const assembled: AssembledRequest = {
         instructions: instructions.instructions,
-        // Derived from the newest `CompactionPart` in the Session, which needs the
-        // transcript store. Null until it exists — see the header.
-        pin: null,
+        // Derived from the newest `CompactionPart` in the stored transcript
+        // (R34.6). Null for a Session that has never compacted, and null when the
+        // store could not answer — a missing pin re-sends folded turns, which is
+        // wasteful, where a fabricated one would drop turns the model needs.
+        pin: pinFrom(compactionPartsFrom(stored)),
         mentions: request.mentions.map((mention) => mention.content ?? mention.ref),
         toolSchemas: [],
         messages,
@@ -380,6 +429,10 @@ export function buildRuntimeRoutes(
         // A real meter, not the null one: this is the answer stream, which is the one
         // thing Token_Rate is allowed to describe (R13.8).
         rate: createTokenRateMeter(),
+        // R15.6. Supplied here rather than left undefined, which is what made the
+        // `onFinish` hook a no-op: the Run streamed, the user read the answer, and
+        // nothing wrote it down. An aborted Run persists too, flagged.
+        persistence: transcripts,
         // Bound to this Run's provider, so R13.7's card can name it.
         classifyError: createRunErrorClassifier({
           provider: resolved.spec.label,
@@ -400,23 +453,6 @@ export function buildRuntimeRoutes(
       return streamRun(context);
     };
   }
-}
-
-/**
- * The editor routes' generator, absent until a key path for them exists.
- *
- * `/v1/completions` and `/v1/inline-edit` are ported and tested but nothing calls them
- * until 22.11 and 22.12 repoint the editor, and neither carries a provider or a key in
- * its body by construction (R7.8) — so a real generator needs a *selected model* for the
- * editor, which is app state the runtime is not given. Throwing here is not a gap being
- * hidden: both routes fail quiet by contract, so the caller gets a well-formed stream
- * with one `done` and no completion, which is exactly what an editor with no model
- * configured should see.
- */
-function editorGenerationUnavailable(): AsyncIterable<string> {
-  return (async function* none() {
-    throw new Error("No editor model is configured for this runtime.");
-  })();
 }
 
 /** The route table `main.ts` uses when it is not given one. */

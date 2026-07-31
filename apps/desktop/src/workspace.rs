@@ -143,6 +143,20 @@ pub struct DesktopConfig {
     pub telemetry_opt_in: bool,
     #[serde(default)]
     pub legacy_imported: bool,
+    /// The installed local-model list — zoc-agent-chat-rebuild R13.6, task 22.1.
+    ///
+    /// Held as opaque JSON objects rather than a typed struct on purpose. The
+    /// `LocalModel` shape is the renderer's (`lib/local-models.ts`), it carries a
+    /// dozen optional llama.cpp tuning fields, and Desktop_Core is a *store* for
+    /// it, not a validator: a typed mirror here would be a second definition to
+    /// keep in step, and every field added on the TypeScript side would silently
+    /// drop out of the file until someone remembered this struct.
+    ///
+    /// Written only by [`local_models_set`]. [`desktop_config_set`] carries the
+    /// stored value across untouched, so a renderer config write can never wipe
+    /// the model list by omitting it.
+    #[serde(default)]
+    pub local_models: Vec<serde_json::Value>,
 }
 
 fn config_path() -> PathBuf {
@@ -153,13 +167,42 @@ fn config_path() -> PathBuf {
     base.join("desktop.json")
 }
 
-pub fn load_config() -> DesktopConfig {
-    let path = config_path();
-    if let Ok(text) = std::fs::read_to_string(&path) {
-        serde_json::from_str(&text).unwrap_or_default()
-    } else {
-        DesktopConfig::default()
+/// Read a config file by path. Missing or unparseable is [`DesktopConfig::default`].
+///
+/// Split from [`load_config`] so the read-modify-write below can be exercised
+/// against a temp file rather than against `$HOME` — the same split
+/// `hardware_fit.rs` makes for the same reason, and the only way these tests can
+/// run without mutating the process environment.
+fn read_config_at(path: &Path) -> DesktopConfig {
+    match std::fs::read_to_string(path) {
+        Ok(text) => serde_json::from_str(&text).unwrap_or_default(),
+        Err(_) => DesktopConfig::default(),
     }
+}
+
+fn write_config_at(path: &Path, config: &DesktopConfig) -> Result<(), String> {
+    let text = serde_json::to_string_pretty(config).map_err(|e| e.to_string())?;
+    std::fs::write(path, text).map_err(|e| e.to_string())
+}
+
+/// Replace the stored model list, leaving every other config field as it was.
+///
+/// Read-modify-write rather than a whole-config write from the renderer: the
+/// model list and the workspace root are edited from different surfaces at
+/// different times, and a full-object write from either one would take the
+/// other's stale copy with it.
+fn set_local_models_at(
+    path: &Path,
+    models: Vec<serde_json::Value>,
+) -> Result<Vec<serde_json::Value>, String> {
+    let mut cfg = read_config_at(path);
+    cfg.local_models = models;
+    write_config_at(path, &cfg)?;
+    Ok(cfg.local_models)
+}
+
+pub fn load_config() -> DesktopConfig {
+    read_config_at(&config_path())
 }
 
 /// Persist just the workspace root into `desktop.json`, merging with the
@@ -208,6 +251,11 @@ pub fn desktop_config_set(
     };
     let config = DesktopConfig {
         workspace_root: next.as_ref().map(|p| p.to_string_lossy().into_owned()),
+        // The model list is owned by `local_models_set` and is never taken from
+        // the incoming config: the renderer's config writers all send a whole
+        // object built from an earlier read, so honouring their copy would let a
+        // stale Settings page delete a model added since it loaded.
+        local_models: read_config_at(&config_path()).local_models,
         ..config
     };
     let path = config_path();
@@ -223,6 +271,28 @@ pub fn desktop_config_set(
         supervisor.restart();
     }
     Ok(config)
+}
+
+/// The installed local-model list — zoc-agent-chat-rebuild R13.6, task 22.1.
+///
+/// Desktop_Core rather than `localStorage` because R13.6 requires the
+/// hardware-fit state to come from Desktop_Core, and two stores for one list
+/// guarantees they disagree: the picker would offer a model the fit probe has
+/// never seen, or hide one it can measure.
+#[tauri::command]
+pub fn local_models_get() -> Vec<serde_json::Value> {
+    load_config().local_models
+}
+
+/// Replace the stored model list, returning what was stored.
+///
+/// Returns the list rather than `()` so the caller's cache is seeded from the
+/// file it was just written to rather than from what it hoped it wrote.
+#[tauri::command]
+pub fn local_models_set(
+    models: Vec<serde_json::Value>,
+) -> Result<Vec<serde_json::Value>, String> {
+    set_local_models_at(&config_path(), models)
 }
 
 /// Resolve a user-supplied workspace root to an absolute, canonical directory.
@@ -544,6 +614,92 @@ mod tests {
         assert!(!is_onboarding_selection(&a, &b)); // switch → no restart
         assert!(!is_onboarding_selection(&a, &None)); // clear → no restart
         assert!(!is_onboarding_selection(&None, &None)); // nothing → no restart
+    }
+
+    /// A config file in a temp directory, so nothing here reads or writes `$HOME`.
+    fn temp_config(label: &str) -> PathBuf {
+        temp_workspace(label).join("desktop.json")
+    }
+
+    #[test]
+    fn local_models_round_trip_through_the_config_file() {
+        // Task 22.1: the list survives the write verbatim, including the optional
+        // llama.cpp tuning fields Desktop_Core knows nothing about. That is the
+        // whole reason the field is opaque JSON.
+        let path = temp_config("models-roundtrip");
+        let models = vec![serde_json::json!({
+            "id": "local:abc",
+            "name": "Qwen2.5-Coder-32B",
+            "path": "/models/qwen.gguf",
+            "n_gpu_layers": 99,
+            "readiness_deadline_secs": 300,
+        })];
+
+        let stored = set_local_models_at(&path, models.clone()).unwrap();
+        assert_eq!(stored, models);
+        assert_eq!(read_config_at(&path).local_models, models);
+
+        std::fs::remove_dir_all(path.parent().unwrap()).ok();
+    }
+
+    #[test]
+    fn writing_models_leaves_every_other_field_alone() {
+        // The read-modify-write's reason for existing: the model list is edited
+        // from Settings → Models while the workspace root and the telemetry
+        // choice are owned elsewhere, and a whole-object write would carry a
+        // stale copy of both.
+        let path = temp_config("models-preserve");
+        write_config_at(
+            &path,
+            &DesktopConfig {
+                workspace_root: Some("/work/proj".to_string()),
+                first_run_done: true,
+                telemetry_opt_in: true,
+                legacy_imported: true,
+                local_models: vec![],
+            },
+        )
+        .unwrap();
+
+        set_local_models_at(&path, vec![serde_json::json!({ "id": "local:x" })]).unwrap();
+
+        let cfg = read_config_at(&path);
+        assert_eq!(cfg.workspace_root.as_deref(), Some("/work/proj"));
+        assert!(cfg.first_run_done);
+        assert!(cfg.telemetry_opt_in);
+        assert!(cfg.legacy_imported);
+        assert_eq!(cfg.local_models.len(), 1);
+
+        std::fs::remove_dir_all(path.parent().unwrap()).ok();
+    }
+
+    #[test]
+    fn a_config_written_before_the_field_existed_still_loads() {
+        // R23.5: an existing install's desktop.json has no `local_models` key.
+        // Without `#[serde(default)]` that file would fail to parse and the
+        // user's workspace root would silently reset to none.
+        let path = temp_config("models-legacy");
+        std::fs::write(
+            &path,
+            br#"{"workspace_root":"/work/proj","first_run_done":true,"telemetry_opt_in":false}"#,
+        )
+        .unwrap();
+
+        let cfg = read_config_at(&path);
+        assert_eq!(cfg.workspace_root.as_deref(), Some("/work/proj"));
+        assert!(cfg.local_models.is_empty());
+
+        std::fs::remove_dir_all(path.parent().unwrap()).ok();
+    }
+
+    #[test]
+    fn an_unreadable_config_reads_as_default_rather_than_panicking() {
+        let path = temp_config("models-garbage");
+        std::fs::write(&path, b"{ not json").unwrap();
+        let cfg = read_config_at(&path);
+        assert!(cfg.workspace_root.is_none());
+        assert!(cfg.local_models.is_empty());
+        std::fs::remove_dir_all(path.parent().unwrap()).ok();
     }
 
     #[test]

@@ -45,6 +45,10 @@ export const TOKEN_VALUES = {
   "--zoc-success": "#4ade80",
   "--zoc-error": "#f87171",
 
+  // ── Diff line tints ─────────────────────────────────────────────────
+  "--zoc-diff-add-bg": "#12271a",
+  "--zoc-diff-del-bg": "#2a1417",
+
   // ── Hairlines ───────────────────────────────────────────────────────
   "--zoc-border": "#26262b",
   "--zoc-row-border": "#26262b",
@@ -187,6 +191,36 @@ const DARK_PAIRS: readonly TokenPair[] = [
     background: "--zoc-panel",
     role: "boundary",
     usage: "error strip on a decision card",
+  },
+
+  // ── Diff review (task 18.2) ─────────────────────────────────────────
+  // A diff body is many lines of code-length text on a tinted row, so both tints are pairs the
+  // body-text threshold applies to — and the gutter glyph beside the text is the pair a 3:1
+  // boundary threshold applies to. R21.7's "not colour alone" is why the glyph exists at all;
+  // these four pairs are why it is legible once it does.
+  {
+    foreground: "--zoc-text",
+    background: "--zoc-diff-add-bg",
+    role: "body-text",
+    usage: "added diff line content",
+  },
+  {
+    foreground: "--zoc-text",
+    background: "--zoc-diff-del-bg",
+    role: "body-text",
+    usage: "removed diff line content",
+  },
+  {
+    foreground: "--zoc-success",
+    background: "--zoc-diff-add-bg",
+    role: "boundary",
+    usage: "added-line gutter glyph",
+  },
+  {
+    foreground: "--zoc-error",
+    background: "--zoc-diff-del-bg",
+    role: "boundary",
+    usage: "removed-line gutter glyph",
   },
   // Hairlines are the pairs a 3:1 rule is hardest on, and they are recorded rather than
   // omitted: a border nobody can see is a card with no edge.

@@ -85,6 +85,43 @@ export interface ApplyHunksResult {
   readonly checkpointId: string | null;
 }
 
+/** What a rollback restored (R10.6, R10.7). */
+export interface RollbackResult {
+  readonly checkpointId: string;
+  /** Files restored — the figure the surface reports. A rename is one file. */
+  readonly restoredFiles: number;
+  /** Paths restored. A rename is two of them, so the two counts legitimately differ. */
+  readonly restoredPaths: number;
+}
+
+/**
+ * The bridge speaks snake_case, and every other result on this client happens to be
+ * single-word.
+ *
+ * These two are not, so they are mapped explicitly rather than cast. The cast was the
+ * original code and it was wrong in a way nothing would have noticed for a while:
+ * `checkpoint_id` read as `checkpointId` is `undefined`, so an apply that *was*
+ * checkpointed would have reported that it was not — and the surface renders that as
+ * "this cannot be rolled back here" (R10.15).
+ */
+interface ApplyHunksWire {
+  readonly plan_id?: string;
+  readonly checkpoint_id?: string | null;
+  readonly applied?: readonly {
+    readonly path?: string;
+    readonly action?: HunkAction;
+    readonly created?: boolean;
+    readonly deleted?: boolean;
+    readonly bytes_written?: number;
+  }[];
+}
+
+interface RollbackWire {
+  readonly checkpoint_id?: string;
+  readonly restored_files?: number;
+  readonly restored_paths?: number;
+}
+
 export interface RunCommandResult {
   readonly exitCode: number | null;
   readonly stdout: string;
@@ -154,6 +191,10 @@ export class WorkspaceClient {
    * one), and forcing them through a POST would mean either inventing a body or
    * a second unwrapped `fetch` — and a second `fetch` is the thing this class
    * exists to prevent.
+   *
+   * `method` overrides that inference for the one route whose verb is neither:
+   * the transcript replace is a `PUT`, because it is idempotent and replaces a
+   * whole document (R15.6).
    */
   private async call<T>(
     base: string | null,
@@ -161,6 +202,7 @@ export class WorkspaceClient {
     body: unknown,
     what: string,
     authenticate: boolean,
+    method?: "GET" | "POST" | "PUT",
   ): Promise<WorkspaceOutcome<T>> {
     if (base === null || base.length === 0) {
       return {
@@ -176,7 +218,7 @@ export class WorkspaceClient {
     let response: Response;
     try {
       response = await this.fetchImpl(`${base}${path}`, {
-        method: body === undefined ? "GET" : "POST",
+        method: method ?? (body === undefined ? "GET" : "POST"),
         headers: {
           ...(body === undefined ? {} : { "content-type": "application/json" }),
           ...(authenticate ? { authorization: `Bearer ${this.options.token}` } : {}),
@@ -240,16 +282,19 @@ export class WorkspaceClient {
    * `sourcePath` alongside the target. One call means one permission gate, one
    * out-of-plan-path check, and one checkpoint contract.
    */
-  applyHunks(request: {
+  async applyHunks(request: {
     planId: string;
+    /** The Run this apply belongs to, so the checkpoint identifies it (R10.5). */
+    runId?: string;
     files: readonly HunkFileRequest[];
     checkpoint?: boolean;
   }): Promise<WorkspaceOutcome<ApplyHunksResult>> {
-    return this.call(
+    const outcome = await this.call<ApplyHunksWire>(
       this.options.bridgeUrl,
       "/workspace/apply-hunks",
       {
         plan_id: request.planId,
+        run_id: request.runId ?? "",
         checkpoint: request.checkpoint ?? true,
         files: request.files.map((file) => ({
           path: file.path,
@@ -262,6 +307,49 @@ export class WorkspaceClient {
       "Applying workspace changes",
       true,
     );
+    if (!outcome.ok) return outcome;
+    return {
+      ok: true,
+      value: {
+        planId: outcome.value.plan_id ?? request.planId,
+        checkpointId: outcome.value.checkpoint_id ?? null,
+        applied: (outcome.value.applied ?? []).map((file) => ({
+          path: file.path ?? "",
+          action: file.action ?? "modify",
+          created: file.created === true,
+          deleted: file.deleted === true,
+          bytesWritten: file.bytes_written ?? 0,
+        })),
+      },
+    };
+  }
+
+  /**
+   * Restore one checkpoint (R10.6, R10.7).
+   *
+   * Not a model-facing tool, deliberately: rolling back is the *user's* action on a
+   * receipt, and offering it as a tool would let a Run undo a change the user had
+   * accepted. It lives here because Desktop_Core owns the filesystem and the bridge is
+   * the runtime's only way in — the surface reaches it through the Run that produced the
+   * checkpoint.
+   */
+  async rollback(checkpointId: string): Promise<WorkspaceOutcome<RollbackResult>> {
+    const outcome = await this.call<RollbackWire>(
+      this.options.bridgeUrl,
+      "/workspace/rollback",
+      { checkpoint_id: checkpointId },
+      "Rolling back an apply",
+      true,
+    );
+    if (!outcome.ok) return outcome;
+    return {
+      ok: true,
+      value: {
+        checkpointId: outcome.value.checkpoint_id ?? checkpointId,
+        restoredFiles: outcome.value.restored_files ?? 0,
+        restoredPaths: outcome.value.restored_paths ?? 0,
+      },
+    };
   }
 
   runCommand(request: {
@@ -399,6 +487,60 @@ export class WorkspaceClient {
         runs,
       },
     };
+  }
+
+  // ── Transcript persistence (R15.6) ──────────────────────────────────────
+  //
+  // The pair that closes the history gap. Until these routes existed the
+  // `loadHistory` port answered `[]` and every Run was single-turn — stated in
+  // `composition.ts`'s header rather than discovered from a user's transcript.
+  //
+  // Both are unauthenticated for the same reason `discoverRules` is: the
+  // Gateway's `require_admission` is a no-op on a loopback binding (R12.4), and
+  // the per-launch token belongs to Desktop_Core's bridge.
+
+  /**
+   * A Session's stored transcript, oldest first.
+   *
+   * The records are returned unparsed. They are AI SDK `UIMessage` documents and
+   * the runtime hands them straight back to `createUIMessageStream` as
+   * `originalMessages`; typing them here would mean re-declaring the Chat_Surface's
+   * part union in a third place, and the two that already declare it are enough.
+   */
+  async listMessages(sessionId: string): Promise<WorkspaceOutcome<readonly unknown[]>> {
+    const outcome = await this.call<{ messages?: unknown[] }>(
+      this.options.servicesUrl,
+      `/v1/sessions/${encodeURIComponent(sessionId)}/messages`,
+      undefined,
+      "Reading the session transcript",
+      false,
+    );
+    if (!outcome.ok) return outcome;
+    return { ok: true, value: outcome.value.messages ?? [] };
+  }
+
+  /**
+   * Replace a Session's transcript with a completed Run's messages (R15.6).
+   *
+   * A replace rather than an append because `onFinish` hands over the *complete*
+   * conversation: appending it would double every prior turn. Idempotent, so a
+   * retry after a transport failure cannot corrupt the transcript — which is what
+   * makes it safe for the persistence path to be retried at all.
+   */
+  async replaceMessages(
+    sessionId: string,
+    messages: readonly unknown[],
+  ): Promise<WorkspaceOutcome<readonly unknown[]>> {
+    const outcome = await this.call<{ messages?: unknown[] }>(
+      this.options.servicesUrl,
+      `/v1/sessions/${encodeURIComponent(sessionId)}/messages`,
+      { messages },
+      "Saving the session transcript",
+      false,
+      "PUT",
+    );
+    if (!outcome.ok) return outcome;
+    return { ok: true, value: outcome.value.messages ?? [] };
   }
 }
 

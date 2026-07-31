@@ -1,9 +1,40 @@
 /**
  * Persisted list of locally-installed llama.cpp `.gguf` weights and the
- * per-task default model assignments. Both are kept in localStorage so they
- * survive reloads in the browser preview; the desktop shell will route the
- * same shapes through Tauri config in a later phase.
+ * per-task default model assignments.
+ *
+ * ## Two stores, one of them authoritative — zoc-agent-chat-rebuild R13.6, task 22.1
+ *
+ * The list now lives in **Desktop_Core config** (`~/.zoc-studio/desktop.json`,
+ * through `local_models_get` / `local_models_set`). R13.6 requires the
+ * hardware-fit state to come from Desktop_Core, and two stores for one list
+ * guarantees they disagree — the picker would offer a model the fit probe has
+ * never seen, or hide one it can measure.
+ *
+ * `localStorage` survives for two jobs and neither of them is durability:
+ *
+ *   1. **The synchronous snapshot.** `getLocalModelsSnapshot` feeds
+ *      `useSyncExternalStore`, which cannot await. Desktop_Core is read once at
+ *      boot by {@link hydrateLocalModels} and the answer is cached here.
+ *   2. **The browser preview**, which has no Desktop_Core at all.
+ *
+ * So the ordering rule is: Desktop_Core wins when it answers, the cache answers
+ * when it cannot, and a first boot with a `localStorage` list and an empty
+ * Desktop_Core list migrates rather than discards (R23.5).
+ *
+ * The task-default assignments stay in `localStorage`: they are a UI preference,
+ * no other process reads them, and nothing about them is a fact about this
+ * machine.
  */
+
+import {
+  isTauri,
+  localModelHardwareFit,
+  localModelsGet,
+  localModelsSet,
+  type HardwareFit,
+} from "./tauri-bridge";
+
+export type { HardwareFit };
 
 export interface LocalModel {
   /** Stable id used as the value in selects and the dedup key. */
@@ -177,15 +208,131 @@ export function getLocalModelsSnapshot(): LocalModel[] {
 
 export function saveLocalModels(models: LocalModel[]): void {
   cachedModels = models;
-  const store = storage();
-  if (store) {
-    try {
-      store.setItem(MODELS_KEY, JSON.stringify(models));
-    } catch {
-      /* quota etc — silently ignore */
-    }
-  }
+  writeCache(models);
+  // Durability is Desktop_Core's now (R13.6). Scheduled rather than awaited so
+  // the existing synchronous callers — Settings → Models, the onboarding wizard —
+  // keep their signature and their optimistic UI, and `localModelsSet` swallows
+  // its own failures, so nothing here can reject unhandled. A caller that needs
+  // to know the write landed awaits {@link persistLocalModels} instead.
+  void localModelsSet(models);
   emitLocalModelsChanged();
+}
+
+// ── Desktop_Core-backed persistence (R13.6, R23.5, task 22.1) ──────────────
+
+/**
+ * Is this a `LocalModel`? The three fields a row cannot render without.
+ *
+ * Narrowing at the boundary rather than trusting the file: `desktop.json` is a
+ * plain text file a user can edit, and a malformed entry should cost that entry
+ * rather than the whole list — which is what an unchecked cast would do the
+ * moment a component read `.path` off `undefined`.
+ */
+export function isLocalModel(value: unknown): value is LocalModel {
+  if (typeof value !== "object" || value === null) return false;
+  const candidate = value as Partial<LocalModel>;
+  return (
+    typeof candidate.id === "string" &&
+    candidate.id.length > 0 &&
+    typeof candidate.name === "string" &&
+    typeof candidate.path === "string" &&
+    candidate.path.length > 0
+  );
+}
+
+/**
+ * Load the list from Desktop_Core, seeding the synchronous cache.
+ *
+ * Called once at boot. Three cases, and the third is the one that needs stating:
+ *
+ * - Desktop_Core has entries → they win, and the cache is replaced.
+ * - Not in the desktop shell → the `localStorage` cache stands as-is.
+ * - Desktop_Core is empty **and** the cache is not → a pre-22.1 install, whose
+ *   models only exist in `localStorage`. They are written up to Desktop_Core
+ *   rather than dropped (R23.5): a user who installed a 30 GB model should not
+ *   have to find it again because the store moved.
+ *
+ * An empty answer on both sides is not a migration and not an error; it is a
+ * fresh install.
+ */
+export async function hydrateLocalModels(): Promise<LocalModel[]> {
+  if (!isTauri()) return loadLocalModels();
+
+  const raw = await localModelsGet();
+  if (raw === null) return loadLocalModels();
+
+  const stored = raw.filter(isLocalModel);
+  if (stored.length > 0) {
+    cachedModels = stored;
+    writeCache(stored);
+    emitLocalModelsChanged();
+    return stored;
+  }
+
+  const shadowed = loadLocalModels();
+  if (shadowed.length > 0) {
+    await localModelsSet(shadowed);
+    return shadowed;
+  }
+
+  cachedModels = [];
+  writeCache([]);
+  return [];
+}
+
+/**
+ * Write the list to Desktop_Core and await the result.
+ *
+ * The awaited counterpart to {@link saveLocalModels}, for the caller that has to
+ * report whether the write landed — Settings' "model added" confirmation, and
+ * the onboarding step that cannot move on from a model it failed to record.
+ */
+export async function persistLocalModels(models: LocalModel[]): Promise<LocalModel[]> {
+  cachedModels = models;
+  writeCache(models);
+  const written = await localModelsSet(models);
+  emitLocalModelsChanged();
+  return written === null ? models : written.filter(isLocalModel);
+}
+
+function writeCache(models: LocalModel[]): void {
+  const store = storage();
+  if (!store) return;
+  try {
+    store.setItem(MODELS_KEY, JSON.stringify(models));
+  } catch {
+    /* quota etc — the Desktop_Core copy is the durable one */
+  }
+}
+
+/**
+ * Desktop_Core's fit verdict for one model on this machine (R13.6).
+ *
+ * `null` outside the desktop shell, and `null` is rendered as *no fit state* by
+ * the picker rather than as an optimistic one — a guess presented as a
+ * measurement is the failure mode this probe exists to remove.
+ *
+ * The offload count passed is the model's effective one, so the verdict is
+ * judged against video memory exactly when the model would actually use it.
+ */
+export async function localModelFit(
+  model: Pick<LocalModel, "path" | "n_gpu_layers">,
+): Promise<HardwareFit | null> {
+  return localModelHardwareFit(model.path, model.n_gpu_layers ?? DEFAULT_N_GPU_LAYERS);
+}
+
+/** Fit verdicts by model id, for the picker's one-pass render. */
+export async function localModelFits(
+  models: readonly LocalModel[],
+): Promise<Map<string, HardwareFit>> {
+  const entries = await Promise.all(
+    models.map(async (model) => [model.id, await localModelFit(model)] as const),
+  );
+  const fits = new Map<string, HardwareFit>();
+  for (const [id, fit] of entries) {
+    if (fit !== null) fits.set(id, fit);
+  }
+  return fits;
 }
 
 export function loadTaskDefaults(): Record<string, string> {

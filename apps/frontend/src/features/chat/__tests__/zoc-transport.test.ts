@@ -524,3 +524,67 @@ describe("cancel (R16.1)", () => {
     await expect(new ZocChatTransport(options).cancel("run_1")).resolves.toBeUndefined();
   });
 });
+
+describe("approval decisions (R11.7, R11.8, R11.9)", () => {
+  it("posts one tool decision with the chosen scope, authenticated", async () => {
+    const harnessed = harness({ streamResponses: [] });
+    await harnessed.transport.decideApproval("run_1", {
+      requestId: "req_9",
+      decision: "approve",
+      scope: "run",
+    });
+
+    expect(harnessed.calls).toHaveLength(1);
+    expect(harnessed.calls[0]?.url).toBe(`${BASE}/v1/runs/run_1/approvals`);
+    expect(harnessed.calls[0]?.init?.method).toBe("POST");
+    // `kind` is what lets one route carry both a tool decision and a Plan_Approval, so it is on the
+    // wire rather than implied by the fields present.
+    expect(JSON.parse(String(harnessed.calls[0]?.init?.body))).toEqual({
+      kind: "tool",
+      requestId: "req_9",
+      decision: "approve",
+      scope: "run",
+    });
+    const headers = harnessed.calls[0]?.init?.headers as Record<string, string>;
+    expect(headers.authorization).toBe(`Bearer ${TOKEN}`);
+  });
+
+  it("defaults to the narrowest scope when none is given", async () => {
+    const harnessed = harness({ streamResponses: [] });
+    await harnessed.transport.decideApproval("run_1", { requestId: "req_9", decision: "reject" });
+    expect(JSON.parse(String(harnessed.calls[0]?.init?.body)).scope).toBe("call");
+  });
+
+  it("throws the envelope rather than swallowing it, unlike cancel", async () => {
+    // The three ways this fails are all things the user has to be told: already decided (409, from
+    // another window on a shared Session), the window closed (410, R11.9), or the Run is gone (404).
+    // A dock that kept asking after any of them would be asking an unanswerable question.
+    const options: ZocTransportOptions = {
+      endpoint: async () => ({ baseUrl: BASE, token: TOKEN }),
+      submission,
+      fetchImpl: (async () =>
+        new Response(
+          JSON.stringify({
+            code: "already_decided",
+            message: "That request has already been decided.",
+            details: null,
+            retryable: false,
+          }),
+          { status: 409, headers: { "content-type": "application/json" } },
+        )) as unknown as typeof fetch,
+    };
+
+    const failure = await new ZocChatTransport(options)
+      .decideApproval("run_1", { requestId: "req_9", decision: "approve", scope: "call" })
+      .catch((error: unknown) => error);
+
+    expect(failure).toBeInstanceOf(RuntimeRequestError);
+    if (failure instanceof RuntimeRequestError) {
+      expect(failure.status).toBe(409);
+      expect(failure.envelope.code).toBe("already_decided");
+      expect(failure.envelope.retryable).toBe(false);
+      // The message is what the dock renders beside the request, so it has to survive the throw.
+      expect(failure.message).toBe("That request has already been decided.");
+    }
+  });
+});

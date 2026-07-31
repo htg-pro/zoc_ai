@@ -1,0 +1,23 @@
+<!doctype html>
+<!--
+  The `@perf` fixture page — zoc-agent-chat-rebuild task 17.6.
+
+  A second HTML entry alongside `index.html`, served by the same Vite dev server so the components
+  under measurement are the ones the app ships rather than a copy. `class="dark"` and the body classes
+  mirror `index.html`, because the transcript's row heights depend on the type scale and the type scale
+  comes from the theme.
+
+  Not part of the production build: Vite's build entry is the root `index.html`, and this file is only
+  ever requested by the CDP harness.
+-->
+<html lang="en" class="dark">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Zoc AI — transcript perf fixture</title>
+  </head>
+  <body class="bg-background text-foreground antialiased">
+    <div id="zoc-perf-root"></div>
+    <script type="module" src="/src/features/chat/perf/fixture-entry.tsx"></script>
+  </body>
+</html>

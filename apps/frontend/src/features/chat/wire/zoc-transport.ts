@@ -326,6 +326,42 @@ export class ZocChatTransport implements ChatTransport<ZocUIMessage> {
   }
 
   /**
+   * Decide one pending approval (R11.7, R11.8).
+   *
+   * Unlike {@link cancel}, a failure here is **not** swallowed. The three ways this call fails are all
+   * things the user has to be told: the request was already decided (409, from another window on a
+   * shared Session), the window closed before the click landed (410, R11.9), or the Run is gone (404).
+   * A dock that silently kept asking after any of those would be asking a question nothing can answer.
+   *
+   * The scope rides on an approval and is ignored for a rejection, which is the runtime's own shape —
+   * one route, one body, `kind: "tool"` discriminating it from a Plan_Approval.
+   */
+  async decideApproval(
+    runId: string,
+    request: {
+      requestId: string;
+      decision: "approve" | "reject";
+      scope?: "call" | "run" | "workspace";
+    },
+  ): Promise<void> {
+    const endpoint = await this.options.endpoint();
+    const response = await this.fetchImpl(
+      `${endpoint.baseUrl}/v1/runs/${encodeURIComponent(runId)}/approvals`,
+      {
+        method: "POST",
+        headers: { "content-type": "application/json", ...authHeaders(endpoint) },
+        body: JSON.stringify({
+          kind: "tool",
+          requestId: request.requestId,
+          decision: request.decision,
+          scope: request.scope ?? "call",
+        }),
+      },
+    );
+    if (!response.ok) throw await runtimeError(response);
+  }
+
+  /**
    * Open the SSE stream and enforce the sequence contract on the way out.
    *
    * The loop is over *attempts*, not over frames, because a gap is handled by starting a

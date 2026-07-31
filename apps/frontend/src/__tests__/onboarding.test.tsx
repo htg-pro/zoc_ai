@@ -12,6 +12,12 @@ vi.mock("@/lib/tauri-bridge", async () => {
     isTauri: () => false,
     desktopConfigGet: vi.fn(async () => cfg),
     desktopConfigSet: vi.fn(async (next: typeof cfg) => Object.assign(cfg, next)),
+    // The wizard's model step saves through `saveLocalModels`, which writes
+    // through to Desktop_Core config as of task 22.1 (R13.6). Stubbed here rather
+    // than left off the mock: an absent export is a thrown property access, not a
+    // no-op, and the failure surfaces as an unrelated render error.
+    localModelsGet: vi.fn(async () => []),
+    localModelsSet: vi.fn(async (models: unknown[]) => models),
     setWorkspaceRoot: vi.fn(async () => true),
     legacyDetect: vi.fn(async () => ({ present: false, path: null, session_count: 0 })),
     legacyImport: vi.fn(async () => ({ imported_sessions: 0, imported_settings: false })),

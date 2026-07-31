@@ -113,6 +113,7 @@ from zocai_gateway.security import (
     validate_user_text,
 )
 from zocai_gateway.settings import GatewaySettings
+from zocai_gateway.transcripts import TranscriptRecordError, TranscriptStore
 from zocai_gateway.workspace_binder import (
     NoWorkspaceError,
     WorkspaceBinder,
@@ -251,6 +252,37 @@ class WorkspaceFilesChangedRequest(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
     paths: list[str] = Field(min_length=1, max_length=1_000)
+
+
+class TranscriptReplaceRequest(BaseModel):
+    """The Agent_Runtime's completed transcript for a Session (R15.6).
+
+    ``extra="ignore"`` and an untyped message body on purpose: a stored message is
+    an AI SDK ``UIMessage`` whose part union belongs to the Chat_Surface, and
+    mirroring it in Pydantic would be a second definition that drifts the first
+    time the SDK adds a part kind. :mod:`zocai_gateway.transcripts` validates the
+    envelope it has to index by and preserves the rest verbatim.
+    """
+
+    model_config = ConfigDict(extra="ignore")
+
+    messages: list[dict[str, object]] = Field(default_factory=list, max_length=5_000)
+
+
+class TranscriptAppendRequest(BaseModel):
+    """One message, appended by the renderer before a Run starts (R15.7)."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    message: dict[str, object]
+
+
+class TranscriptResponse(BaseModel):
+    """A Session's stored transcript, in stored order."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    messages: list[dict[str, object]] = Field(default_factory=list)
 
 
 class _Run:
@@ -878,10 +910,28 @@ class RunRegistry:
 
 
 class SessionRegistry:
-    """Small in-memory session store for the editor-support session API."""
+    """The Session store behind the editor-support session API.
 
-    def __init__(self) -> None:
-        self._sessions: dict[str, Session] = {}
+    In-memory for reads, durable through a {@link TranscriptStore} for writes —
+    zoc-agent-chat-rebuild R15.2, R15.6, R15.11.
+
+    It used to be a bare dict, which meant a Session and its transcript vanished
+    with the process: the renderer's own note read "the Gateway does not persist
+    sessions", and the runtime's composition root recorded the consequence — no
+    prior turns, so every Run was single-turn. The dict is kept as a read cache
+    because the list is read on every session surface and a directory scan per
+    read would be a filesystem walk in front of a keystroke.
+    """
+
+    def __init__(self, store: TranscriptStore | None = None) -> None:
+        self._store = store if store is not None else TranscriptStore()
+        self._sessions: dict[str, Session] = {
+            str(session.id): session for session in self._store.load_sessions()
+        }
+
+    @property
+    def store(self) -> TranscriptStore:
+        return self._store
 
     def list(self) -> list[Session]:
         return sorted(
@@ -915,6 +965,7 @@ class SessionRegistry:
             model=req.model,
         )
         self._sessions[str(session.id)] = session
+        self._store.save_session(session)
         return session
 
     def update(self, session_id: str, req: UpdateSessionRequest) -> Session | None:
@@ -928,12 +979,23 @@ class SessionRegistry:
             update["provider"] = req.provider
         if req.model is not None:
             update["model"] = req.model
+        if req.status is not None:
+            # R15.11's archive is `status: closed`, and it must reach disk: an
+            # archive that survives only in memory un-archives itself on the next
+            # launch, which reads to the user as the list forgetting a decision.
+            update["status"] = req.status
         next_session = session.model_copy(update=update)
         self._sessions[session_id] = next_session
+        self._store.save_session(next_session)
         return next_session
 
     def delete(self, session_id: str) -> bool:
-        return self._sessions.pop(session_id, None) is not None
+        removed = self._sessions.pop(session_id, None) is not None
+        # The store is asked either way: a row that survived only on disk — an
+        # earlier launch's Session this process never loaded — is still the user's
+        # to delete.
+        deleted = self._store.delete_session(session_id)
+        return removed or deleted
 
 
 class TerminalProcess:
@@ -1390,6 +1452,7 @@ def create_app(
     brain: AgentBrain | None = None,
     evolution: EvolutionEngine | None = None,
     benchmarker: ModelBenchmarker | None = None,
+    transcripts: TranscriptStore | None = None,
     workspace_indexer: WorkspaceIndexer | None = None,
     drive: bool = True,
     lazy_index: bool = False,
@@ -1423,6 +1486,10 @@ def create_app(
             omitted so verified runs record trajectories (R12).
         benchmarker: Optional local-model benchmark service. Tests may inject
             an isolated store and deterministic model callbacks.
+        transcripts: Optional durable Session/transcript store (R15.2, R15.6).
+            Defaults to one rooted at ``~/.zoc-studio/sessions``; the test suite
+            injects a temp-directory store through an autouse fixture so no test
+            writes to a developer's real state.
         workspace_indexer: Optional session-scoped workspace index service.
         drive: When ``True`` (default) an accepted run is driven end to end
             through the composed pipeline so its events stream over the bus.
@@ -1630,7 +1697,7 @@ def create_app(
         replay_buffer_size=resolved_settings.event_replay_buffer_size,
         max_concurrent_runs=resolved_settings.max_concurrent_runs,
     )
-    sessions = SessionRegistry()
+    sessions = SessionRegistry(store=transcripts)
     # R1.3/R1.8: terminals resolve the current workspace at spawn time and
     # refuse (``NO_WORKSPACE``) when none is bound — ``resolve_terminal_cwd``
     # already returns that for a ``None`` workspace, so no scratch fallback.
@@ -1953,6 +2020,76 @@ def create_app(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail=f"unknown session: {session_id}",
             )
+
+    # ── Transcript persistence (R15.2, R15.6) ─────────────────────────────
+    #
+    # The three routes the design assumed existed. Until they did, the
+    # Agent_Runtime's `loadHistory` port had nothing to read and every Run was
+    # single-turn — the gap its composition root documented rather than hid.
+    #
+    # `PUT` is the runtime's path and `POST` the renderer's, and the split is not
+    # symmetry: `onFinish` hands the runtime the *complete* conversation, so a
+    # replace is the only write that does not double the history, while the
+    # renderer has exactly one message to record and no view of the rest.
+
+    def _require_session(session_id: str) -> None:
+        if sessions.get(session_id) is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"unknown session: {session_id}",
+            )
+
+    @app.get(
+        "/v1/sessions/{session_id}/messages",
+        response_model=TranscriptResponse,
+        dependencies=[Depends(require_admission)],
+    )
+    async def list_session_messages(session_id: str) -> TranscriptResponse:
+        """The stored transcript for a Session, oldest first (R15.6)."""
+        _require_session(session_id)
+        return TranscriptResponse(messages=sessions.store.list_messages(session_id))
+
+    @app.put(
+        "/v1/sessions/{session_id}/messages",
+        response_model=TranscriptResponse,
+        dependencies=[Depends(require_admission)],
+    )
+    async def replace_session_messages(
+        session_id: str, req: TranscriptReplaceRequest
+    ) -> TranscriptResponse:
+        """Replace the transcript with a completed Run's messages (R15.6)."""
+        _require_session(session_id)
+        try:
+            stored = sessions.store.replace_messages(session_id, req.messages)
+        except TranscriptRecordError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=str(exc),
+            ) from exc
+        return TranscriptResponse(messages=stored)
+
+    @app.post(
+        "/v1/sessions/{session_id}/messages",
+        response_model=TranscriptResponse,
+        status_code=status.HTTP_201_CREATED,
+        dependencies=[Depends(require_admission)],
+    )
+    async def append_session_message(
+        session_id: str, req: TranscriptAppendRequest
+    ) -> TranscriptResponse:
+        """Append one message, replacing any earlier record with the same id."""
+        _require_session(session_id)
+        try:
+            sessions.store.append_message(session_id, req.message)
+        except TranscriptRecordError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=str(exc),
+            ) from exc
+        # The whole transcript rather than the one record: the caller's next read
+        # would be this list anyway, and returning it makes the append's effect on
+        # ordering visible in the same round trip.
+        return TranscriptResponse(messages=sessions.store.list_messages(session_id))
 
     @app.get(
         "/v1/sessions/{session_id}/context/search",
