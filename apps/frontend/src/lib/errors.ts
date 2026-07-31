@@ -18,6 +18,25 @@
  * (`services/gateway/src/zocai_gateway/errors.py`), including when it arrives
  * wrapped in FastAPI's `detail`, so a backend error keeps its code and its
  * human-readable sentence instead of being flattened to JSON.
+ *
+ * ## Three sources, one shape (R16.6, task 16.2)
+ *
+ * The rebuild adds two more producers of the same four-field envelope, and the
+ * point of the design's taxonomy is that **one normaliser handles all three**:
+ *
+ *   1. **Workspace_Services HTTP errors** — the gateway's `error_body`, bare or
+ *      under FastAPI's `detail`. Handled since the first version of this file.
+ *   2. **Agent_Runtime HTTP errors** — `apps/agent-runtime/src/http/errors.ts`
+ *      answers the identical `{code, message, details, retryable}` shape, and
+ *      `ZocChatTransport` throws it as a `RuntimeRequestError` carrying it under
+ *      `.envelope`. That nesting is the reason this file needed extending:
+ *      `readEnvelope` unwrapped `detail` and not `envelope`, so a runtime failure
+ *      arrived as its `Error.message` with its code, `details`, and `retryable`
+ *      all lost — and `retryable` is what every retry affordance reads.
+ *   3. **Streamed `data-zoc-error` parts** — an `ErrorPart` carries the four
+ *      fields at its top level, so it normalises through the same path. Its
+ *      `details` is `string | null` rather than optional, which the existing
+ *      `typeof … === "string"` check already handles.
  */
 
 /** Machine-readable codes shared with the gateway's `ErrorCode`. */
@@ -42,6 +61,24 @@ export const ErrorCodes = {
   gitNotARepository: "git_not_a_repository",
   gitCommandFailed: "git_command_failed",
   unknown: "unknown_error",
+  // ── Agent_Runtime codes the surface renders (design.md:3545) ──────────
+  //
+  // Only the ones a *renderer* branches on are listed. The runtime's set is
+  // larger, and a code absent here still normalises — `readEnvelope` keeps
+  // whatever code arrived — so this map is the subset with UI copy or a
+  // treatment, not a second copy of the taxonomy.
+  providerAuthFailed: "provider_auth_failed",
+  providerRateLimited: "provider_rate_limited",
+  localEndpointUnreachable: "local_endpoint_unreachable",
+  slotQueueFull: "slot_queue_full",
+  streamLost: "stream_lost",
+  resumeWindowExpired: "resume_window_expired",
+  runtimeUnavailable: "runtime_unavailable",
+  toolSchemaInvalid: "tool_schema_invalid",
+  workspaceUnavailable: "workspace_unavailable",
+  workspaceFailed: "workspace_failed",
+  compactionFailed: "compaction_failed",
+  titleGenerationFailed: "title_generation_failed",
 } as const;
 
 export type ErrorCode = (typeof ErrorCodes)[keyof typeof ErrorCodes];
@@ -78,9 +115,7 @@ const AUTH_CODES: ReadonlySet<string> = new Set([
  * 401/403 or a recognized auth code. Used to mark exactly the failing provider
  * invalid on a run/request/stream (R4.5, R13.x) without touching others.
  */
-export function isAuthError(
-  error: { status?: number; code?: string } | null | undefined,
-): boolean {
+export function isAuthError(error: { status?: number; code?: string } | null | undefined): boolean {
   if (!error) return false;
   if (typeof error.status === "number" && AUTH_STATUSES.includes(error.status)) {
     return true;
@@ -90,17 +125,14 @@ export function isAuthError(
 
 /** User-readable fallbacks for codes the UI can produce on its own. */
 const MESSAGES: Record<string, string> = {
-  [ErrorCodes.noWorkspace]:
-    "No workspace is open. Open a project folder before using Agent mode.",
+  [ErrorCodes.noWorkspace]: "No workspace is open. Open a project folder before using Agent mode.",
   [ErrorCodes.workspaceInvalid]:
     "The selected workspace folder is missing or is not a directory. Open the folder again.",
   [ErrorCodes.pathOutsideWorkspace]:
     "That path is outside the open workspace, so the action was blocked.",
-  [ErrorCodes.runNotFound]:
-    "The agent run ended before it could be attached. Please retry.",
+  [ErrorCodes.runNotFound]: "The agent run ended before it could be attached. Please retry.",
   [ErrorCodes.runAlreadyFinished]: "That run has already finished.",
-  [ErrorCodes.runAttachFailed]:
-    "The agent run ended before it could be attached. Please retry.",
+  [ErrorCodes.runAttachFailed]: "The agent run ended before it could be attached. Please retry.",
   [ErrorCodes.runCancelled]: "Stopped.",
   [ErrorCodes.runFailed]: "The run stopped because of an error. See logs for details.",
   [ErrorCodes.cancelled]: "Stopped.",
@@ -109,19 +141,40 @@ const MESSAGES: Record<string, string> = {
   [ErrorCodes.terminalCwdInvalid]:
     "The terminal working directory is not inside the open workspace.",
   [ErrorCodes.terminalSpawnFailed]: "The terminal could not be started.",
-  [ErrorCodes.modelNotReady]:
-    "The selected model isn't ready yet. Load it, then try again.",
+  [ErrorCodes.modelNotReady]: "The selected model isn't ready yet. Load it, then try again.",
   [ErrorCodes.modelUnavailable]:
     "The model provider is unavailable right now. Try again in a moment.",
   [ErrorCodes.contextWindowExceeded]:
     "The request is too large for this model's context window. Reduce attached context or increase the model context window in Settings, then retry.",
-  [ErrorCodes.workspaceRebound]:
-    "The workspace changed while the run was starting. Try again.",
+  [ErrorCodes.workspaceRebound]: "The workspace changed while the run was starting. Try again.",
   [ErrorCodes.gitNotARepository]:
     "This folder isn't a Git repository, so version-control actions are unavailable.",
-  [ErrorCodes.gitCommandFailed]:
-    "A Git command failed. See the Logs panel for details.",
+  [ErrorCodes.gitCommandFailed]: "A Git command failed. See the Logs panel for details.",
   [ErrorCodes.unknown]: "Something went wrong. See logs for details.",
+  // Fallbacks only. Every one of these normally arrives with the runtime's own
+  // sentence — R9.8 requires one — and `sanitizeErrorForDisplay` prefers it. These
+  // cover the case where a code reaches the surface with no message at all, which
+  // is a bug somewhere upstream and should still read as English.
+  [ErrorCodes.providerAuthFailed]: "The model provider rejected the API key. Check it in Settings.",
+  [ErrorCodes.providerRateLimited]:
+    "The model provider is rate limiting this key. Try again shortly.",
+  [ErrorCodes.localEndpointUnreachable]:
+    "The local model server is not running. Start it, then try again.",
+  [ErrorCodes.slotQueueFull]: "Too many runs are already waiting. Let one finish and try again.",
+  [ErrorCodes.streamLost]:
+    "The connection to this run was lost. The transcript above is what arrived.",
+  [ErrorCodes.resumeWindowExpired]:
+    "Too much of this run has scrolled past to reconnect to it cleanly.",
+  [ErrorCodes.runtimeUnavailable]: "The agent runtime is not running. Restart it to continue.",
+  [ErrorCodes.toolSchemaInvalid]:
+    "The model called a tool incorrectly. It will usually correct itself.",
+  [ErrorCodes.workspaceUnavailable]:
+    "Workspace services could not be reached. They may be restarting.",
+  [ErrorCodes.workspaceFailed]: "Workspace services refused that request.",
+  [ErrorCodes.compactionFailed]:
+    "The conversation could not be summarised, so this run uses the full history.",
+  [ErrorCodes.titleGenerationFailed]:
+    "The title could not be generated, so the current one is unchanged.",
 };
 
 /** Bound `details` so a runaway payload cannot flood the chat panel. */
@@ -165,9 +218,7 @@ export function sanitizeErrorForDisplay(
 
   return {
     code: code.trim() || ErrorCodes.unknown,
-    message: text
-      ? clamp(text)
-      : MESSAGES[code] ?? MESSAGES[ErrorCodes.unknown],
+    message: text ? clamp(text) : (MESSAGES[code] ?? MESSAGES[ErrorCodes.unknown]),
   };
 }
 
@@ -177,7 +228,16 @@ export function sanitizeErrorForDisplay(
  */
 function readEnvelope(value: unknown): AppError | null {
   if (!isRecord(value)) return null;
-  const source = isRecord(value.detail) ? value.detail : value;
+  // Three wrappers, one shape. FastAPI nests under `detail`; `RuntimeRequestError`
+  // nests under `envelope`; a gateway envelope and a streamed `ErrorPart` are bare.
+  // Checked in that order because the outer object of a wrapped error can itself
+  // carry a `code` — an `Error` subclass with a class-level one — and the nested
+  // envelope is the authoritative reading when both are present.
+  const source = isRecord(value.detail)
+    ? value.detail
+    : isRecord(value.envelope)
+      ? value.envelope
+      : value;
   const code = source.code;
   const message = source.message;
   if (typeof code !== "string" || typeof message !== "string") return null;
@@ -332,4 +392,24 @@ export function formatDiagnostics(error: AppError, context?: Record<string, unkn
     lines.push(`${key}: ${String(value)}`);
   }
   return lines.join("\n");
+}
+
+/**
+ * Whether an error row should offer a retry control (R16.6, Property 42).
+ *
+ * A function rather than each row reading `error.retryable` directly, because the
+ * default matters and has to be decided once: **absent means no retry.** A missing
+ * flag is an unclassified failure, and offering a retry for one is a button with no
+ * reason to believe it will help — whereas withholding it costs only a manual
+ * resubmission the user can already perform.
+ *
+ * Cancellation is the one code that overrides the flag. A cancelled Run is not a
+ * failure, and R16.1's stop is not something to retry *from* — the user asked for
+ * it, and the affordance they want is "send again", which the composer already is.
+ */
+export function offersRetry(error: Pick<AppError, "code" | "retryable">): boolean {
+  if (error.code === ErrorCodes.cancelled || error.code === ErrorCodes.runCancelled) {
+    return false;
+  }
+  return error.retryable === true;
 }
