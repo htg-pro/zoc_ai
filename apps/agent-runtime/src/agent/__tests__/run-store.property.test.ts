@@ -85,9 +85,7 @@ function replay(capacity: number, ops: readonly Op[], queueLimit: number): Trace
     expect(activeLocal).toBeLessThanOrEqual(LOCAL_PROVIDER_CEILING);
     // Positions are a contiguous 1..n over exactly the waiting set.
     const queued = manager.queuedRunIds;
-    expect(queued.map((runId) => manager.positionOf(runId))).toEqual(
-      queued.map((_, i) => i + 1),
-    );
+    expect(queued.map((runId) => manager.positionOf(runId))).toEqual(queued.map((_, i) => i + 1));
     expect(manager.queueDepth).toBeLessThanOrEqual(queueLimit);
   };
 
@@ -128,78 +126,66 @@ function replay(capacity: number, ops: readonly Op[], queueLimit: number): Trace
 describe("Property 59: slot admission bounds concurrency and queues fairly (R25.1, R25.2)", () => {
   it("never exceeds the Slot count and keeps queue positions contiguous from 1", () => {
     fc.assert(
-      fc.property(
-        fc.integer({ min: 1, max: 6 }),
-        opSequence,
-        (capacity, ops) => {
-          // Every assertion lives in `replay`'s per-step check.
-          replay(capacity, ops, 32);
-        },
-      ),
+      fc.property(fc.integer({ min: 1, max: 6 }), opSequence, (capacity, ops) => {
+        // Every assertion lives in `replay`'s per-step check.
+        replay(capacity, ops, 32);
+      }),
       RUNS,
     );
   });
 
   it("starts every queued Run once Slots free", () => {
     fc.assert(
-      fc.property(
-        fc.integer({ min: 1, max: 6 }),
-        opSequence,
-        (capacity, ops) => {
-          const trace = replay(capacity, ops, 1_000);
+      fc.property(fc.integer({ min: 1, max: 6 }), opSequence, (capacity, ops) => {
+        const trace = replay(capacity, ops, 1_000);
 
-          // Drain: complete actives until nothing is active or waiting. The
-          // property is *eventual* start — the local ceiling can legitimately
-          // hold a head back while a Slot is free, but never past the point
-          // where the Run blocking it ends.
-          let guard = 0;
-          while (trace.manager.activeCount > 0 || trace.manager.queueDepth > 0) {
-            const live = trace.manager.activeRunIds;
-            if (live.length === 0) {
-              throw new Error("queue is non-empty with nothing active: deadlock");
-            }
-            for (const started of trace.manager.release(live[0] as string)) {
-              trace.everStarted.add(started);
-              trace.startOrder.push(started);
-            }
-            guard += 1;
-            if (guard > 5_000) throw new Error("drain did not converge");
+        // Drain: complete actives until nothing is active or waiting. The
+        // property is *eventual* start — the local ceiling can legitimately
+        // hold a head back while a Slot is free, but never past the point
+        // where the Run blocking it ends.
+        let guard = 0;
+        while (trace.manager.activeCount > 0 || trace.manager.queueDepth > 0) {
+          const live = trace.manager.activeRunIds;
+          if (live.length === 0) {
+            throw new Error("queue is non-empty with nothing active: deadlock");
           }
+          for (const started of trace.manager.release(live[0] as string)) {
+            trace.everStarted.add(started);
+            trace.startOrder.push(started);
+          }
+          guard += 1;
+          if (guard > 5_000) throw new Error("drain did not converge");
+        }
 
-          expect(trace.manager.queueDepth).toBe(0);
-          expect(trace.manager.activeCount).toBe(0);
-          for (const runId of trace.submitted) {
-            expect(trace.everStarted.has(runId)).toBe(true);
-          }
-        },
-      ),
+        expect(trace.manager.queueDepth).toBe(0);
+        expect(trace.manager.activeCount).toBe(0);
+        for (const runId of trace.submitted) {
+          expect(trace.everStarted.has(runId)).toBe(true);
+        }
+      }),
       RUNS,
     );
   });
 
   it("starts Runs in submission order", () => {
     fc.assert(
-      fc.property(
-        fc.integer({ min: 1, max: 4 }),
-        opSequence,
-        (capacity, ops) => {
-          const trace = replay(capacity, ops, 1_000);
-          while (trace.manager.activeCount > 0 || trace.manager.queueDepth > 0) {
-            const live = trace.manager.activeRunIds;
-            if (live.length === 0) break;
-            for (const started of trace.manager.release(live[0] as string)) {
-              trace.startOrder.push(started);
-            }
+      fc.property(fc.integer({ min: 1, max: 4 }), opSequence, (capacity, ops) => {
+        const trace = replay(capacity, ops, 1_000);
+        while (trace.manager.activeCount > 0 || trace.manager.queueDepth > 0) {
+          const live = trace.manager.activeRunIds;
+          if (live.length === 0) break;
+          for (const started of trace.manager.release(live[0] as string)) {
+            trace.startOrder.push(started);
           }
+        }
 
-          // Strict FIFO: the order Runs started is the order they were accepted.
-          // This is the assertion that would fail if a later reader "optimised"
-          // admission by backfilling past a head blocked on the local ceiling.
-          expect(trace.startOrder).toEqual(
-            trace.submitted.filter((runId) => trace.startOrder.includes(runId)),
-          );
-        },
-      ),
+        // Strict FIFO: the order Runs started is the order they were accepted.
+        // This is the assertion that would fail if a later reader "optimised"
+        // admission by backfilling past a head blocked on the local ceiling.
+        expect(trace.startOrder).toEqual(
+          trace.submitted.filter((runId) => trace.startOrder.includes(runId)),
+        );
+      }),
       RUNS,
     );
   });
@@ -247,9 +233,7 @@ describe("Property 59: slot admission bounds concurrency and queues fairly (R25.
     manager.submit({ runId: "a", providerId: "openai" });
     manager.submit({ runId: "b", providerId: "openai" });
     manager.submit({ runId: "c", providerId: "openai" });
-    expect(() => manager.submit({ runId: "d", providerId: "openai" })).toThrow(
-      SlotQueueFullError,
-    );
+    expect(() => manager.submit({ runId: "d", providerId: "openai" })).toThrow(SlotQueueFullError);
   });
 
   it("closes positions up when a waiting Run is cancelled", () => {
@@ -274,26 +258,22 @@ function chunkAt(seq: number): BufferedChunk {
 describe("ResumeRing: the resume window boundary (R16.3)", () => {
   it("replays exactly the chunks above fromSeq, in order", () => {
     fc.assert(
-      fc.property(
-        fc.integer({ min: 1, max: 400 }),
-        fc.nat({ max: 400 }),
-        (count, fromSeq) => {
-          const ring = new ResumeRing(512);
-          for (let seq = 1; seq <= count; seq += 1) ring.push(chunkAt(seq));
+      fc.property(fc.integer({ min: 1, max: 400 }), fc.nat({ max: 400 }), (count, fromSeq) => {
+        const ring = new ResumeRing(512);
+        for (let seq = 1; seq <= count; seq += 1) ring.push(chunkAt(seq));
 
-          const outcome = ring.replayFrom(fromSeq);
-          // Capacity 512 over at most 400 pushes: nothing was evicted, so every
-          // request is inside the window.
-          expect(outcome.ok).toBe(true);
-          if (!outcome.ok) return;
+        const outcome = ring.replayFrom(fromSeq);
+        // Capacity 512 over at most 400 pushes: nothing was evicted, so every
+        // request is inside the window.
+        expect(outcome.ok).toBe(true);
+        if (!outcome.ok) return;
 
-          const expected = Array.from(
-            { length: Math.max(0, count - fromSeq) },
-            (_, i) => fromSeq + 1 + i,
-          );
-          expect(outcome.chunks.map((entry) => entry.seq)).toEqual(expected);
-        },
-      ),
+        const expected = Array.from(
+          { length: Math.max(0, count - fromSeq) },
+          (_, i) => fromSeq + 1 + i,
+        );
+        expect(outcome.chunks.map((entry) => entry.seq)).toEqual(expected);
+      }),
       RUNS,
     );
   });
@@ -459,8 +439,6 @@ describe("PathMutex: same-file applies serialise (R25.7)", () => {
     expect(PathMutex.normalizeKey("src/a.ts/")).toBe("src/a.ts");
     expect(PathMutex.normalizeKey("/")).toBe("/");
     // Case-folding would serialise two genuinely different files on Linux.
-    expect(PathMutex.normalizeKey("src/A.ts")).not.toBe(
-      PathMutex.normalizeKey("src/a.ts"),
-    );
+    expect(PathMutex.normalizeKey("src/A.ts")).not.toBe(PathMutex.normalizeKey("src/a.ts"));
   });
 });

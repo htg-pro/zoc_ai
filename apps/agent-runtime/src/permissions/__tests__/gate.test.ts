@@ -342,7 +342,11 @@ describe("Property 72: a Capability refusal never becomes an approval request (R
       planApproval: { approved: false, planId: null, approvedAt: null },
       planPaths: new Set(["src/a.ts"]),
       writer,
-      broker: { async request() { return { decision: "approve", scope: "call" }; } },
+      broker: {
+        async request() {
+          return { decision: "approve", scope: "call" };
+        },
+      },
       grants: createGrantLedger(),
       audit: createAuditLog(),
     };
@@ -441,9 +445,9 @@ describe("forced approval (R11.5, R11.6)", () => {
     });
     // Checking only the first path would miss this: eight in-plan files and one
     // out-of-plan file must still prompt.
-    expect(
-      forcedApprovalReasonFor(request, "write", { planPaths: new Set(["src/a.ts"]) }),
-    ).toBe("out-of-plan-path");
+    expect(forcedApprovalReasonFor(request, "write", { planPaths: new Set(["src/a.ts"]) })).toBe(
+      "out-of-plan-path",
+    );
     expect(
       forcedApprovalReasonFor(request, "write", {
         planPaths: new Set(["src/a.ts", "src/b.ts"]),
@@ -455,9 +459,9 @@ describe("forced approval (R11.5, R11.6)", () => {
     const request = describeAction("write", "workspace_apply_hunks", {
       files: [{ path: "src/a.ts", action: "modify" }],
     });
-    expect(
-      forcedApprovalReasonFor(request, "write", { planPaths: new Set<string>() }),
-    ).toBe("out-of-plan-path");
+    expect(forcedApprovalReasonFor(request, "write", { planPaths: new Set<string>() })).toBe(
+      "out-of-plan-path",
+    );
   });
 
   it("forces a prompt for a declared deletion", () => {
@@ -519,7 +523,11 @@ describe("approval deadline (R11.9)", () => {
       planApproval: { approved: false, planId: null, approvedAt: null },
       planPaths: new Set<string>(),
       writer,
-      broker: { async request() { return { decision: "timeout", scope: "call" }; } },
+      broker: {
+        async request() {
+          return { decision: "timeout", scope: "call" };
+        },
+      },
       grants: createGrantLedger(),
       audit: createAuditLog(),
       approvalTimeoutMs: 10,
@@ -553,7 +561,11 @@ describe("Property 73: Plan_Approval unlocks within one Run (R32.8, R32.9, R7.7)
       planApproval: { approved: false, planId: null, approvedAt: null },
       planPaths: new Set(["src/a.ts"]),
       writer,
-      broker: { async request() { return { decision: "approve", scope: "call" }; } },
+      broker: {
+        async request() {
+          return { decision: "approve", scope: "call" };
+        },
+      },
       grants: createGrantLedger(),
       audit: createAuditLog(),
       approvalTimeoutMs: 2_000,
@@ -603,15 +615,19 @@ describe("Property 73: Plan_Approval unlocks within one Run (R32.8, R32.9, R7.7)
         planApproval: { approved: false, planId: null, approvedAt: null },
         planPaths: new Set<string>(),
         writer,
-        broker: { async request() { return { decision: "approve", scope: "call" }; } },
+        broker: {
+          async request() {
+            return { decision: "approve", scope: "call" };
+          },
+        },
         grants: createGrantLedger(),
         audit: createAuditLog(),
         planBroker: createPlanApprovalBroker(),
       };
       const writePlan = vi.fn();
-      await expect(
-        createPlanGate(ctx)({ planId: "plan_1", writePlan }),
-      ).resolves.toMatchObject({ approved: true });
+      await expect(createPlanGate(ctx)({ planId: "plan_1", writePlan })).resolves.toMatchObject({
+        approved: true,
+      });
       expect(writePlan).toHaveBeenCalledTimes(1);
       // No pause: a prompt here would have no effect but delay.
       expect(log.awaiting).toEqual([]);
@@ -634,7 +650,11 @@ describe("Property 73: Plan_Approval unlocks within one Run (R32.8, R32.9, R7.7)
         ...writer,
         awaitingApproval: (planId) => order.push(`await:${planId}`),
       },
-      broker: { async request() { return { decision: "approve", scope: "call" }; } },
+      broker: {
+        async request() {
+          return { decision: "approve", scope: "call" };
+        },
+      },
       grants: createGrantLedger(),
       audit: createAuditLog(),
       approvalTimeoutMs: 500,
@@ -667,7 +687,11 @@ describe("Property 74: a rejected or lapsed plan leaves the workspace unmodified
       planApproval: { approved: false, planId: null, approvedAt: null },
       planPaths: new Set(["src/a.ts"]),
       writer,
-      broker: { async request() { return { decision: "approve", scope: "call" }; } },
+      broker: {
+        async request() {
+          return { decision: "approve", scope: "call" };
+        },
+      },
       grants: createGrantLedger(),
       audit: createAuditLog(),
       approvalTimeoutMs: 1_000,
@@ -702,7 +726,11 @@ describe("Property 74: a rejected or lapsed plan leaves the workspace unmodified
       planApproval: { approved: false, planId: null, approvedAt: null },
       planPaths: new Set<string>(),
       writer,
-      broker: { async request() { return { decision: "approve", scope: "call" }; } },
+      broker: {
+        async request() {
+          return { decision: "approve", scope: "call" };
+        },
+      },
       grants: createGrantLedger(),
       audit: createAuditLog(),
       // 20 ms rather than ten minutes.
@@ -766,7 +794,11 @@ describe("audit log", () => {
       planApproval: { approved: false, planId: null, approvedAt: null },
       planPaths: new Set<string>(),
       writer,
-      broker: { async request() { return { decision: "approve", scope: "call" }; } },
+      broker: {
+        async request() {
+          return { decision: "approve", scope: "call" };
+        },
+      },
       grants: createGrantLedger(),
       audit,
       approvalTimeoutMs: 50,

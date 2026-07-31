@@ -41,10 +41,7 @@ const SOURCE_ENTRY = resolve(PACKAGE_ROOT, "src/bin.ts");
  */
 function packagedBinary(): string | null {
   const triple = `${process.arch === "arm64" ? "aarch64" : "x86_64"}-unknown-linux-gnu`;
-  const candidate = resolve(
-    PACKAGE_ROOT,
-    `../desktop/binaries/zoc-studio-agent-runtime-${triple}`,
-  );
+  const candidate = resolve(PACKAGE_ROOT, `../desktop/binaries/zoc-studio-agent-runtime-${triple}`);
   return process.platform === "linux" && existsSync(candidate) ? candidate : null;
 }
 
@@ -159,12 +156,7 @@ describe("admission over a real socket (R3.4, R3.5, R3.6)", () => {
     const envelope = JSON.parse(body) as Record<string, unknown>;
     expect(envelope.code).toBe("unauthorized");
     // All four envelope fields, on the failure path too (R7.5).
-    expect(Object.keys(envelope).sort()).toEqual([
-      "code",
-      "details",
-      "message",
-      "retryable",
-    ]);
+    expect(Object.keys(envelope).sort()).toEqual(["code", "details", "message", "retryable"]);
   });
 
   it("refuses /v1/runs with the wrong token", async () => {

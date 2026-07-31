@@ -52,6 +52,7 @@ from shared_schema.models import (
     IndexStatus,
     ModelBenchmarkHistory,
     ModelBenchmarkRun,
+    ProjectRulesInfo,
     RunModelBenchmarkRequest,
     Session,
     TerminalSession,
@@ -72,6 +73,7 @@ from zocai_gateway.benchmark import BenchmarkStore, ModelBenchmarker
 from zocai_gateway.context.index_store import IndexPersistence
 from zocai_gateway.context.mcp_host.host import MCPHost
 from zocai_gateway.context.mcp_host.registry import McpToolRegistry
+from zocai_gateway.context.project_rules import discover_project_rules
 from zocai_gateway.context_mentions import search_workspace_files
 from zocai_gateway.emit_gate import DiaryMirror, EmitGate
 from zocai_gateway.errors import ERROR_MESSAGES, ErrorCode, error_body, error_envelope
@@ -1991,6 +1993,31 @@ def create_app(
                 )
             )
         return candidates
+
+    @app.get(
+        "/v1/sessions/{session_id}/rules",
+        response_model=ProjectRulesInfo,
+        dependencies=[Depends(require_admission)],
+    )
+    async def project_rules(session_id: str) -> ProjectRulesInfo:
+        """Discovered per-project agent rules for a session's workspace.
+
+        Serves both the renderer's Rules display (`active`/`sources`/`rules`) and
+        the Agent_Runtime's system-instruction assembler, which orders and merges
+        the sources itself and therefore reads `documents` instead of the
+        pre-merged text (R30.3, design.md:1525 — the runtime does not walk the
+        tree itself).
+
+        Discovery is filesystem-bound, so it runs off the event loop.
+        """
+
+        session = sessions.get(session_id)
+        if session is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"unknown session: {session_id}",
+            )
+        return await asyncio.to_thread(discover_project_rules, session.workspace_root)
 
     @app.get(
         "/v1/sessions/{session_id}/index/status",

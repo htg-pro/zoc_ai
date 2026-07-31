@@ -189,9 +189,7 @@ describe("capabilityOf: six ToolKinds onto three Capabilities", () => {
   it("never widens a non-mcp kind through the declaration argument", () => {
     for (const kind of TOOL_KINDS) {
       if (kind === "mcp" || kind === "network") continue;
-      expect(capabilityOf(kind, { userDeclaredCapability: "execute" })).toBe(
-        capabilityOf(kind),
-      );
+      expect(capabilityOf(kind, { userDeclaredCapability: "execute" })).toBe(capabilityOf(kind));
     }
   });
 });

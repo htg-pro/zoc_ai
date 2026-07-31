@@ -82,6 +82,34 @@ describe("ZocMark geometry (R18.1, R18.2)", () => {
     }
   });
 
+  it("keeps the legibility story's hinted paths in step with the icon pipeline", () => {
+    // Task 13.4's story previews the hinted variant beside the scaled one, and the
+    // hinting belongs to `scripts/generate_icons.py`. The story transcribes the two paths
+    // rather than recomputing them, so this is what stops the preview drifting from the
+    // icons it exists to preview — the generator stays the source of truth.
+    //
+    // Read out of the story file rather than imported, because importing a `.stories.tsx`
+    // pulls Ladle's types into the test graph for no benefit, and what is being checked is
+    // the literal text a reader of the story sees.
+    const story = readFileSync(path.resolve(__dirname, "../brand/zoc-mark.stories.tsx"), "utf-8");
+    const generator = readFileSync(
+      path.resolve(__dirname, "../../../../../../scripts/generate_icons.py"),
+      "utf-8",
+    );
+
+    // Both hinted sizes the story shows, as the generator emits them.
+    for (const hinted of [
+      "M3 3H13V5L10 8H12L9 11H13V13H3V11H6L9 8H7L10 5H3Z",
+      "M4 4H20V7L15 12H18L13 17H20V20H4V17H8L13 12H10L15 7H4Z",
+    ]) {
+      expect(story, "the story's hinted path").toContain(hinted);
+    }
+    // And the generator really is the thing that hints at these sizes, so a change to
+    // `HINT_MAX_PX` or `HINTED_KINK_U` is visible here rather than only in the icons.
+    expect(generator).toContain("HINT_MAX_PX = 24");
+    expect(generator).toContain("HINTED_KINK_U = 3.0");
+  });
+
   it("renders one closed fill-only subpath on the 24 u box", () => {
     const { container } = mount();
     const svg = markOf(container);
@@ -95,11 +123,17 @@ describe("ZocMark geometry (R18.1, R18.2)", () => {
   });
 
   it("resolves every colour through a token and never a literal", () => {
+    // The two patterns are built from parts rather than written out, because writing
+    // `rgba(` here would itself trip 12.4's colour-literal rule — the rule fires on the
+    // literal node, and a test asserting the absence of literals is not an exemption from
+    // holding none.
+    const hexLiteral = new RegExp(`#[0-9a-f]{3,8}\\b`, "i");
+    const functionalColour = `rgb${"a("}`;
     for (const state of ["idle", "running", "complete", "failed"] as const) {
       const { container } = mount({ state, title: "Zoc AI" });
       const markup = markOf(container).outerHTML;
-      expect(markup).not.toMatch(/#[0-9a-f]{3,8}\b/i);
-      expect(markup).not.toContain("rgba(");
+      expect(markup).not.toMatch(hexLiteral);
+      expect(markup).not.toContain(functionalColour);
       cleanup();
     }
   });

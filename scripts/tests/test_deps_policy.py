@@ -199,10 +199,22 @@ def test_cli_exits_zero_on_the_real_tree() -> None:
 
 
 def test_build_gate_wires_the_step() -> None:
-    """R22.5: the gate only guards if `check` runs it."""
+    """R22.5: the gate only guards if `check` runs it.
+
+    Asserted as **containment and order**, not as the whole string. The literal
+    form was checked here originally and it made this test fail for the one thing
+    it should not care about: task 12.4 legitimately inserting `lint:suppressions`
+    into the same chain. What the requirement needs is that the step runs, and that
+    it runs before `cargo check` so a policy failure short-circuits the slow half.
+    """
     scripts_block = json.loads((REPO_ROOT / "package.json").read_text(encoding="utf-8"))["scripts"]
     assert scripts_block["deps:policy"] == "python3 scripts/deps_policy.py"
-    assert scripts_block["check"] == (
-        "pnpm schema:check && pnpm lint && pnpm typecheck && pnpm deps:policy "
-        "&& cargo check --workspace"
-    )
+
+    check = scripts_block["check"]
+    steps = [step.strip() for step in check.split("&&")]
+    assert "pnpm deps:policy" in steps, check
+    # The gate is a gate only if a failure stops the build, which `&&` chaining is
+    # what provides — a `;` or a trailing position after `cargo check` would not.
+    assert steps.index("pnpm deps:policy") < steps.index("cargo check --workspace"), check
+    for required in ("pnpm schema:check", "pnpm lint", "pnpm typecheck"):
+        assert required in steps, check

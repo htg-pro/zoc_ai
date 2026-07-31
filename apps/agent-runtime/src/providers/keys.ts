@@ -69,10 +69,16 @@ export interface SecretSource {
 }
 
 export class DesktopCoreSecretSource implements SecretSource {
-  constructor(
-    private readonly endpoint: string,
-    private readonly token: string,
-  ) {}
+  // Declared and assigned rather than written as constructor parameter properties:
+  // `--experimental-strip-types` erases types without transforming, so a parameter
+  // property is `ERR_UNSUPPORTED_TYPESCRIPT_SYNTAX` at boot even though `tsc` accepts it.
+  private readonly endpoint: string;
+  private readonly token: string;
+
+  constructor(endpoint: string, token: string) {
+    this.endpoint = endpoint;
+    this.token = token;
+  }
 
   async get(name: string): Promise<string | null> {
     const response = await fetch(this.endpoint, {
@@ -90,11 +96,9 @@ export class DesktopCoreSecretSource implements SecretSource {
       // the very thing this module exists to keep out of logs.
       throw new HttpError(
         502,
-        envelope(
-          ErrorCode.INTERNAL,
-          "Zoc AI could not reach the secure key store.",
-          { retryable: true },
-        ),
+        envelope(ErrorCode.INTERNAL, "Zoc AI could not reach the secure key store.", {
+          retryable: true,
+        }),
       );
     }
     const body = (await response.json()) as { value?: string | null };
@@ -132,10 +136,7 @@ export function secretSourceFromEnv(env: NodeJS.ProcessEnv): SecretSource {
  * error — it is the local path, and treating a missing key as a failure there
  * would break the zero-key offline guarantee.
  */
-export async function resolveKey(
-  providerId: string,
-  source: SecretSource,
-): Promise<string | null> {
+export async function resolveKey(providerId: string, source: SecretSource): Promise<string | null> {
   const spec = providerSpec(providerId);
   if (!spec.requiresKey) return null;
   return source.get(secretKeyName(providerId));
@@ -233,9 +234,7 @@ export function createRunLogger(options: {
         level,
         runId: options.runId,
         message: redactString(message, secrets),
-        ...(payload === undefined
-          ? {}
-          : { payload: redactValue(payload, secrets) }),
+        ...(payload === undefined ? {} : { payload: redactValue(payload, secrets) }),
       };
       sink(JSON.stringify(record));
     },

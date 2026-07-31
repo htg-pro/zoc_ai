@@ -15,7 +15,7 @@ import process from "node:process";
 
 import { createAdmission, refusalEnvelope, type Admit } from "./http/admission.ts";
 import { ErrorCode, HttpError, envelope, type ErrorEnvelope } from "./http/errors.ts";
-import { buildRoutes } from "./http/routes.ts";
+import { defaultRoute } from "./composition.ts";
 
 /** The one line Desktop_Core's supervisor greps for (R3.2). */
 export const PORT_LINE_PREFIX = "ZOC_RUNTIME_PORT=";
@@ -68,9 +68,7 @@ export function readEnv(env: NodeJS.ProcessEnv = process.env): RuntimeEnv {
 
 export function assertLoopbackBindHost(host: string): void {
   if (host !== BIND_HOST) {
-    throw new StartupError(
-      `Agent_Runtime binds ${BIND_HOST} only; refusing to bind ${host}.`,
-    );
+    throw new StartupError(`Agent_Runtime binds ${BIND_HOST} only; refusing to bind ${host}.`);
   }
 }
 
@@ -84,10 +82,7 @@ function writeEnvelope(res: ServerResponse, status: number, env: ErrorEnvelope):
   res.end(body);
 }
 
-export type RouteHandler = (
-  req: IncomingMessage,
-  res: ServerResponse,
-) => void | Promise<void>;
+export type RouteHandler = (req: IncomingMessage, res: ServerResponse) => void | Promise<void>;
 
 /**
  * Compose admission with the route table.
@@ -161,7 +156,10 @@ export async function start(options: {
     delete process.env.ZOC_RUNTIME_TOKEN;
   }
 
-  const route = options.route ?? buildRoutes(runtimeEnv);
+  // The token must be scrubbed *before* the route table is built, because building it
+  // reads `process.env` for the bridge URL and the key endpoint — and `composition.ts`
+  // captures the token from `runtimeEnv`, which is the copy that survives.
+  const route = options.route ?? defaultRoute(runtimeEnv);
   const server = createServer(createRequestListener(admit, route));
 
   // A stalled reader must not hold a socket forever, but a long Run's SSE

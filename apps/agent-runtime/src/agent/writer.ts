@@ -111,9 +111,7 @@ export interface ZocDataChunk<K extends keyof ZocProducedParts = keyof ZocProduc
  * chunk shapes it never constructs and only ever passes through. The framing
  * stage's job for a native chunk is to number it, not to understand it.
  */
-export type OutboundChunk =
-  | ZocDataChunk
-  | ({ readonly type: string } & Record<string, unknown>);
+export type OutboundChunk = ZocDataChunk | ({ readonly type: string } & Record<string, unknown>);
 
 /** The subset of `UIMessageStreamWriter` this module needs. Narrow for testability. */
 export interface ChunkWriter {
@@ -138,12 +136,7 @@ export type PartPayload<P extends MessagePart> = Omit<P, keyof PartBase | "type"
  * still emit — `awaiting-approval` in particular is a Plan_Approval pause (8.4),
  * which is neither running nor over.
  */
-export const TERMINAL_RUN_STATES = [
-  "completed",
-  "cancelled",
-  "failed",
-  "interrupted",
-] as const;
+export const TERMINAL_RUN_STATES = ["completed", "cancelled", "failed", "interrupted"] as const;
 
 export type TerminalRunState = (typeof TERMINAL_RUN_STATES)[number];
 
@@ -315,9 +308,7 @@ export function isZocDataChunk(chunk: OutboundChunk): chunk is ZocDataChunk {
   );
 }
 
-function isTerminalLifecycle(
-  chunk: OutboundChunk,
-): chunk is ZocDataChunk<"zoc-run"> {
+function isTerminalLifecycle(chunk: OutboundChunk): chunk is ZocDataChunk<"zoc-run"> {
   if (chunk.type !== "data-zoc-run") return false;
   const state = (chunk as ZocDataChunk<"zoc-run">).data?.state;
   return typeof state === "string" && isTerminalRunState(state);
@@ -391,21 +382,11 @@ export class RunWriter {
 
   /** Reconciled per file, not per plan: a plan touching six files is six rows. */
   diff(payload: PartPayload<DiffPart>): DiffPart {
-    return this.data(
-      "zoc-diff",
-      `${payload.planId}:${payload.path}`,
-      "diff",
-      payload,
-    );
+    return this.data("zoc-diff", `${payload.planId}:${payload.path}`, "diff", payload);
   }
 
   permission(payload: PartPayload<PermissionRequestPart>): PermissionRequestPart {
-    return this.data(
-      "zoc-permission",
-      payload.requestId,
-      "permission-request",
-      payload,
-    );
+    return this.data("zoc-permission", payload.requestId, "permission-request", payload);
   }
 
   /** One row per Run, updated in place — hence `id` is the run id. */
@@ -426,12 +407,7 @@ export class RunWriter {
 
   error(payload: PartPayload<ErrorPart>): ErrorPart {
     this.errorOrdinal += 1;
-    return this.data(
-      "zoc-error",
-      `${this.runId}:error:${this.errorOrdinal}`,
-      "error",
-      payload,
-    );
+    return this.data("zoc-error", `${this.runId}:error:${this.errorOrdinal}`, "error", payload);
   }
 
   compaction(payload: PartPayload<CompactionPart>): CompactionPart {

@@ -8,6 +8,7 @@ import tsParser from "@typescript-eslint/parser";
 import tsPlugin from "@typescript-eslint/eslint-plugin";
 import reactHooks from "eslint-plugin-react-hooks";
 import reactRefresh from "eslint-plugin-react-refresh";
+import eslintComments from "@eslint-community/eslint-plugin-eslint-comments";
 
 // Feature: zoc-agent-chat-rebuild (R5.6, R19.6) — motion budget.
 //
@@ -50,6 +51,55 @@ const MOTION_RESTRICTED_PATHS = ["motion", "motion/react"].map((name) => ({
   allowImportNames: MOTION_LAZY_ALLOWED_IMPORTS,
   message: MOTION_BUDGET_MESSAGE,
 }));
+
+// Feature: zoc-agent-chat-rebuild (R17.1) — no hard-coded colour in component
+// source.
+//
+// R17.1 requires every colour, radius, spacing, and elevation value to come
+// from a CSS custom property, and the repo's own history is why it is a lint
+// rule rather than a review note: three competing violets accumulated across
+// `rows.tsx`, `ToolCallCard.tsx`, and the Monaco rules precisely because nothing
+// stopped a literal being typed.
+//
+// Scoped to `features/chat/**` and not the whole tree, because `features/agent`
+// is full of the literals this rebuild is replacing and lives until 26.2 — a
+// repo-wide rule would fail the Build_Gate on code that is already scheduled for
+// deletion.
+//
+// Matched on the *literal node* rather than on the file text, so it fires for a
+// hex in a `className`, in a style object, in a `fill`, and in a plain string
+// constant alike, and does not fire for one inside a comment. The `#rgb` and
+// `#rrggbbaa` forms are included because a three-digit literal is the one a
+// reviewer's eye skips.
+//
+// A functional notation whose argument is a `var(` is **exempt**, because
+// `hsl(var(--background))` is the shadcn token form R17.2 names as one of the two
+// layers the Chat_Surface extends — the value still lives in CSS, and the wrapper
+// is how a custom property carrying bare channel numbers is consumed. `rgb(0 0 0)`
+// with literal channels is still refused, which is the case the rule is for.
+const COLOUR_LITERAL = String.raw`/(^|[^&\w])#(?:[0-9a-fA-F]{3,4}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})\b|\b(?:rgba?|hsla?)\s*\((?!\s*var\()/`;
+
+const COLOUR_LITERAL_MESSAGE =
+  "Hard-coded colour literal (R17.1). Every colour in features/chat comes from a " +
+  "CSS custom property: use var(--zoc-*) or an existing hsl(var(--*)) token, and " +
+  "add the token to globals.css plus features/chat/tokens.ts if it does not exist.";
+
+const NO_COLOUR_LITERALS = [
+  {
+    selector: `Literal[value=${COLOUR_LITERAL}]`,
+    message: COLOUR_LITERAL_MESSAGE,
+  },
+  {
+    // A template literal's static text, which is where a literal hides when a
+    // class string is interpolated.
+    selector: `TemplateElement[value.raw=${COLOUR_LITERAL}]`,
+    message: COLOUR_LITERAL_MESSAGE,
+  },
+  {
+    selector: `JSXText[value=${COLOUR_LITERAL}]`,
+    message: COLOUR_LITERAL_MESSAGE,
+  },
+];
 
 export default [
   {
@@ -145,6 +195,62 @@ export default [
     files: ["**/*.test.{ts,tsx}", "**/__tests__/**/*.{ts,tsx}"],
     rules: {
       "@typescript-eslint/no-explicit-any": "off",
+    },
+  },
+  // Token discipline (R17.1) and suppression discipline (R22.5), scoped to the
+  // Chat_Surface. Declared last so it wins for these files: flat-config rules are
+  // merged per-key in declaration order, and `no-restricted-syntax` is configured
+  // nowhere above.
+  //
+  // The colour rule covers the tests too, deliberately. A property test that
+  // asserts against a literal hex is asserting against a value that is no longer
+  // the token's — which is exactly the drift `tokens.ts` and its stylesheet check
+  // exist to catch — so the two files that legitimately hold literals declare
+  // them there and nowhere else.
+  //
+  // **Suppression discipline uses ESLint's own `linterOptions`, not the plugin's
+  // `eslint-comments/no-unused-disable`.** 12.4 names that rule and the package is
+  // installed, but it is deprecated as of the plugin's 4.7.0 and removed in 5.0.0:
+  // ESLint 9 reports unused directives natively, and `reportUnusedDisableDirectives`
+  // is the replacement its own deprecation notice points at. Taking the deprecated
+  // path would mean a Build_Gate rule that breaks on the next major. `"error"`
+  // rather than the default `"warn"`, because R22.5 asks for a gate.
+  {
+    files: ["src/features/chat/**/*.{ts,tsx}"],
+    linterOptions: { reportUnusedDisableDirectives: "error" },
+    plugins: { "eslint-comments": eslintComments },
+    rules: {
+      "no-restricted-syntax": ["error", ...NO_COLOUR_LITERALS],
+      // The second half of R22.5, and the half that is not deprecated: a bare
+      // `eslint-disable` asserts a rule was in the way without saying why, which is
+      // unreviewable. Every suppression in this tree carries its reason.
+      "eslint-comments/require-description": "error",
+    },
+  },
+  // `tokens.ts` is the one file in the tree that holds colour literals, because
+  // it is the mirror of `globals.css` that the contrast property measures — the
+  // value has to be a number somewhere, and here it is checked against the
+  // stylesheet rather than asserted. Its own test reads the same literals for the
+  // same reason.
+  {
+    files: [
+      "src/features/chat/tokens.ts",
+      "src/features/chat/__tests__/tokens.property.test.ts",
+    ],
+    rules: {
+      "no-restricted-syntax": "off",
+    },
+  },
+  // Suppression discipline in the runtime, on the same terms. The runtime has its
+  // own `eslint.config.js`, so this block covers the case where the frontend's
+  // config is run across the workspace root; the runtime's own config carries the
+  // same two settings.
+  {
+    files: ["../agent-runtime/src/**/*.ts"],
+    linterOptions: { reportUnusedDisableDirectives: "error" },
+    plugins: { "eslint-comments": eslintComments },
+    rules: {
+      "eslint-comments/require-description": "error",
     },
   },
 ];

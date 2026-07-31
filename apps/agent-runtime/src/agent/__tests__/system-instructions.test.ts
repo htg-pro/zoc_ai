@@ -17,6 +17,7 @@ import {
   MAX_RULES_CHARS,
   MAX_SOURCE_CHARS,
   assembleInstructions,
+  discoverRulesVia,
   type RuleDocument,
 } from "../system-instructions.ts";
 import { classifyRuleSource, classifyRuleSources } from "../rules-sources.ts";
@@ -106,9 +107,7 @@ describe("assembleInstructions: ordering (R30.3)", () => {
   it("collapses a duplicate path rather than applying its text twice", async () => {
     const result = await from([doc(".zoc/rules/a.md"), doc(".zoc/rules/a.md")]);
     expect(result.appliedSources).toEqual([".zoc/rules/a.md"]);
-    expect(
-      result.instructions.split("rule for .zoc/rules/a.md").length - 1,
-    ).toBe(1);
+    expect(result.instructions.split("rule for .zoc/rules/a.md").length - 1).toBe(1);
   });
 });
 
@@ -124,9 +123,7 @@ describe("assembleInstructions: a malformed source is skipped, never fatal (R30.
     ]);
 
     expect(result.appliedSources).toEqual([".zoc/rules/good.md", "AGENTS.md"]);
-    expect(
-      Object.fromEntries(result.skipped.map((s) => [s.path, s.reason])),
-    ).toEqual({
+    expect(Object.fromEntries(result.skipped.map((s) => [s.path, s.reason]))).toEqual({
       ".zoc/rules/unreadable.md": "Permission denied.",
       ".zoc/rules/empty.md": "The source is empty.",
       ".zoc/rules/binary.md": "The source is not UTF-8 text.",
@@ -155,10 +152,7 @@ describe("assembleInstructions: a malformed source is skipped, never fatal (R30.
         // Applied and skipped partition the discovered set: a source that is
         // neither reported nor applied has silently vanished, which is the bug
         // that makes R30.4's display lie.
-        const accounted = new Set([
-          ...result.appliedSources,
-          ...result.skipped.map((s) => s.path),
-        ]);
+        const accounted = new Set([...result.appliedSources, ...result.skipped.map((s) => s.path)]);
         for (const document of documents) {
           const key = typeof document.path === "string" ? document.path : "(unnamed)";
           expect(accounted.has(key)).toBe(true);
@@ -277,5 +271,39 @@ describe("rules-sources: the runtime copy agrees with the renderer (R30.3)", () 
       kind: "cursor",
       nested: true,
     });
+  });
+});
+
+describe("discovery port adapter (R30.1)", () => {
+  it("passes discovered documents straight through", async () => {
+    const seen: string[] = [];
+    const discover = discoverRulesVia({
+      async discoverRules(sessionId) {
+        seen.push(sessionId);
+        return { ok: true, value: [{ path: "AGENTS.md", content: "run the tests" }] };
+      },
+    });
+
+    const assembled = await assembleInstructions({ ...facts, discoverRules: discover });
+    expect(seen).toEqual(["sess_1"]);
+    expect(assembled.appliedSources).toEqual(["AGENTS.md"]);
+    expect(assembled.instructions).toContain("run the tests");
+  });
+
+  it("turns an unreachable rules service into a skip, not a failed Run", async () => {
+    const discover = discoverRulesVia({
+      async discoverRules() {
+        return { ok: false, message: "Reading the project rules could not be reached." };
+      },
+    });
+
+    const assembled = await assembleInstructions({ ...facts, discoverRules: discover });
+    // The Run still has usable instructions — that is the point.
+    expect(assembled.instructions).toContain(BASE_INSTRUCTIONS);
+    expect(assembled.instructions).toContain("/home/dev/project");
+    expect(assembled.appliedSources).toEqual([]);
+    expect(assembled.skipped).toEqual([
+      { path: "(discovery)", reason: "Reading the project rules could not be reached." },
+    ]);
   });
 });

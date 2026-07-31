@@ -89,9 +89,7 @@ describe("plan schema (R10.1)", () => {
 
     for (const action of ["create", "modify", "delete"] as const) {
       expect(() =>
-        validatePlan(
-          validPlan({ files: [validFile({ action, sourcePath: "src/old.ts" })] }),
-        ),
+        validatePlan(validPlan({ files: [validFile({ action, sourcePath: "src/old.ts" })] })),
       ).toThrow(PlanInvalidError);
     }
   });
@@ -110,7 +108,13 @@ describe("plan schema (R10.1)", () => {
   it("refuses a non-object candidate without throwing something untyped", () => {
     fc.assert(
       fc.property(
-        fc.oneof(fc.constant(null), fc.constant(undefined), fc.string(), fc.integer(), fc.array(fc.anything())),
+        fc.oneof(
+          fc.constant(null),
+          fc.constant(undefined),
+          fc.string(),
+          fc.integer(),
+          fc.array(fc.anything()),
+        ),
         (candidate) => {
           expect(() => validatePlan(candidate)).toThrow(PlanInvalidError);
         },
@@ -163,9 +167,7 @@ describe("exactly one retry, then fail (R5.3)", () => {
 
   it("fails with plan_invalid after the retry rather than retrying again", async () => {
     const generate = vi.fn(async () => ({ title: "still broken" }));
-    await expect(generatePlanWithOneRetry({ generate })).rejects.toBeInstanceOf(
-      PlanInvalidError,
-    );
+    await expect(generatePlanWithOneRetry({ generate })).rejects.toBeInstanceOf(PlanInvalidError);
     // Two calls: the attempt and the one retry. Not three.
     expect(generate).toHaveBeenCalledTimes(2);
   });

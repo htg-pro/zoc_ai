@@ -30,9 +30,7 @@ export const LOOPBACK_PEERS: ReadonlySet<string> = new Set([
 /** Routes reachable by any loopback caller with no credential (R3.5). */
 export const UNAUTHENTICATED_PATHS: ReadonlySet<string> = new Set(["/health"]);
 
-export type AdmitFailureCode =
-  | typeof ErrorCode.REMOTE_REFUSED
-  | typeof ErrorCode.UNAUTHORIZED;
+export type AdmitFailureCode = typeof ErrorCode.REMOTE_REFUSED | typeof ErrorCode.UNAUTHORIZED;
 
 export type AdmitResult =
   | { readonly ok: true }

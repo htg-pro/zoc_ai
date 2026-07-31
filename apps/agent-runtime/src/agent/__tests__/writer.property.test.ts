@@ -334,9 +334,7 @@ describe("Property 2: the sequence allocator is gapless and strictly increasing 
           });
 
           const entries = h.sink.appended;
-          expect(entries.map((e) => e.seq)).toEqual(
-            steps.map((_, i) => FIRST_SEQ + i),
-          );
+          expect(entries.map((e) => e.seq)).toEqual(steps.map((_, i) => FIRST_SEQ + i));
 
           // A shared `seq` space is not a shared identity: attribution (R7.2)
           // has to survive sharing the counter.

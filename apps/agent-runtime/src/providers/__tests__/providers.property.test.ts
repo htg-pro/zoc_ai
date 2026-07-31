@@ -334,7 +334,10 @@ describe("secret source construction", () => {
   });
 
   it("maps a 404 to null rather than an error", async () => {
-    vi.stubGlobal("fetch", vi.fn(async () => new Response("{}", { status: 404 })));
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => new Response("{}", { status: 404 })),
+    );
     const source = secretSourceFromEnv({
       ZOC_DESKTOP_KEY_URL: "http://127.0.0.1:5555/secret",
       ZOC_RUNTIME_TOKEN: "t0123456789",
@@ -351,14 +354,12 @@ describe("secret source construction", () => {
       ZOC_DESKTOP_KEY_URL: "http://127.0.0.1:5555/secret",
       ZOC_RUNTIME_TOKEN: "t0123456789",
     });
-    await expect(source.get("provider.openai.api_key")).rejects.toSatisfy(
-      (cause: unknown) => {
-        const error = cause as HttpError;
-        expect(error.envelope.details ?? "").not.toContain("sk-proj-leaked");
-        expect(error.envelope.message).not.toContain("sk-proj-leaked");
-        return true;
-      },
-    );
+    await expect(source.get("provider.openai.api_key")).rejects.toSatisfy((cause: unknown) => {
+      const error = cause as HttpError;
+      expect(error.envelope.details ?? "").not.toContain("sk-proj-leaked");
+      expect(error.envelope.message).not.toContain("sk-proj-leaked");
+      return true;
+    });
   });
 });
 
