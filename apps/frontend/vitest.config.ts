@@ -23,6 +23,10 @@ export default defineConfig({
     globals: true,
     css: false,
     setupFiles: ["./src/__tests__/setup.ts"],
-    exclude: ["node_modules", "dist"],
+    // `*.perf.test.*` is the `@perf` tier (zoc-agent-chat-rebuild task 17.6): budgets 19.4 and 20.5
+    // launch a headless Chromium and stream for tens of seconds, which is both too slow for the
+    // default gate and too sensitive to a loaded developer machine to be a reliable signal there.
+    // `pnpm test:perf` runs them on a fixed runner.
+    exclude: ["node_modules", "dist", "**/*.perf.test.*"],
   },
 });

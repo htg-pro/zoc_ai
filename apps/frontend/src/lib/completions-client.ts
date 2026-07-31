@@ -1,16 +1,34 @@
 /**
- * Streaming completions client (§3.3, R11.1/R12/R16.3).
+ * Streaming completions client — zoc-agent-chat-rebuild R2.1, R6.2, R6.5, R7.8, task 22.11.
  *
- * An abortable `fetch` POST to the Gateway `POST /v1/completions` (resolving the
- * loopback port like `agent-client.ts`) that parses the Server-Sent Events
- * stream, forwarding each `event: token` chunk (`{"text": …}`) to `onToken` and
- * resolving on the distinct `event: done` terminal. Network errors and aborts
- * are swallowed quietly so an unavailable Gateway never interrupts typing
- * (R16.3): the returned promise settles with no further `onToken` calls.
+ * An abortable `fetch` POST to the **Agent_Runtime**'s `POST /v1/completions`, resolving the endpoint
+ * and the per-launch bearer token through `runtime-endpoint.ts` (3.3). It parses the Server-Sent Events
+ * stream, forwarding each `event: token` chunk (`{"text": …}`) to `onToken` and resolving on the distinct
+ * `event: done` terminal. Network errors and aborts are swallowed quietly so an unavailable runtime never
+ * interrupts typing (R16.3): the returned promise settles with no further `onToken` calls.
+ *
+ * ## Why this moved off Workspace_Services
+ *
+ * Editor autocomplete is a provider inference call, and R6.2 puts provider inference in the runtime — the
+ * same reason inline edit moved at 22.12. The Gateway's `routes/completions.py` stays in place until 26.2
+ * deletes it; nothing calls it after this.
+ *
+ * ## What changed, and what deliberately did not
+ *
+ * **The body no longer carries a credential.** R7.8 puts key resolution inside the runtime, so `apiKey`
+ * and `baseUrl` are gone and only the model *selection* travels. That is not optional politeness: the
+ * runtime's body schema is a `z.strictObject`, so a request still carrying them is rejected — and because
+ * this client fails quiet by contract, that rejection would present as autocomplete simply never
+ * appearing. The two fields are dropped explicitly rather than spread, which is what makes it impossible
+ * to reintroduce one by widening `ActiveModelRequestContext`.
+ *
+ * **Everything else is verbatim.** The frame parser, the `event: done` terminal, and the
+ * swallow-everything failure contract are unchanged — Monaco calls this on every keystroke, so a toast
+ * per failure is unusable, and the parser is the half of this module that had no reason to move.
  */
 
-import { resolveAgentPort } from "./agent-port";
 import { resolveActiveModelRequestContext } from "./active-model-context";
+import { resolveRuntimeEndpoint, runtimeAuthHeaders } from "./runtime-endpoint";
 
 export interface CompletionRequestBody {
   prefix: string;
@@ -58,24 +76,37 @@ export async function streamCompletion(
   onToken: (chunk: string) => void,
   signal: AbortSignal,
 ): Promise<void> {
-  let port: number;
+  let runtime: Awaited<ReturnType<typeof resolveRuntimeEndpoint>>;
   let modelContext: Awaited<ReturnType<typeof resolveActiveModelRequestContext>>;
   try {
-    [port, modelContext] = await Promise.all([
-      resolveAgentPort(),
+    [runtime, modelContext] = await Promise.all([
+      resolveRuntimeEndpoint(signal),
       resolveActiveModelRequestContext(),
     ]);
   } catch {
-    return; // no sidecar/model context → quiet (R16.3)
+    return; // no runtime/model context → quiet (R16.3)
   }
   if (signal.aborted) return;
 
   let res: Response;
   try {
-    res = await fetch(`http://127.0.0.1:${port}/v1/completions`, {
+    res = await fetch(`${runtime.baseUrl}/v1/completions`, {
       method: "POST",
-      headers: { "Content-Type": "application/json", Accept: "text/event-stream" },
-      body: JSON.stringify({ ...body, ...modelContext }),
+      headers: {
+        "Content-Type": "application/json",
+        Accept: "text/event-stream",
+        ...runtimeAuthHeaders(runtime),
+      },
+      // Named field by field rather than spread: the runtime's schema is closed, and `apiKey` and
+      // `baseUrl` must not travel (R7.8).
+      body: JSON.stringify({
+        prefix: body.prefix,
+        suffix: body.suffix,
+        language: body.language,
+        filePath: body.filePath,
+        provider: modelContext.provider,
+        model: modelContext.model,
+      }),
       signal,
     });
   } catch {

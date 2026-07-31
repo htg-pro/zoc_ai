@@ -812,8 +812,7 @@ fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
 /// standing between CSPRNG bytes and a bearer token, it is twenty lines, and a
 /// reviewer of a security-relevant change can read all of it.
 fn base64url_nopad(bytes: &[u8]) -> String {
-    const ALPHABET: &[u8; 64] =
-        b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
+    const ALPHABET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
     let mut out = String::with_capacity((bytes.len() * 4 + 2) / 3);
     for chunk in bytes.chunks(3) {
         let b0 = chunk[0] as u32;
@@ -905,8 +904,7 @@ pub fn supervise_runtime<R: Runtime>(
                         status.crash_report = None;
                     } else {
                         tracing::warn!(reason = %loss.reason, exit_code = ?loss.exit_code, "agent runtime lost; restarting");
-                        let report =
-                            write_crash_report(&log_path, loss.exit_code, &loss.reason);
+                        let report = write_crash_report(&log_path, loss.exit_code, &loss.reason);
                         let last_error =
                             last_log_line(&log_path).unwrap_or_else(|| loss.reason.clone());
                         let mut status = sup.status.lock();
@@ -1024,8 +1022,7 @@ async fn runtime_spawn_once<R: Runtime>(
                                 let mut sender = Some(termination_tx);
                                 while let Some(event) = events.recv().await {
                                     match event {
-                                        CommandEvent::Stdout(buf)
-                                        | CommandEvent::Stderr(buf) => {
+                                        CommandEvent::Stdout(buf) | CommandEvent::Stderr(buf) => {
                                             record_sidecar_output(&mut log, &buf);
                                         }
                                         CommandEvent::Error(error) => {
@@ -1087,9 +1084,7 @@ pub fn agent_runtime_endpoint(
 }
 
 #[tauri::command]
-pub fn agent_runtime_status(
-    state: tauri::State<'_, Arc<AgentRuntimeSupervisor>>,
-) -> RuntimeStatus {
+pub fn agent_runtime_status(state: tauri::State<'_, Arc<AgentRuntimeSupervisor>>) -> RuntimeStatus {
     state.current()
 }
 

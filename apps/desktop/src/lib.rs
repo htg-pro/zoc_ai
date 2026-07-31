@@ -7,9 +7,9 @@ mod checks;
 mod fs_commands;
 mod git;
 mod hardware_fit;
-mod runtime_bridge;
 mod llama_server;
 mod patch;
+mod runtime_bridge;
 mod search_commands;
 mod secrets;
 mod share;
@@ -58,6 +58,13 @@ pub fn run() {
     // (R6.1, R14.10): a separate OS process cannot invoke a Tauri command.
     let bridge: Arc<runtime_bridge::RuntimeBridge> =
         Arc::new(runtime_bridge::RuntimeBridge::default());
+    // One checkpoint store for both callers (zoc-agent-chat-rebuild R10.5–R10.7): the
+    // Agent_Runtime captures a checkpoint through the loopback bridge when it applies hunks, and
+    // the renderer rolls one back through `workspace_rollback` from the receipt on the plan card.
+    // Two stores would mean a checkpoint the control offering to undo it could not see.
+    let checkpoints: Arc<zoc_studio_hotpath::checkpoint::CheckpointStore> = Arc::new(
+        zoc_studio_hotpath::checkpoint::CheckpointStore::new(runtime_bridge::checkpoint_dir()),
+    );
     // Seed the in-memory workspace state from any persisted desktop.json so
     // FS commands work immediately after boot, even before the UI explicitly
     // pushes a workspace root via `set_workspace_root`.
@@ -89,11 +96,13 @@ pub fn run() {
         .manage(share.clone())
         .manage(vault.clone())
         .manage(bridge.clone())
+        .manage(checkpoints.clone())
         .setup({
             let supervisor = supervisor.clone();
             let runtime_supervisor = runtime_supervisor.clone();
             let vault = vault.clone();
             let bridge = bridge.clone();
+            let checkpoints = checkpoints.clone();
             move |app| {
                 let handle = app.handle().clone();
                 // Start the bridge before the runtime, so the first spawn already
@@ -103,13 +112,18 @@ pub fn run() {
                     vault.clone(),
                     runtime_supervisor.clone(),
                     workspace.clone(),
+                    checkpoints.clone(),
                 );
                 sidecar::supervise(handle.clone(), supervisor.clone());
                 // The runtime is supervised alongside the Python sidecar rather
                 // than after it. It reads Workspace_Services' port on every
                 // spawn, so it tolerates starting first and needs no ordering
                 // guarantee between the two.
-                sidecar::supervise_runtime(handle.clone(), runtime_supervisor.clone(), supervisor.clone());
+                sidecar::supervise_runtime(
+                    handle.clone(),
+                    runtime_supervisor.clone(),
+                    supervisor.clone(),
+                );
                 // R14.8: the vault owns *when* there is something to say about
                 // its backend; the shell owns the emit. Installing the publisher
                 // announces the probed backend once, so the renderer's degraded
@@ -188,8 +202,11 @@ pub fn run() {
             checks::run_task,
             patch::apply_patch,
             patch::apply_transaction,
+            patch::workspace_rollback,
             workspace::desktop_config_get,
             workspace::desktop_config_set,
+            workspace::local_models_get,
+            workspace::local_models_set,
             workspace::set_workspace_root,
             workspace::legacy_detect,
             workspace::legacy_import,

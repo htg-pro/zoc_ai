@@ -82,6 +82,14 @@ export interface ToolDescriptor {
 export interface ToolContext {
   readonly workspace: WorkspaceClient;
   readonly sessionId: string;
+  /**
+   * The Run these tools belong to, so an apply's checkpoint identifies it (R10.5).
+   *
+   * Optional because the catalogue route builds a registry with no Run behind it — it
+   * needs the descriptors, not callable tools — and a required field there would be a
+   * fabricated id in the one place that has none.
+   */
+  readonly runId?: string;
   /** Which registry to build. Ask mode gets the read-only one (R32.5). */
   readonly mode: ConversationMode;
   /**
@@ -240,6 +248,7 @@ function effectfulDescriptors(ctx: ToolContext): ToolDescriptor[] {
           asToolResult(
             await ctx.workspace.applyHunks({
               planId,
+              ...(ctx.runId === undefined ? {} : { runId: ctx.runId }),
               files: files.map((file: HunkFileInput) => ({
                 path: file.path,
                 action: file.action,

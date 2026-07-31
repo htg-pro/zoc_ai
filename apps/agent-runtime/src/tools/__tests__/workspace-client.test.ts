@@ -204,3 +204,90 @@ describe("WorkspaceClient.benchmarkHistory", () => {
     }
   });
 });
+
+/**
+ * Apply and rollback — zoc-agent-chat-rebuild R10.5, R10.6, R10.7, R10.15, task 18.7.
+ *
+ * The bridge answers in snake_case and these two results are the only multi-word ones on this
+ * client, so they are mapped rather than cast. The cast was the original code, and it failed
+ * silently in the one field that matters most: `checkpoint_id` read as `checkpointId` is
+ * `undefined`, so an apply that *was* checkpointed reported that it was not — and the plan card
+ * renders that as "this cannot be rolled back here".
+ */
+describe("WorkspaceClient.applyHunks and .rollback", () => {
+  it("maps the bridge's snake_case apply response onto the declared shape", async () => {
+    const fetchImpl = vi.fn(async () =>
+      json({
+        plan_id: "plan_1",
+        checkpoint_id: "ckpt_17_0001",
+        applied: [
+          { path: "src/a.ts", action: "modify", created: false, deleted: false, bytes_written: 42 },
+          { path: "src/b.ts", action: "delete", created: false, deleted: true, bytes_written: 0 },
+        ],
+      }),
+    );
+    const outcome = await clientWith(fetchImpl as unknown as typeof fetch).applyHunks({
+      planId: "plan_1",
+      runId: "run_1",
+      files: [{ path: "src/a.ts", action: "modify", unifiedDiff: "@@ -1 +1 @@\n-a\n+b\n" }],
+    });
+
+    expect(outcome).toEqual({
+      ok: true,
+      value: {
+        planId: "plan_1",
+        checkpointId: "ckpt_17_0001",
+        applied: [
+          { path: "src/a.ts", action: "modify", created: false, deleted: false, bytesWritten: 42 },
+          { path: "src/b.ts", action: "delete", created: false, deleted: true, bytesWritten: 0 },
+        ],
+      },
+    });
+
+    // R10.5's "identifying the Run" is only true if the run id is on the wire.
+    const [, init] = fetchImpl.mock.calls[0] as unknown as [string, RequestInit];
+    expect(JSON.parse(String(init.body))).toMatchObject({ plan_id: "plan_1", run_id: "run_1" });
+  });
+
+  it("reports an absent checkpoint as null rather than as undefined", async () => {
+    const fetchImpl = vi.fn(async () => json({ plan_id: "plan_1", applied: [] }));
+    const outcome = await clientWith(fetchImpl as unknown as typeof fetch).applyHunks({
+      planId: "plan_1",
+      files: [{ path: "src/a.ts", action: "delete" }],
+    });
+
+    expect(outcome.ok).toBe(true);
+    if (outcome.ok) expect(outcome.value.checkpointId).toBeNull();
+  });
+
+  it("maps a rollback report, keeping files and paths apart (R10.7)", async () => {
+    const fetchImpl = vi.fn(async () =>
+      json({ checkpoint_id: "ckpt_17_0001", restored_files: 4, restored_paths: 5 }),
+    );
+    const outcome = await clientWith(fetchImpl as unknown as typeof fetch).rollback("ckpt_17_0001");
+
+    // Four files across five paths: the rename is one file that touched two of them.
+    expect(outcome).toEqual({
+      ok: true,
+      value: { checkpointId: "ckpt_17_0001", restoredFiles: 4, restoredPaths: 5 },
+    });
+    const [url, init] = fetchImpl.mock.calls[0] as unknown as [string, RequestInit];
+    expect(url).toBe("http://127.0.0.1:9/bridge/workspace/rollback");
+    expect(JSON.parse(String(init.body))).toEqual({ checkpoint_id: "ckpt_17_0001" });
+  });
+
+  it("reports an unknown checkpoint as a non-retryable refusal", async () => {
+    // A 404 will be a 404 again, so offering the surface a retry would be a control that fails
+    // identically every time (R6.6's distinction between "could not answer" and "answered no").
+    const fetchImpl = vi.fn(async () =>
+      json({ code: "no_such_checkpoint", message: "no such checkpoint" }, 404),
+    );
+    const outcome = await clientWith(fetchImpl as unknown as typeof fetch).rollback("ckpt_gone");
+
+    expect(outcome.ok).toBe(false);
+    if (!outcome.ok) {
+      expect(outcome.code).toBe("no_such_checkpoint");
+      expect(outcome.retryable).toBe(false);
+    }
+  });
+});

@@ -96,7 +96,7 @@ const setPositionSpy = vi.hoisted(() => vi.fn());
 const revealRangeSpy = vi.hoisted(() => vi.fn());
 const streamInlineEditSpy = vi.hoisted(() => vi.fn(async (_request: unknown) => "edited"));
 
-vi.mock("@/features/agent/inline-edit-client", () => ({
+vi.mock("@/features/chat/wire/inline-edit-client", () => ({
   streamInlineEdit: streamInlineEditSpy,
 }));
 

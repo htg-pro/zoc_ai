@@ -889,10 +889,7 @@ pub fn secret_set(
 }
 
 #[tauri::command]
-pub fn secret_clear(
-    key: String,
-    state: tauri::State<'_, Arc<SecretVault>>,
-) -> Result<(), String> {
+pub fn secret_clear(key: String, state: tauri::State<'_, Arc<SecretVault>>) -> Result<(), String> {
     state.clear(&key)
 }
 
@@ -1124,7 +1121,9 @@ mod tests {
                 SecretBackend::Vault,
                 "a vanishing session ring must drop the vault to tier 2, not tier 1"
             );
-            first.set("provider.openai", "sk-openai-value").expect("set");
+            first
+                .set("provider.openai", "sk-openai-value")
+                .expect("set");
             first
                 .set("provider.anthropic", "sk-anthropic-value")
                 .expect("set");
@@ -1213,7 +1212,9 @@ mod tests {
                 persistent.clone(),
                 &[MASTER_KEY_NAME],
             )));
-            vault.set("provider.google", "goog-secret-value").expect("set");
+            vault
+                .set("provider.google", "goog-secret-value")
+                .expect("set");
 
             let path = home.join(".zoc-studio").join("secrets.vault");
             let mut bytes = std::fs::read(&path).expect("vault written");
@@ -1236,7 +1237,10 @@ mod tests {
                 !message.contains("goog-secret-value"),
                 "error leaked key material: {message}"
             );
-            assert!(!message.contains(".zoc-studio"), "error leaked a path: {message}");
+            assert!(
+                !message.contains(".zoc-studio"),
+                "error leaked a path: {message}"
+            );
         });
     }
 
@@ -1284,10 +1288,10 @@ mod tests {
                 .insert("provider.openai".into(), "sk-keychain".into());
 
             // Tier 3: what a mid-session backend change leaves in memory.
-            vault
-                .degraded
-                .lock()
-                .insert("provider.openai".into(), Zeroizing::new("sk-degraded".into()));
+            vault.degraded.lock().insert(
+                "provider.openai".into(),
+                Zeroizing::new("sk-degraded".into()),
+            );
 
             vault.clear("provider.openai").expect("clear");
 
@@ -1355,7 +1359,10 @@ mod tests {
             *healthy.lock() = false;
             let escalated = vault.set("provider.anthropic", "sk-2").expect("set");
             assert_eq!(escalated.backend, SecretBackend::Degraded);
-            assert!(!escalated.durable, "degraded mode must not claim durability");
+            assert!(
+                !escalated.durable,
+                "degraded mode must not claim durability"
+            );
             assert_eq!(seen.lock().len(), 2, "the escalation must be announced");
             let degraded = seen.lock()[1].clone();
             assert!(degraded.degraded);
@@ -1406,7 +1413,13 @@ mod tests {
             );
 
             runtime.install_token_for_test("launch-token");
-            for wrong in ["", "launch-toke", "launch-tokenn", "launch-token ", "LAUNCH-TOKEN"] {
+            for wrong in [
+                "",
+                "launch-toke",
+                "launch-tokenn",
+                "launch-token ",
+                "LAUNCH-TOKEN",
+            ] {
                 let err = runtime_secret_lookup(&vault, &runtime, "provider.openai", wrong)
                     .expect_err("a wrong token must be refused");
                 assert_eq!(err, UNAUTHORIZED, "the refusal says only that it was one");
@@ -1651,7 +1664,10 @@ mod tests {
                 assert!(!described.contains('/'), "{described}");
                 assert!(!described.contains("sk-"), "{described}");
                 assert!(!described.contains(".zoc-studio"), "{described}");
-                assert!(described.ends_with('.'), "reasons are sentences: {described}");
+                assert!(
+                    described.ends_with('.'),
+                    "reasons are sentences: {described}"
+                );
                 if fallback == SecretBackend::Degraded {
                     assert!(
                         described.contains("cleared when the app exits"),

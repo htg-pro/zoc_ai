@@ -1,8 +1,10 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "Default capability set for Zoc AI: sidecar shell, scoped FS, dialog, and the application's own commands for secrets / patch / workspace / Agent_Runtime. This is a real allowlist rather than documentation — build.rs declares the app ACL manifest, so a command absent from the allow-* list below is registered in Rust and unreachable from the webview. One deliberate omission: runtime_secret_get, the runtime-facing credential path (R14.2), which the renderer must never be able to call. The Agent_Runtime endpoint handoff (R3.4) and the hardware-fit probe (R13.6) are granted here; the probe reads hardware only and carries no secret, so it is not a trust-boundary grant.",
-  "windows": ["main"],
+  "description": "Default capability set for Zoc AI: sidecar shell, scoped FS, dialog, and the application's own commands for secrets / patch / workspace / Agent_Runtime. This is a real allowlist rather than documentation \u2014 build.rs declares the app ACL manifest, so a command absent from the allow-* list below is registered in Rust and unreachable from the webview. One deliberate omission: runtime_secret_get, the runtime-facing credential path (R14.2), which the renderer must never be able to call. The Agent_Runtime endpoint handoff (R3.4) and the hardware-fit probe (R13.6) are granted here; the probe reads hardware only and carries no secret, so it is not a trust-boundary grant.",
+  "windows": [
+    "main"
+  ],
   "permissions": [
     "core:default",
     "core:event:allow-listen",
@@ -17,16 +19,13 @@
     "fs:scope-home-recursive",
     "updater:default",
     "process:allow-restart",
-
     "allow-agent-port",
     "allow-agent-status",
-
     "allow-secret-get",
     "allow-secret-set",
     "allow-secret-clear",
     "allow-secret-has",
     "allow-secret-backend-status",
-
     "allow-fs-list-dir",
     "allow-fs-read-text",
     "allow-fs-write-text",
@@ -40,11 +39,9 @@
     "allow-fs-delete",
     "allow-fs-duplicate",
     "allow-fs-reveal",
-
     "allow-fs-search",
     "allow-fs-replace-preview",
     "allow-fs-replace-apply",
-
     "allow-git-status",
     "allow-git-diff",
     "allow-git-stage",
@@ -60,15 +57,15 @@
     "allow-git-log",
     "allow-git-conflicts",
     "allow-git-blame",
-
     "allow-run-check",
     "allow-run-task",
-
     "allow-apply-patch",
     "allow-apply-transaction",
-
+    "allow-workspace-rollback",
     "allow-desktop-config-get",
     "allow-desktop-config-set",
+    "allow-local-models-get",
+    "allow-local-models-set",
     "allow-set-workspace-root",
     "allow-legacy-detect",
     "allow-legacy-import",
@@ -77,19 +74,15 @@
     "allow-telemetry-stats",
     "allow-telemetry-drain",
     "allow-telemetry-clear",
-
     "allow-llamacpp-load",
     "allow-llamacpp-unload",
     "allow-llamacpp-status",
-
     "allow-share-session",
     "allow-share-session-stop",
     "allow-share-session-status",
-
     "allow-agent-crash-reports",
     "allow-agent-crash-reports-clear",
     "allow-agent-restart",
-
     "allow-agent-runtime-endpoint",
     "allow-agent-runtime-status",
     "allow-runtime-restart",

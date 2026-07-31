@@ -17,8 +17,17 @@ static TEMP_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 #[derive(Debug, Clone)]
 enum FileOp {
-    Write { path: PathBuf, content: Vec<u8> },
-    Delete { path: PathBuf },
+    Write {
+        path: PathBuf,
+        content: Vec<u8>,
+        /// Unix mode bits to force onto the written file, when the caller knows
+        /// them. `None` means "inherit whatever the target already has", which is
+        /// the right default for an ordinary overwrite.
+        mode: Option<u32>,
+    },
+    Delete {
+        path: PathBuf,
+    },
 }
 
 impl FileOp {
@@ -81,6 +90,27 @@ impl Transaction {
         self.ops.push(FileOp::Write {
             path: path.into(),
             content: content.into(),
+            mode: None,
+        });
+    }
+
+    /// Stage a write that also forces the file's Unix mode bits.
+    ///
+    /// Needed by checkpoint rollback and by nothing else: restoring a *deleted*
+    /// file means recreating a path that does not exist, so there is no target to
+    /// inherit permissions from, and an executable script restored as `0644` is a
+    /// rollback that did not finish (see `checkpoint::CheckpointStore`). Ignored on
+    /// platforms with no Unix mode bits.
+    pub fn add_write_with_mode(
+        &mut self,
+        path: impl Into<PathBuf>,
+        content: impl Into<Vec<u8>>,
+        mode: Option<u32>,
+    ) {
+        self.ops.push(FileOp::Write {
+            path: path.into(),
+            content: content.into(),
+            mode,
         });
     }
 
@@ -137,7 +167,12 @@ impl Transaction {
         let mut temps: Vec<(PathBuf, PathBuf)> = Vec::new(); // (temp, final)
         let mut created_dirs: Vec<PathBuf> = Vec::new();
         for op in &self.ops {
-            if let FileOp::Write { path, content } = op {
+            if let FileOp::Write {
+                path,
+                content,
+                mode,
+            } = op
+            {
                 if let Some(parent) = path.parent() {
                     if !parent.as_os_str().is_empty() {
                         if let Err(e) = create_parent_dirs(parent, &mut created_dirs) {
@@ -159,16 +194,16 @@ impl Transaction {
                         source: e,
                     });
                 }
-                if let Ok(metadata) = fs::metadata(path) {
-                    if let Err(e) = fs::set_permissions(&temp, metadata.permissions()) {
-                        let _ = fs::remove_file(&temp);
-                        cleanup_temps(&temps);
-                        cleanup_created_dirs(&created_dirs);
-                        return Err(TransactionError {
-                            path: path.clone(),
-                            source: e,
-                        });
-                    }
+                // An explicit mode wins; otherwise the existing target's permissions are inherited,
+                // which is the prior behaviour and the right one for an overwrite.
+                if let Err(e) = apply_mode(&temp, path, *mode) {
+                    let _ = fs::remove_file(&temp);
+                    cleanup_temps(&temps);
+                    cleanup_created_dirs(&created_dirs);
+                    return Err(TransactionError {
+                        path: path.clone(),
+                        source: e,
+                    });
                 }
                 temps.push((temp, path.clone()));
             }
@@ -210,6 +245,33 @@ impl Transaction {
         }
         Ok(CommitResult { written, deleted })
     }
+}
+
+/// Give `temp` the permissions the final file should have.
+///
+/// An explicit `mode` is used when the caller has one — a rollback restoring a deleted file knows the
+/// bits and has no target to read them from. Otherwise the existing target's permissions are inherited,
+/// so an ordinary overwrite does not silently reset a file's mode.
+#[cfg(unix)]
+fn apply_mode(temp: &Path, target: &Path, mode: Option<u32>) -> io::Result<()> {
+    use std::os::unix::fs::PermissionsExt;
+
+    if let Some(bits) = mode {
+        return fs::set_permissions(temp, fs::Permissions::from_mode(bits));
+    }
+    if let Ok(metadata) = fs::metadata(target) {
+        return fs::set_permissions(temp, metadata.permissions());
+    }
+    Ok(())
+}
+
+/// The same, on a platform with no Unix mode bits: inherit where possible, ignore an explicit mode.
+#[cfg(not(unix))]
+fn apply_mode(temp: &Path, target: &Path, _mode: Option<u32>) -> io::Result<()> {
+    if let Ok(metadata) = fs::metadata(target) {
+        return fs::set_permissions(temp, metadata.permissions());
+    }
+    Ok(())
 }
 
 fn replace_temp(temp: &Path, target: &Path) -> io::Result<()> {

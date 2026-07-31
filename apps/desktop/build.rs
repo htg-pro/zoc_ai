@@ -84,9 +84,13 @@ const COMMANDS: &[&str] = &[
     // patch application
     "apply_patch",
     "apply_transaction",
+    "workspace_rollback",
     // workspace, onboarding, telemetry
     "desktop_config_get",
     "desktop_config_set",
+    // Local-model list, Desktop_Core-owned (R13.6, task 22.1)
+    "local_models_get",
+    "local_models_set",
     "set_workspace_root",
     "legacy_detect",
     "legacy_import",

@@ -5,7 +5,7 @@ import { toast } from "@/components/ui/toast";
 import {
   streamInlineEdit,
   type InlineEditRequest,
-} from "@/features/agent/inline-edit-client";
+} from "@/features/chat/wire/inline-edit-client";
 import {
   AgentEditAnimator,
   singleReplacePlan,
