@@ -1,6 +1,8 @@
 /**
  * The panel's overflow menu — zoc-agent-chat-rebuild R34.4, task 22.2.
  *
+ * Feature: zoc-agent-chat-rebuild, task 22.2 (R34.4).
+ *
  * A Radix `DropdownMenu` holding the actions that are neither per-turn nor per-Run: compacting the
  * conversation, restarting the runtime, and whatever the header's container query has pushed in here.
  *
@@ -11,7 +13,7 @@
  * supplied in the first place, so the menu takes the actions it should offer and renders exactly those — an
  * item whose handler is absent is absent, following the panel's rule for controls that cannot act.
  */
-import { MoreVertical, RotateCcw, Scissors } from "lucide-react";
+import { MoreVertical, RotateCcw, Scissors, ScrollText } from "lucide-react";
 import type { ReactNode } from "react";
 
 import {
@@ -27,12 +29,20 @@ export interface ChatMenuProps {
   onCompact?: () => void;
   /** Restart the Agent_Runtime sidecar (R3.8). */
   onRestartRuntime?: () => void;
+  /** Open the rules and steering editor (R30.1). */
+  onOpenRules?: () => void;
   /** Whatever the container query pushed in: the model picker and the context figure, as elements. */
   overflow?: ReactNode;
   className?: string;
 }
 
-export function ChatMenu({ onCompact, onRestartRuntime, overflow, className }: ChatMenuProps) {
+export function ChatMenu({
+  onCompact,
+  onRestartRuntime,
+  onOpenRules,
+  overflow,
+  className,
+}: ChatMenuProps) {
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
@@ -53,6 +63,12 @@ export function ChatMenu({ onCompact, onRestartRuntime, overflow, className }: C
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end" data-zoc-chat-menu-panel="">
         {overflow}
+        {onOpenRules === undefined ? null : (
+          <DropdownMenuItem data-zoc-menu-action="rules" onSelect={onOpenRules}>
+            <ScrollText aria-hidden className="mr-2 size-3.5" />
+            Rules and steering
+          </DropdownMenuItem>
+        )}
         {onCompact === undefined ? null : (
           <DropdownMenuItem data-zoc-menu-action="compact" onSelect={onCompact}>
             <Scissors aria-hidden className="mr-2 size-3.5" />

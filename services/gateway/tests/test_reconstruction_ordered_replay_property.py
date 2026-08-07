@@ -61,9 +61,7 @@ _EVENT_TYPES = [
 ]
 
 # Distinct, non-empty run ids so a diary can interleave several runs.
-_RUN_ID = st.text(
-    alphabet="abcdefghijklmnopqrstuvwxyz0123456789-", min_size=1, max_size=6
-)
+_RUN_ID = st.text(alphabet="abcdefghijklmnopqrstuvwxyz0123456789-", min_size=1, max_size=6)
 
 # Lines that must NEVER parse into a DiaryEntry: blank/whitespace, torn JSON,
 # valid-JSON-but-wrong-shape (array / scalar / dict missing or non-int ``seq``).
@@ -195,11 +193,31 @@ def test_reconstruction_selects_trailing_run_among_many_example(tmp_path: Path) 
     """
     path = tmp_path / "session_diary.jsonl"
     lines = [
-        json.dumps({"seq": 0, "runId": "old", "type": "intent", "ts": "t", "payload": {"type": "intent"}}),
+        json.dumps(
+            {"seq": 0, "runId": "old", "type": "intent", "ts": "t", "payload": {"type": "intent"}}
+        ),
         "{ torn mid-write",  # malformed — skipped
-        json.dumps({"seq": 1, "runId": "active", "type": "intent", "ts": "t", "payload": {"type": "intent"}}),
-        json.dumps({"seq": 2, "runId": "old", "type": "done", "ts": "t", "payload": {"type": "done"}}),
-        json.dumps({"seq": 3, "runId": "active", "type": "summary", "ts": "t", "payload": {"type": "summary"}}),
+        json.dumps(
+            {
+                "seq": 1,
+                "runId": "active",
+                "type": "intent",
+                "ts": "t",
+                "payload": {"type": "intent"},
+            }
+        ),
+        json.dumps(
+            {"seq": 2, "runId": "old", "type": "done", "ts": "t", "payload": {"type": "done"}}
+        ),
+        json.dumps(
+            {
+                "seq": 3,
+                "runId": "active",
+                "type": "summary",
+                "ts": "t",
+                "payload": {"type": "summary"},
+            }
+        ),
     ]
     # Trailing torn line from a connection drop.
     path.write_text("\n".join(lines) + "\n" + '{"seq": 4, "runId": "active"', encoding="utf-8")

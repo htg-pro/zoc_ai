@@ -40,13 +40,13 @@ async def run_test():
             await page.wait_for_load_state("domcontentloaded", timeout=5000)
         except Exception:
             pass
-        
+
         # --> Assertions to verify final state
         # Assert: Verify the selected action takes effect
         assert False, "Expected: Verify the selected action takes effect (could not be verified on the page)"
         # Assert: Verify the command palette closes after execution
         assert False, "Expected: Verify the command palette closes after execution (could not be verified on the page)"
-        
+
         # --> Test blocked by environment/access constraints during agent run
         # Reason: TEST BLOCKED The command-palette flow could not be tested because the frontend application did not load and no UI elements are available. Observations: - The page at http://localhost:1420 rendered blank/white and the browser state reports 0 interactive elements. - An earlier navigation attempt returned 'site unavailable' and the screenshot shows an empty viewport. Recommendation: Ensure the fro...
         raise AssertionError("Test blocked during agent run: " + "TEST BLOCKED The command-palette flow could not be tested because the frontend application did not load and no UI elements are available. Observations: - The page at http://localhost:1420 rendered blank/white and the browser state reports 0 interactive elements. - An earlier navigation attempt returned 'site unavailable' and the screenshot shows an empty viewport. Recommendation: Ensure the fro..." + " — the exported script cannot reproduce a PASS in this environment.")
@@ -61,4 +61,3 @@ async def run_test():
             await pw.stop()
 
 asyncio.run(run_test())
-    

@@ -1,6 +1,8 @@
 /**
  * The Approval control — zoc-agent-chat-rebuild R11.1, R11.10, task 22.2.
  *
+ * Feature: zoc-agent-chat-rebuild, task 22.2 (R11.1, R11.10).
+ *
  * Permission_Mode, in the header, on Radix `Tabs` styled as a segmented control. It stays here rather than
  * moving to the composer beside Conversation_Mode because it is a *standing policy* that outlives any
  * Session, and R11.1 requires the active mode visible at all times — which the header guarantees by never
@@ -56,7 +58,10 @@ export interface PermissionModeToggleProps {
 
 export function PermissionModeToggle({ value, onChange, className }: PermissionModeToggleProps) {
   return (
-    <div className={cn("flex shrink-0 items-center gap-1.5", className)} data-zoc-approval-control={value}>
+    <div
+      className={cn("flex shrink-0 items-center gap-1.5", className)}
+      data-zoc-approval-control={value}
+    >
       <span
         style={{
           color: "var(--zoc-text-faint)",

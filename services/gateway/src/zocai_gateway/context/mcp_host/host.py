@@ -303,6 +303,93 @@ class MCPHost:
             )
         return out
 
+    def tools(self) -> list[dict[str, object]]:
+        """The live discovered tool set, preserving each owning server (R26.2)."""
+        return [
+            {
+                "serverId": record.server_id,
+                "bareName": record.bare_name,
+                "namespacedName": record.namespaced_name,
+                "inputSchema": dict(record.input_schema),
+                "description": record.description,
+            }
+            for record in sorted(
+                self._registry.list(),
+                key=lambda item: (item.server_id, item.bare_name),
+            )
+        ]
+
+    async def call_tool_unchecked(
+        self, namespaced_name: str, arguments: Mapping[str, object]
+    ) -> ToolCallOutcome:
+        """Call one discovered tool after Agent_Runtime has applied its gate.
+
+        Workspace_Services still owns the MCP session and transport. The caller is the
+        admitted Agent_Runtime, which owns R26.5's capability/permission decision, so this
+        seam deliberately performs no second approval flow.
+        """
+        record = self._registry.get(namespaced_name)
+        if record is None:
+            return ToolCallError(
+                server_id=None,
+                tool=namespaced_name,
+                kind=ToolCallErrorKind.UNAVAILABLE,
+                reason="tool is not available",
+            )
+        state = self._states.get(record.server_id)
+        if state is None or state.session is None or state.status != "running":
+            return ToolCallError(
+                server_id=record.server_id,
+                tool=record.bare_name,
+                kind=ToolCallErrorKind.UNAVAILABLE,
+                reason="owning server is not running",
+            )
+        try:
+            response = await state.session.call_tool(
+                record.bare_name, arguments, self._call_timeout
+            )
+        except SessionClosed:
+            await self.notify_crash(record.server_id, "session closed during call")
+            return ToolCallError(
+                server_id=record.server_id,
+                tool=record.bare_name,
+                kind=ToolCallErrorKind.FAILURE,
+                reason="session closed during call",
+            )
+        except SessionError as exc:
+            kind = (
+                ToolCallErrorKind.TIMEOUT
+                if exc.category == "timeout"
+                else ToolCallErrorKind.FAILURE
+            )
+            return ToolCallError(
+                server_id=record.server_id,
+                tool=record.bare_name,
+                kind=kind,
+                reason=exc.reason,
+            )
+        except Exception as exc:
+            return ToolCallError(
+                server_id=record.server_id,
+                tool=record.bare_name,
+                kind=ToolCallErrorKind.FAILURE,
+                reason=str(exc),
+            )
+
+        result = response.get("result")
+        if "error" in response or not isinstance(result, Mapping):
+            return ToolCallError(
+                server_id=record.server_id,
+                tool=record.bare_name,
+                kind=ToolCallErrorKind.FAILURE,
+                reason="tool call returned an error response",
+            )
+        return ToolCallSuccess(
+            server_id=record.server_id,
+            tool=record.bare_name,
+            result=result,
+        )
+
     # -- tool-call proxy (R6, R7, R12) --------------------------------------
 
     async def proxy_tool_call(

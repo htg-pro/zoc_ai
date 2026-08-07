@@ -5,6 +5,7 @@ const mocks = vi.hoisted(() => ({
   fetchMcpServers: vi.fn(),
   reloadMcp: vi.fn(),
   testMcpServer: vi.fn(),
+  updateMcpTool: vi.fn(),
   fsCreateDir: vi.fn(),
   fsReadText: vi.fn(),
   fsWriteText: vi.fn(),
@@ -14,6 +15,7 @@ vi.mock("@/lib/mcp-client", () => ({
   fetchMcpServers: mocks.fetchMcpServers,
   reloadMcp: mocks.reloadMcp,
   testMcpServer: mocks.testMcpServer,
+  updateMcpTool: mocks.updateMcpTool,
 }));
 
 vi.mock("@/lib/tauri-bridge", () => ({
@@ -38,6 +40,7 @@ const bundled = {
   autoApprove: ["web_search"],
   status: "running" as const,
   errorReason: null,
+  tools: [],
 };
 
 describe("McpSection runtime management", () => {
@@ -49,6 +52,18 @@ describe("McpSection runtime management", () => {
     mocks.fsWriteText.mockResolvedValue(true);
     mocks.fetchMcpServers.mockResolvedValue([bundled]);
     mocks.reloadMcp.mockResolvedValue([bundled]);
+    mocks.updateMcpTool.mockImplementation(
+      async (name: string, patch: Record<string, unknown>) => ({
+        name,
+        sourceName: name,
+        serverId: "web-search",
+        bareName: "tool",
+        description: null,
+        inputSchema: {},
+        enabled: patch.enabled ?? true,
+        capability: patch.capability ?? "execute",
+      }),
+    );
     mocks.testMcpServer.mockResolvedValue({
       outcome: "success",
       toolCount: 1,

@@ -1,4 +1,12 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent, type ReactNode } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type MouseEvent as ReactMouseEvent,
+  type ReactNode,
+} from "react";
 import {
   ChevronRight,
   ChevronsDownUp,
@@ -70,7 +78,8 @@ function StatusBadge({ status }: { status: "A" | "M" | "D" | undefined }) {
 
 function AgentEditingDot({ path }: { path: string }) {
   const editing = useApp(
-    (s) => (s.streaming || s.isRunning) && (s.fileStatus[path] === "M" || s.fileStatus[path] === "A"),
+    (s) =>
+      (s.streaming || s.isRunning) && (s.fileStatus[path] === "M" || s.fileStatus[path] === "A"),
   );
   if (!editing) return null;
   return (
@@ -223,7 +232,9 @@ function LiveFileTree({ root }: { root: string }) {
   const [children, setChildren] = useState<Record<string, LiveFileNode[]>>({});
   const [limits, setLimits] = useState<Record<string, number>>({});
   const [version, setVersion] = useState(0);
-  const [menu, setMenu] = useState<{ node: LiveFileNode | null; x: number; y: number } | null>(null);
+  const [menu, setMenu] = useState<{ node: LiveFileNode | null; x: number; y: number } | null>(
+    null,
+  );
   const [edit, setEdit] = useState<EditState>(null);
   const [confirmDelete, setConfirmDelete] = useState<LiveFileNode | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -285,7 +296,7 @@ function LiveFileTree({ root }: { root: string }) {
         setMenu({ node, x: e.clientX, y: e.clientY });
       },
       onMove: (from, toDir) => {
-        if (from === toDir || basename(from) === "" ) return;
+        if (from === toDir || basename(from) === "") return;
         void moveEntry(from, toDir);
       },
       onSubmitEdit: (name) => {
@@ -727,9 +738,17 @@ function NodeContextMenu({
           <Item icon={CopyPlus} label="Duplicate" onClick={() => actions.duplicate(node.path)} />
           <Item icon={Trash2} label="Delete" danger onClick={() => actions.del(node)} />
           <Sep />
-          <Item icon={ExternalLink} label="Reveal in File Manager" onClick={() => actions.reveal(node.path)} />
+          <Item
+            icon={ExternalLink}
+            label="Reveal in File Manager"
+            onClick={() => actions.reveal(node.path)}
+          />
           <Item icon={Copy} label="Copy Path" onClick={() => actions.copyPath(node.path)} />
-          <Item icon={Copy} label="Copy Relative Path" onClick={() => actions.copyRelative(node.path)} />
+          <Item
+            icon={Copy}
+            label="Copy Relative Path"
+            onClick={() => actions.copyRelative(node.path)}
+          />
         </>
       ) : (
         <>
@@ -738,9 +757,17 @@ function NodeContextMenu({
           <Item icon={CopyPlus} label="Duplicate" onClick={() => actions.duplicate(node.path)} />
           <Item icon={Trash2} label="Delete" danger onClick={() => actions.del(node)} />
           <Sep />
-          <Item icon={ExternalLink} label="Reveal in File Manager" onClick={() => actions.reveal(node.path)} />
+          <Item
+            icon={ExternalLink}
+            label="Reveal in File Manager"
+            onClick={() => actions.reveal(node.path)}
+          />
           <Item icon={Copy} label="Copy Path" onClick={() => actions.copyPath(node.path)} />
-          <Item icon={Copy} label="Copy Relative Path" onClick={() => actions.copyRelative(node.path)} />
+          <Item
+            icon={Copy}
+            label="Copy Relative Path"
+            onClick={() => actions.copyRelative(node.path)}
+          />
         </>
       )}
     </div>
@@ -767,8 +794,8 @@ function DeleteConfirmDialog({
             {node ? (
               <>
                 <span className="font-mono text-foreground">{node.name}</span> will be permanently
-                deleted{node.kind === "dir" ? ", including everything inside it" : ""}. This can’t be
-                undone.
+                deleted{node.kind === "dir" ? ", including everything inside it" : ""}. This can’t
+                be undone.
                 {dirtyOpen && (
                   <span className="mt-2 block text-warning">
                     This file has unsaved changes that will be lost.

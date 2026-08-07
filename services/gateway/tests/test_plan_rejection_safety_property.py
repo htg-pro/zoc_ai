@@ -107,9 +107,5 @@ def test_rejected_plan_changes_no_file(files: dict[str, str]) -> None:
         # The run reached a terminal state and applied nothing.
         assert result.stage is not Stage.DONE
         # A rejected plan never emits an applied edit-file frame.
-        applied = [
-            e
-            for e in events
-            if e.get("type") == "edit-file" and e.get("status") == "done"
-        ]
+        applied = [e for e in events if e.get("type") == "edit-file" and e.get("status") == "done"]
         assert applied == []

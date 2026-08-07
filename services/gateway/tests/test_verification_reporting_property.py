@@ -130,7 +130,10 @@ def test_no_test_results_event_when_no_command_detected(tmp_path: Path) -> None:
     class _Brain(DefaultAgentBrain):
         def structured_plan(self, request: AgentRunRequest, context: RunContext) -> AgentPlan:
             return AgentPlan.model_validate(
-                {"steps": [{"file": "a.py", "action": "create", "rationale": "x"}], "confidence": 1.0}
+                {
+                    "steps": [{"file": "a.py", "action": "create", "rationale": "x"}],
+                    "confidence": 1.0,
+                }
             )
 
         def edit_plan(self, request: AgentRunRequest, context: RunContext) -> EditPlan:
@@ -139,9 +142,7 @@ def test_no_test_results_event_when_no_command_detected(tmp_path: Path) -> None:
                 changes=(PlannedChange(path="a.py", content="print(1)\n", diff="+print(1)"),),
             )
 
-        def run_checks(
-            self, request: AgentRunRequest, plan: EditPlan
-        ) -> tuple[int, str, str]:
+        def run_checks(self, request: AgentRunRequest, plan: EditPlan) -> tuple[int, str, str]:
             return (0, "noop-check", "")
 
     events: list[dict] = []

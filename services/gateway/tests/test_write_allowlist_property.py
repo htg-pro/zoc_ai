@@ -27,8 +27,7 @@ def test_write_allowlist_admits_declared_and_halts_on_first_undeclared(
         for index in range(len(declared))
     )
     allowed_paths = tuple(
-        change.path for change, is_declared in zip(changes, declared, strict=True)
-        if is_declared
+        change.path for change, is_declared in zip(changes, declared, strict=True) if is_declared
     )
     map_event = MapFilesEvent(read_list=(), write_list=allowed_paths, rationale="")
 

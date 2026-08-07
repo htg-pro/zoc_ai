@@ -58,9 +58,7 @@ export function UpdateBanner() {
       className="flex items-center gap-3 border-b border-primary/30 bg-primary/10 px-3 py-1.5 text-[11px] text-foreground"
     >
       <Download className="h-3.5 w-3.5 shrink-0 text-primary" />
-      <span className="min-w-0 flex-1 truncate">
-        Zoc AI v{update.version} is available.
-      </span>
+      <span className="min-w-0 flex-1 truncate">Zoc AI v{update.version} is available.</span>
       <button
         type="button"
         onClick={() => void openReleaseNotes()}

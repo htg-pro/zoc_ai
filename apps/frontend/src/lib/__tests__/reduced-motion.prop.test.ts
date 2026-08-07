@@ -43,21 +43,17 @@ describe("reduced-motion", () => {
 
   it("Property 19: any two distinct states produce distinct static cues (icon + color)", () => {
     fc.assert(
-      fc.property(
-        fc.constantFrom(...STATES),
-        fc.constantFrom(...STATES),
-        (a, b) => {
-          const ca = staticStateCue(a);
-          const cb = staticStateCue(b);
-          if (a === b) {
-            expect(ca).toEqual(cb);
-          } else {
-            // Distinguishable without motion: icon and color cue both differ.
-            expect(ca.icon).not.toBe(cb.icon);
-            expect(ca.colorVar).not.toBe(cb.colorVar);
-          }
-        },
-      ),
+      fc.property(fc.constantFrom(...STATES), fc.constantFrom(...STATES), (a, b) => {
+        const ca = staticStateCue(a);
+        const cb = staticStateCue(b);
+        if (a === b) {
+          expect(ca).toEqual(cb);
+        } else {
+          // Distinguishable without motion: icon and color cue both differ.
+          expect(ca.icon).not.toBe(cb.icon);
+          expect(ca.colorVar).not.toBe(cb.colorVar);
+        }
+      }),
       { numRuns: 100 },
     );
   });

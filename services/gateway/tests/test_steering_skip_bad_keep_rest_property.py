@@ -134,9 +134,7 @@ def test_compile_skips_bad_files_and_keeps_all_good_files(
         assert list(payload.skipped) == sorted(bad_paths)
         # Inclusion and exclusion sets are disjoint and cover every input file.
         assert set(fragment_paths).isdisjoint(payload.skipped)
-        assert set(fragment_paths) | set(payload.skipped) == set(
-            good_paths
-        ) | set(bad_paths)
+        assert set(fragment_paths) | set(payload.skipped) == set(good_paths) | set(bad_paths)
         # No bad file's content leaks into the compiled text.
         assert _BAD_MARKER not in payload.text
 

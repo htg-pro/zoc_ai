@@ -37,7 +37,12 @@ export function AuditLogSection() {
             Every permission decision — allow, deny, or prompt — with its action and reason.
           </p>
         </div>
-        <Button size="sm" variant="ghost" onClick={() => clearAuditLog()} disabled={rows.length === 0}>
+        <Button
+          size="sm"
+          variant="ghost"
+          onClick={() => clearAuditLog()}
+          disabled={rows.length === 0}
+        >
           <Trash2 className="mr-1.5 h-3.5 w-3.5" />
           Clear
         </Button>
@@ -56,7 +61,9 @@ export function AuditLogSection() {
               <span className={`w-12 shrink-0 font-medium uppercase ${EFFECT_TONE[e.effect]}`}>
                 {e.effect}
               </span>
-              <span className="w-16 shrink-0 text-[10px] uppercase text-muted-foreground">{e.kind}</span>
+              <span className="w-16 shrink-0 text-[10px] uppercase text-muted-foreground">
+                {e.kind}
+              </span>
               {e.runId && (
                 <span
                   className="w-24 shrink-0 truncate font-mono text-[10px] text-muted-foreground"

@@ -5,8 +5,16 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import fc from "fast-check";
 
-const resolveAgentPort = vi.hoisted(() => vi.fn());
-vi.mock("@/lib/agent-port", () => ({ resolveAgentPort }));
+const resolveWorkspaceServicesEndpoint = vi.hoisted(() => vi.fn());
+vi.mock("@/lib/workspace-services-endpoint", () => ({ resolveWorkspaceServicesEndpoint }));
+
+/**
+ * The resolver returns `{port, baseUrl}` rather than a bare number. Property 4
+ * generates the port and asserts it reaches the socket URL, so the two fields
+ * are kept consistent here — a fixed `baseUrl` would let a regression that read
+ * the wrong field still pass.
+ */
+const endpoint = (port: number) => ({ port, baseUrl: `http://127.0.0.1:${String(port)}` });
 
 import {
   ABNORMAL_SERVER_TERMINATION_CLOSE_CODE,
@@ -44,8 +52,8 @@ function makeHarness() {
 }
 
 beforeEach(() => {
-  resolveAgentPort.mockReset();
-  resolveAgentPort.mockResolvedValue(9999);
+  resolveWorkspaceServicesEndpoint.mockReset();
+  resolveWorkspaceServicesEndpoint.mockResolvedValue(endpoint(9999));
 });
 
 afterEach(() => {
@@ -59,7 +67,7 @@ describe("lsp-connection", () => {
         fc.integer({ min: 1, max: 65535 }),
         fc.constantFrom(...SERVERS),
         async (port, server) => {
-          resolveAgentPort.mockResolvedValue(port);
+          resolveWorkspaceServicesEndpoint.mockResolvedValue(endpoint(port));
           const opened: string[] = [];
           const conn = await openLspConnection(server, {
             onOpen: () => {},
@@ -84,7 +92,7 @@ describe("lsp-connection", () => {
       fc.asyncProperty(fc.integer({ min: 1, max: 8 }), async (numCloses) => {
         vi.useFakeTimers();
         const { sockets, factory } = makeHarness();
-        resolveAgentPort.mockResolvedValue(9999);
+        resolveWorkspaceServicesEndpoint.mockResolvedValue(endpoint(9999));
         const conn = await openLspConnection("pyright", {
           onOpen: () => {},
           onClose: () => {},
@@ -161,7 +169,8 @@ describe("lsp-connection", () => {
           }
           const countAfterDispose = sockets.length;
           for (const e of events) {
-            if (e === "close") sockets[sockets.length - 1]?.onclose?.({ code: TRANSIENT_CLOSE_CODE });
+            if (e === "close")
+              sockets[sockets.length - 1]?.onclose?.({ code: TRANSIENT_CLOSE_CODE });
             else await vi.advanceTimersByTimeAsync(MAX_RECONNECT_MS);
           }
           // No further socket was ever opened after disposal.
@@ -174,37 +183,34 @@ describe("lsp-connection", () => {
 
   it("Property 4: Close-code policy — abnormal→backoff+starting, not-installed→no-reconnect+error, dispose→nothing", async () => {
     await fc.assert(
-      fc.asyncProperty(
-        fc.constantFrom("abnormal", "notinstalled", "dispose"),
-        async (kind) => {
-          vi.useFakeTimers();
-          const { sockets, states, factory } = makeHarness();
-          const conn = await openLspConnection("pyright", {
-            onOpen: () => {},
-            onClose: () => {},
-            onState: (s) => states.push(s),
-            socketFactory: factory,
-          });
-          sockets[0].onopen?.(); // establish the connection first
-          const before = sockets.length;
-          if (kind === "abnormal") {
-            sockets[0].onclose?.({ code: ABNORMAL_SERVER_TERMINATION_CLOSE_CODE });
-            expect(states[states.length - 1]).toBe("starting");
-            await vi.advanceTimersByTimeAsync(INITIAL_RECONNECT_MS);
-            expect(sockets.length).toBe(before + 1); // reconnected with backoff
-          } else if (kind === "notinstalled") {
-            sockets[0].onclose?.({ code: SERVER_NOT_INSTALLED_CLOSE_CODE });
-            expect(states[states.length - 1]).toBe("error");
-            await vi.advanceTimersByTimeAsync(MAX_RECONNECT_MS);
-            expect(sockets.length).toBe(before); // no reconnect
-          } else {
-            conn.dispose();
-            await vi.advanceTimersByTimeAsync(MAX_RECONNECT_MS);
-            expect(sockets.length).toBe(before); // no new socket opened
-          }
+      fc.asyncProperty(fc.constantFrom("abnormal", "notinstalled", "dispose"), async (kind) => {
+        vi.useFakeTimers();
+        const { sockets, states, factory } = makeHarness();
+        const conn = await openLspConnection("pyright", {
+          onOpen: () => {},
+          onClose: () => {},
+          onState: (s) => states.push(s),
+          socketFactory: factory,
+        });
+        sockets[0].onopen?.(); // establish the connection first
+        const before = sockets.length;
+        if (kind === "abnormal") {
+          sockets[0].onclose?.({ code: ABNORMAL_SERVER_TERMINATION_CLOSE_CODE });
+          expect(states[states.length - 1]).toBe("starting");
+          await vi.advanceTimersByTimeAsync(INITIAL_RECONNECT_MS);
+          expect(sockets.length).toBe(before + 1); // reconnected with backoff
+        } else if (kind === "notinstalled") {
+          sockets[0].onclose?.({ code: SERVER_NOT_INSTALLED_CLOSE_CODE });
+          expect(states[states.length - 1]).toBe("error");
+          await vi.advanceTimersByTimeAsync(MAX_RECONNECT_MS);
+          expect(sockets.length).toBe(before); // no reconnect
+        } else {
           conn.dispose();
-        },
-      ),
+          await vi.advanceTimersByTimeAsync(MAX_RECONNECT_MS);
+          expect(sockets.length).toBe(before); // no new socket opened
+        }
+        conn.dispose();
+      }),
       { numRuns: 100 },
     );
   });

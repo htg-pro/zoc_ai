@@ -22,7 +22,8 @@ function tabIcon(name: string) {
   const ext = name.split(".").pop();
   if (ext === "json") return <FileJson className="h-3.5 w-3.5" />;
   if (ext === "md") return <FileText className="h-3.5 w-3.5" />;
-  if (ext === "tsx" || ext === "ts" || ext === "py" || ext === "rs") return <FileCode className="h-3.5 w-3.5" />;
+  if (ext === "tsx" || ext === "ts" || ext === "py" || ext === "rs")
+    return <FileCode className="h-3.5 w-3.5" />;
   return <FileIcon className="h-3.5 w-3.5" />;
 }
 
@@ -76,8 +77,12 @@ export function EditorTabs({
                   active ? "text-primary" : "text-muted-foreground",
                 )}
               >
-                <span className={active ? "text-primary" : "text-muted-foreground"}>{tabIcon(f.name)}</span>
-                <span className={cn("truncate", active ? "text-foreground" : "text-muted-foreground")}>
+                <span className={active ? "text-primary" : "text-muted-foreground"}>
+                  {tabIcon(f.name)}
+                </span>
+                <span
+                  className={cn("truncate", active ? "text-foreground" : "text-muted-foreground")}
+                >
                   {f.name}
                 </span>
               </button>
@@ -135,11 +140,17 @@ function TabActions({ activeFile }: { activeFile: string | null }) {
         <DropdownMenuItem disabled={!activeFile} onSelect={() => activeFile && splitEditor()}>
           <SplitSquareHorizontal className="mr-2 h-3.5 w-3.5" /> Split Editor
         </DropdownMenuItem>
-        <DropdownMenuItem disabled={!activeFile} onSelect={() => activeFile && void openToSide(activeFile)}>
+        <DropdownMenuItem
+          disabled={!activeFile}
+          onSelect={() => activeFile && void openToSide(activeFile)}
+        >
           Open to the Side
         </DropdownMenuItem>
         <DropdownMenuSeparator />
-        <DropdownMenuItem disabled={!activeFile} onSelect={() => activeFile && closeOtherFiles(activeFile)}>
+        <DropdownMenuItem
+          disabled={!activeFile}
+          onSelect={() => activeFile && closeOtherFiles(activeFile)}
+        >
           Close Others
         </DropdownMenuItem>
         <DropdownMenuItem onSelect={() => closeSavedFiles()}>Close Saved</DropdownMenuItem>

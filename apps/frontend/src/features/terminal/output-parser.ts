@@ -38,11 +38,7 @@ export interface TestSummaryAnnotation {
   skipped: number;
 }
 
-export type Annotation =
-  | PathAnnotation
-  | UrlAnnotation
-  | StackAnnotation
-  | TestSummaryAnnotation;
+export type Annotation = PathAnnotation | UrlAnnotation | StackAnnotation | TestSummaryAnnotation;
 
 export interface ParsedLine {
   text: string;
@@ -52,7 +48,8 @@ export interface ParsedLine {
 const URL_RE = /https?:\/\/[^\s'")<>]+/g;
 // A path token: optional ./ or ../ prefix, path chars, a dotted extension, and
 // an optional :line[:col] suffix.
-const PATH_RE = /(?:[A-Za-z]:[\\/]|\.{0,2}[\\/])?(?:[\w.-]+[\\/])*[\w.-]+\.[A-Za-z][\w]*(?::\d+(?::\d+)?)?/g;
+const PATH_RE =
+  /(?:[A-Za-z]:[\\/]|\.{0,2}[\\/])?(?:[\w.-]+[\\/])*[\w.-]+\.[A-Za-z][\w]*(?::\d+(?::\d+)?)?/g;
 const STACK_RE = /^\s*(?:at\s|File\s+"|Traceback(?:\s|$))/;
 
 function count(line: string, keyword: string): number {
@@ -61,7 +58,9 @@ function count(line: string, keyword: string): number {
 }
 
 /** Parse a pytest / jest / cargo summary line, or `null` when it isn't one. */
-export function parseTestSummary(line: string): { passed: number; failed: number; skipped: number } | null {
+export function parseTestSummary(
+  line: string,
+): { passed: number; failed: number; skipped: number } | null {
   if (!/\d+\s+(?:passed|failed)/i.test(line)) return null;
   return {
     passed: count(line, "passed"),
@@ -94,8 +93,7 @@ export function parseTerminalLine(line: string): Annotation[] {
 
   const annotations: Annotation[] = [];
   const claimed: Array<[number, number]> = [];
-  const overlaps = (s: number, e: number): boolean =>
-    claimed.some(([cs, ce]) => s < ce && cs < e);
+  const overlaps = (s: number, e: number): boolean => claimed.some(([cs, ce]) => s < ce && cs < e);
 
   for (const m of line.matchAll(URL_RE)) {
     const raw = m[0].replace(/[.,;:!?]+$/, "");

@@ -163,9 +163,7 @@ class GatewaySettings(BaseModel):
             sse_queue_timeout_seconds=(
                 float(sse_timeout) if sse_timeout else defaults.sse_queue_timeout_seconds
             ),
-            sse_queue_maxsize=(
-                int(sse_maxsize) if sse_maxsize else defaults.sse_queue_maxsize
-            ),
+            sse_queue_maxsize=(int(sse_maxsize) if sse_maxsize else defaults.sse_queue_maxsize),
             sse_heartbeat_seconds=(
                 float(sse_heartbeat) if sse_heartbeat else defaults.sse_heartbeat_seconds
             ),
@@ -177,9 +175,7 @@ class GatewaySettings(BaseModel):
             event_replay_buffer_size=(
                 int(replay_buffer) if replay_buffer else defaults.event_replay_buffer_size
             ),
-            max_concurrent_runs=(
-                int(max_runs) if max_runs else defaults.max_concurrent_runs
-            ),
+            max_concurrent_runs=(int(max_runs) if max_runs else defaults.max_concurrent_runs),
         )
 
     def is_loopback(self) -> bool:

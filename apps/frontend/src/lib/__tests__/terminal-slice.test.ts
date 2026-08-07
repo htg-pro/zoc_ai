@@ -46,9 +46,13 @@ test("closing the last pane empties the layout", () => {
   expect(useApp.getState().terminalLayout).toBeNull();
 });
 
-
 test("closing panes and sessions keeps terminal metadata and focus synchronized", () => {
-  useApp.setState({ terminals: [], activeTerminalId: null, terminalLayout: null, focusedPaneId: null });
+  useApp.setState({
+    terminals: [],
+    activeTerminalId: null,
+    terminalLayout: null,
+    focusedPaneId: null,
+  });
   const first = useApp.getState().newTerminal();
   useApp.getState().ensureTerminalPane(first);
   const second = useApp.getState().newTerminal();

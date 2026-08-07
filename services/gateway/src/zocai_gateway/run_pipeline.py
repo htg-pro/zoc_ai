@@ -438,9 +438,7 @@ class RuntimeAgentBrain(DefaultAgentBrain):
         try:
             text = generate_text(
                 thinking_request,
-                system_prompt=_thinking_system_prompt(
-                    context, user_prompt=thinking_request.prompt
-                ),
+                system_prompt=_thinking_system_prompt(context, user_prompt=thinking_request.prompt),
                 timeout=60.0,
             )
         except ModelContextWindowError:
@@ -793,9 +791,7 @@ def _agent_system_prompt(
     if steering:
         optional.append(f"Project steering:\n{steering}")
     if context.fragments:
-        fragments = [
-            f"{fragment.path}:\n{fragment.content}" for fragment in context.fragments[:8]
-        ]
+        fragments = [f"{fragment.path}:\n{fragment.content}" for fragment in context.fragments[:8]]
         optional.append("Relevant code context:\n\n" + "\n\n".join(fragments))
     if context.mcp_tools:
         optional.append("Available MCP tools: " + ", ".join(context.mcp_tools))
@@ -1662,9 +1658,7 @@ class RunPipeline:
         ``run_failed`` (R6).
         """
         reason = str(exc)
-        logger.warning(
-            "run %s: provider auth rejected (HTTP %s)", self.run_id, exc.status_code
-        )
+        logger.warning("run %s: provider auth rejected (HTTP %s)", self.run_id, exc.status_code)
         if self._failure_sink is not None:
             self._failure_sink(reason, exc.code)
         return reason
@@ -2143,7 +2137,7 @@ class RunPipeline:
         self._check_cancelled()
         if isinstance(result, AskResponse):
             text = result.text
-        elif isinstance(result, (SwitchToAgentMessage, AskError)):
+        elif isinstance(result, SwitchToAgentMessage | AskError):
             text = result.message
         else:  # pragma: no cover - exhaustive over AskResult
             text = ""

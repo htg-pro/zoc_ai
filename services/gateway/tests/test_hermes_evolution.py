@@ -57,9 +57,7 @@ def _seed_diary(matrix: MemoryMatrix, count: int, *, run_id: str = "r-1") -> Non
     with matrix.session_diary_path.open("a", encoding="utf-8") as handle:
         for i in range(count):
             handle.write(
-                json.dumps(
-                    {"seq": i, "runId": run_id, "type": "command", "payload": {"n": i}}
-                )
+                json.dumps({"seq": i, "runId": run_id, "type": "command", "payload": {"n": i}})
                 + "\n"
             )
 

@@ -35,7 +35,13 @@ describe("extractOutline — TypeScript/JavaScript", () => {
 
 describe("extractOutline — Python", () => {
   it("extracts defs (incl. indented methods) and classes", () => {
-    const src = ["class Foo:", "    def method(self):", "        pass", "def top():", "    pass"].join("\n");
+    const src = [
+      "class Foo:",
+      "    def method(self):",
+      "        pass",
+      "def top():",
+      "    pass",
+    ].join("\n");
     const out = extractOutline(src, "python");
     expect(out).toEqual([
       { name: "Foo", kind: "class", line: 1 },
@@ -47,12 +53,9 @@ describe("extractOutline — Python", () => {
 
 describe("extractOutline — Rust", () => {
   it("extracts fn, struct, enum, trait", () => {
-    const src = [
-      "pub fn run() {}",
-      "struct Point {}",
-      "pub enum Color {}",
-      "trait Draw {}",
-    ].join("\n");
+    const src = ["pub fn run() {}", "struct Point {}", "pub enum Color {}", "trait Draw {}"].join(
+      "\n",
+    );
     const out = extractOutline(src, "rust");
     expect(out).toEqual([
       { name: "run", kind: "function", line: 1 },
@@ -92,10 +95,7 @@ describe("filterOutline", () => {
   });
 
   it("matches case-insensitive substrings", () => {
-    expect(filterOutline(symbols, "USER").map((s) => s.name)).toEqual([
-      "loadUser",
-      "saveUser",
-    ]);
+    expect(filterOutline(symbols, "USER").map((s) => s.name)).toEqual(["loadUser", "saveUser"]);
   });
 
   it("returns nothing when no symbol matches", () => {

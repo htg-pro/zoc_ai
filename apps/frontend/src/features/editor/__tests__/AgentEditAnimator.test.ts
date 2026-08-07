@@ -151,7 +151,10 @@ describe("computeEditPlan", () => {
     fc.assert(
       fc.property(fc.array(fc.constantFrom("a", "b", "c"), { maxLength: 20 }), (chars) => {
         const text = chars.join("");
-        const edits: SearchReplaceEdit[] = chars.map((c) => ({ search: c, replace: c.toUpperCase() }));
+        const edits: SearchReplaceEdit[] = chars.map((c) => ({
+          search: c,
+          replace: c.toUpperCase(),
+        }));
         const plan = computeEditPlan(text, edits);
         for (let i = 1; i < plan.length; i++) {
           const prev = plan[i - 1].range;
@@ -206,7 +209,6 @@ describe("singleReplacePlan", () => {
     });
   });
 });
-
 
 class FakeClock implements AnimatorClock {
   private now = 0;
@@ -317,10 +319,10 @@ describe("AgentEditAnimator", () => {
     expect(editor.pushUndoStop).toHaveBeenCalledTimes(2);
     expect(editor.setPosition).toHaveBeenLastCalledWith({ lineNumber: 2, column: 5 });
     expect(editor.revealRangeInCenterIfOutsideViewport).toHaveBeenCalledTimes(2);
-    expect(toast.success).toHaveBeenCalledWith(
-      "Edited example.ts (+2 -2 lines)",
-      { description: "/workspace/src/example.ts", duration: 1000 },
-    );
+    expect(toast.success).toHaveBeenCalledWith("Edited example.ts (+2 -2 lines)", {
+      description: "/workspace/src/example.ts",
+      duration: 1000,
+    });
 
     clock.advance(1500);
     expect(editor.decorationSet).toHaveBeenLastCalledWith([]);
@@ -363,10 +365,9 @@ describe("AgentEditAnimator", () => {
 
     expect(applied).toHaveLength(1);
     expect(editor.text).toBe("ONE user two");
-    expect(toast.error).toHaveBeenCalledWith(
-      "Agent edit cancelled because the buffer changed",
-      { description: undefined },
-    );
+    expect(toast.error).toHaveBeenCalledWith("Agent edit cancelled because the buffer changed", {
+      description: undefined,
+    });
   });
 
   it("rejects a plan built from a stale captured model snapshot", async () => {
@@ -383,10 +384,9 @@ describe("AgentEditAnimator", () => {
     expect(applied).toEqual([]);
     expect(editor.executeEdits).not.toHaveBeenCalled();
     expect(editor.text).toBe("user changed");
-    expect(toast.error).toHaveBeenCalledWith(
-      "Agent edit cancelled because the buffer changed",
-      { description: "/workspace/file.ts" },
-    );
+    expect(toast.error).toHaveBeenCalledWith("Agent edit cancelled because the buffer changed", {
+      description: "/workspace/file.ts",
+    });
   });
 
   it("supports an empty-search insertion at a unified-diff line anchor", () => {

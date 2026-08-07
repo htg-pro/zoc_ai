@@ -79,28 +79,22 @@ describe("layout", () => {
 
   it("Property 36: persistence round-trips sizes (after clamping) and visibility", () => {
     fc.assert(
-      fc.property(
-        arbLayout,
-        fc.integer({ min: 400, max: 3000 }),
-        (state, windowHeight) => {
-          const sane = sanitizeLayout(state, windowHeight);
-          const reloaded = deserializeLayout(serializeLayout(sane), windowHeight);
+      fc.property(arbLayout, fc.integer({ min: 400, max: 3000 }), (state, windowHeight) => {
+        const sane = sanitizeLayout(state, windowHeight);
+        const reloaded = deserializeLayout(serializeLayout(sane), windowHeight);
 
-          expect(reloaded).toEqual(sane);
-          // Visibility preserved exactly.
-          expect(visOf(reloaded)).toEqual(visOf(state));
-          // Idempotent under re-sanitize.
-          expect(sanitizeLayout(sane, windowHeight)).toEqual(sane);
-        },
-      ),
+        expect(reloaded).toEqual(sane);
+        // Visibility preserved exactly.
+        expect(visOf(reloaded)).toEqual(visOf(state));
+        // Idempotent under re-sanitize.
+        expect(sanitizeLayout(sane, windowHeight)).toEqual(sane);
+      }),
       { numRuns: 200 },
     );
   });
 
   it("falls back to defaults on missing/invalid persisted data", () => {
     expect(deserializeLayout(null, 1000).explorerOpen).toBe(true);
-    expect(deserializeLayout("not json", 1000).agentWidth).toBeGreaterThanOrEqual(
-      PANEL_MIN_WIDTH,
-    );
+    expect(deserializeLayout("not json", 1000).agentWidth).toBeGreaterThanOrEqual(PANEL_MIN_WIDTH);
   });
 });

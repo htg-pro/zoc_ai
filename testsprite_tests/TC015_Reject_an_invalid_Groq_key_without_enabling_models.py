@@ -39,36 +39,36 @@ async def run_test():
             await page.wait_for_load_state("domcontentloaded", timeout=5000)
         except Exception:
             pass
-        
+
         # -> Click the 'Settings' button in the left activity bar to open the Settings panel.
         # Settings button
         elem = page.get_by_role('button', name='Settings', exact=True)
         await elem.click(timeout=10000)
-        
+
         # -> Click the 'Providers' tab in the Settings sidebar to ensure the Providers section is active and focused.
         # Providers button
         elem = page.get_by_role('button', name='Providers', exact=True)
         await elem.click(timeout=10000)
-        
+
         # -> Enter the provided Groq API key into the Groq 'API key' field visible in Settings → Providers and click the 'Fetch live models' button.
         # sk-… password field
         elem = page.locator('[id="groq-key"]')
         await elem.wait_for(state="visible", timeout=10000)
         await elem.fill("REDACTED_GROQ_KEY_ROTATE_ME")
-        
+
         # -> Enter the provided Groq API key into the Groq 'API key' field visible in Settings → Providers and click the 'Fetch live models' button.
         # Fetch live models button
         elem = page.locator('xpath=/html/body/div/div/div/div/div[3]/div/div/div/div/div/div/div/div/div/div/div/div[3]/div[2]/div[3]/div/button')
         await elem.click(timeout=10000)
-        
+
         # --> Assertions to verify final state
-        
+
         # --> Verify no usable model list update is shown
         # Assert: Expected the Groq 'Models' input to be empty (no usable model list update shown).
         await expect(page.locator("xpath=/html/body/div[1]/div/div/div/div[3]/div/div/div[1]/div/div/div/div[1]/div/div/div/div/div[3]/div[2]/div[3]/input").nth(0)).to_have_value("", timeout=15000), "Expected the Groq 'Models' input to be empty (no usable model list update shown)."
         # Assert: Expected the Groq 'Models' input to not be visible, indicating no usable model list was displayed.
         await expect(page.locator("xpath=/html/body/div[1]/div/div/div/div[3]/div/div/div[1]/div/div/div/div[1]/div/div/div/div/div[3]/div[2]/div[3]/input").nth(0)).not_to_be_visible(timeout=15000), "Expected the Groq 'Models' input to not be visible, indicating no usable model list was displayed."
-        
+
         # --> Verify a validation or warning state is visible
         # Assert: Expected the notifications area to contain 'agent sidecar not reachable'.
         await expect(page.locator("xpath=/html/body/div[1]/div/section").nth(0)).to_contain_text("agent sidecar not reachable", timeout=15000), "Expected the notifications area to contain 'agent sidecar not reachable'."
@@ -87,4 +87,3 @@ async def run_test():
             await pw.stop()
 
 asyncio.run(run_test())
-    

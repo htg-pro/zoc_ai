@@ -80,9 +80,7 @@ def test_initialize_is_idempotent_and_preserves_content(tmp_path: Path) -> None:
     matrix.initialize()
 
     assert matrix.session_diary_path.read_text(encoding="utf-8") == '{"seq": 0}\n'
-    assert json.loads(matrix.state_wrapper_path.read_text(encoding="utf-8")) == {
-        "stage": "INTAKE"
-    }
+    assert json.loads(matrix.state_wrapper_path.read_text(encoding="utf-8")) == {"stage": "INTAKE"}
 
 
 def test_initialize_confines_all_data_under_zocai(tmp_path: Path) -> None:
@@ -107,9 +105,7 @@ def test_workspace_root_is_injectable_and_resolved(tmp_path: Path) -> None:
 
 
 @pytest.mark.parametrize("call_count", [2, 3])
-def test_repeated_initialize_keeps_matrix_initialized(
-    tmp_path: Path, call_count: int
-) -> None:
+def test_repeated_initialize_keeps_matrix_initialized(tmp_path: Path, call_count: int) -> None:
     matrix = MemoryMatrix(tmp_path)
     for _ in range(call_count):
         matrix.initialize()

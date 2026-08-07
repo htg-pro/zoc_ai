@@ -30,9 +30,9 @@ describe("lsp-client handleDiagnostics middleware (task 2.4)", () => {
     const next = vi.fn();
     const mw = createDiagnosticsMiddleware("typescript-language-server", hook);
 
-    expect(() =>
-      mw.handleDiagnostics(fakeUri("file:///a.ts"), diags, next),
-    ).toThrow("bridge failure");
+    expect(() => mw.handleDiagnostics(fakeUri("file:///a.ts"), diags, next)).toThrow(
+      "bridge failure",
+    );
     expect(next).toHaveBeenCalledTimes(1);
   });
 

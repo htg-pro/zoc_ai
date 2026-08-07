@@ -46,7 +46,8 @@ def test_additive_toolset_exposure(servers: dict[str, list[str]]) -> None:
     expected: set[str] = set()
     for server_id, tools in servers.items():
         registry.replace_server_tools(
-            server_id, [record_for(server_id, RawTool(name=t, input_schema={"k": t})) for t in tools]
+            server_id,
+            [record_for(server_id, RawTool(name=t, input_schema={"k": t})) for t in tools],
         )
         expected.update(namespaced_name(server_id, t) for t in tools)
 

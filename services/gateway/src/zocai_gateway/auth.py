@@ -79,9 +79,7 @@ def _credential_is_valid(expected: str | None, presented: str | None) -> bool:
     return hmac.compare_digest(expected.encode("utf-8"), presented.encode("utf-8"))
 
 
-def is_request_admitted(
-    settings: GatewaySettings, presented_credential: str | None
-) -> bool:
+def is_request_admitted(settings: GatewaySettings, presented_credential: str | None) -> bool:
     """Decide whether a control/telemetry request is admitted (R12.3/R12.4).
 
     This is the pure admission policy (Property 7): a request is admitted **iff**

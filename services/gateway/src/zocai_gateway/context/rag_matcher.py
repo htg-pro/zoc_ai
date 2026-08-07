@@ -233,9 +233,7 @@ class BM25Index:
         self._document_lengths = tuple(len(tokens) for tokens in tokenized)
         self._document_count = len(tokenized)
         self._average_document_length = (
-            sum(self._document_lengths) / self._document_count
-            if self._document_count
-            else 0.0
+            sum(self._document_lengths) / self._document_count if self._document_count else 0.0
         )
         document_frequencies: Counter[str] = Counter()
         for tokens in tokenized:
@@ -263,17 +261,14 @@ class BM25Index:
             if frequency == 0:
                 continue
             inverse_document_frequency = math.log(
-                1.0
-                + (self._document_count - frequency + 0.5) / (frequency + 0.5)
+                1.0 + (self._document_count - frequency + 0.5) / (frequency + 0.5)
             )
             for index, term_frequencies in enumerate(self._term_frequencies):
                 term_frequency = term_frequencies.get(term, 0)
                 if term_frequency == 0:
                     continue
                 length_ratio = self._document_lengths[index] / average_length
-                denominator = term_frequency + self._k1 * (
-                    1.0 - self._b + self._b * length_ratio
-                )
+                denominator = term_frequency + self._k1 * (1.0 - self._b + self._b * length_ratio)
                 scores[index] += inverse_document_frequency * (
                     term_frequency * (self._k1 + 1.0) / denominator
                 )
@@ -478,9 +473,7 @@ class ShardedFragmentIndex:
         startup and only pay for content when a shard is actually searched.
         """
         for path in paths:
-            bucket = self._membership.setdefault(
-                shard_for_path(path, self._shard_count), {}
-            )
+            bucket = self._membership.setdefault(shard_for_path(path, self._shard_count), {})
             bucket.setdefault(path, None)
 
     def paths_in_shard(self, shard_id: int) -> tuple[str, ...]:
@@ -677,9 +670,7 @@ class WorkspaceRagMatcher:
         """
         if self._shard_index is not None:
             return self._extract_sharded(query)
-        return self.scan(
-            query, folders=self._folders, open_buffers=self._open_buffers
-        )
+        return self.scan(query, folders=self._folders, open_buffers=self._open_buffers)
 
     # -- lazy / sharded retrieval (§9.1) ----------------------------------
 
@@ -729,9 +720,7 @@ class WorkspaceRagMatcher:
             index.register(str(p) for p in _iter_text_files(folder))
         self._shards_registered = True
 
-    def _narrow_candidates(
-        self, query: str, index: ShardedFragmentIndex
-    ) -> tuple[str, ...] | None:
+    def _narrow_candidates(self, query: str, index: ShardedFragmentIndex) -> tuple[str, ...] | None:
         """Pick the candidate paths whose shards are worth loading.
 
         The narrowing signal is path-name overlap with the query's tokens
@@ -827,16 +816,13 @@ class WorkspaceRagMatcher:
         scored.sort(key=lambda fragment: (-fragment.score, fragment.path))
         return tuple(scored[: self._max_fragments])
 
-    def _score(
-        self, query: str, candidates: Sequence[tuple[str, str]]
-    ) -> Sequence[float]:
+    def _score(self, query: str, candidates: Sequence[tuple[str, str]]) -> Sequence[float]:
         """Score ``candidates`` via the Rust hook if bound, else the scorer."""
         if self._scan_hook is not None:
             scores = self._scan_hook(query, candidates)
             if len(scores) != len(candidates):
                 raise ValueError(
-                    "scan_hook returned "
-                    f"{len(scores)} scores for {len(candidates)} candidates"
+                    "scan_hook returned " f"{len(scores)} scores for {len(candidates)} candidates"
                 )
             return scores
         return [self._scorer(query, content) for _path, content in candidates]
@@ -934,9 +920,7 @@ class WorkspaceRagMatcher:
     ) -> InjectedContext:
         """Scan then inject in one call: the matcher's public entry point."""
         fragments = self.scan(query, folders=folders, open_buffers=open_buffers)
-        return self.inject(
-            tier, fragments, active_target=active_target, steering=steering
-        )
+        return self.inject(tier, fragments, active_target=active_target, steering=steering)
 
 
 def _clamp_unit(value: float) -> float:
@@ -1034,9 +1018,7 @@ def _iter_text_files(folder: Path) -> Iterable[Path]:
     """
     for dirpath, dirnames, filenames in os.walk(folder, onerror=lambda _e: None):
         # Prune ignored directories in place so os.walk does not descend them.
-        dirnames[:] = [
-            name for name in dirnames if name not in _SCAN_IGNORE_DIRS
-        ]
+        dirnames[:] = [name for name in dirnames if name not in _SCAN_IGNORE_DIRS]
         base = Path(dirpath)
         for name in sorted(filenames):
             entry = base / name

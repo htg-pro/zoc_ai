@@ -63,7 +63,11 @@ const request: fc.Arbitrary<PermissionRequestPart> = fc
       "workspace_run_tests",
     ),
     paths: fc.array(workspacePath, { minLength: 0, maxLength: 6 }),
-    reason: fc.constantFrom("mode-ask" as const, "out-of-plan-path" as const, "destructive" as const),
+    reason: fc.constantFrom(
+      "mode-ask" as const,
+      "out-of-plan-path" as const,
+      "destructive" as const,
+    ),
     scopes: fc
       .subarray(["call", "run", "workspace"] as const, { minLength: 1 })
       .map((scopes) => [...scopes]),
@@ -351,9 +355,9 @@ describe("Feature: zoc-agent-chat-rebuild, Property 55: an approval request take
     };
 
     const harness = renderDock(messagesWith(part), { now: () => clock });
-    expect(
-      harness.container.querySelector("[data-zoc-permission-countdown]")?.textContent,
-    ).toBe("0:02 left");
+    expect(harness.container.querySelector("[data-zoc-permission-countdown]")?.textContent).toBe(
+      "0:02 left",
+    );
 
     clock = NOW + 2_500;
     act(() => {

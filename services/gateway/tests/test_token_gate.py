@@ -23,9 +23,7 @@ from zocai_gateway.context.token_gate import (
 
 
 def _fragment(path: str, score: float, content: str) -> RagFragment:
-    return RagFragment(
-        path=path, content=content, score=score, source=FragmentSource.FOLDER
-    )
+    return RagFragment(path=path, content=content, score=score, source=FragmentSource.FOLDER)
 
 
 # -- estimate_tokens --------------------------------------------------------
@@ -52,9 +50,7 @@ def test_estimate_tokens_is_deterministic_and_monotonic() -> None:
 
 def test_empty_input_yields_empty_result() -> None:
     result = fit_fragments([], window=100)
-    assert result == TokenGateResult(
-        fragments=(), dropped=(), token_count=0, window=100
-    )
+    assert result == TokenGateResult(fragments=(), dropped=(), token_count=0, window=100)
 
 
 def test_all_fragments_fit_when_window_is_large() -> None:
@@ -125,8 +121,7 @@ def test_non_positive_window_admits_nothing() -> None:
 
 def test_kept_payload_never_exceeds_window() -> None:
     frags = [
-        _fragment(f"f{i}.py", 0.7 + i / 100, "y" * (CHARS_PER_TOKEN * (i + 1)))
-        for i in range(10)
+        _fragment(f"f{i}.py", 0.7 + i / 100, "y" * (CHARS_PER_TOKEN * (i + 1))) for i in range(10)
     ]
     result = fit_fragments(frags, window=15)
 

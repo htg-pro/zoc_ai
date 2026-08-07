@@ -1,6 +1,8 @@
 /**
  * The composition root — zoc-agent-chat-rebuild §10's checkpoint.
  *
+ * Feature: zoc-agent-chat-rebuild, task 10.
+ *
  * Everything §5 through §9 built, wired into one route table. Nothing here decides
  * policy or holds behaviour: it constructs the objects, hands each route module its
  * deps, and answers `buildRoutes`. That is deliberate and it is why this file is late
@@ -43,7 +45,13 @@
  * restarting sidecar refused a write, would lose something the user already read.
  */
 
-import { streamRun, type RunContext } from "./agent/build-agent.ts";
+import {
+  streamRun,
+  type RunBinding,
+  type RunContext,
+  type RunModelCandidate,
+  type ZocUIMessage,
+} from "./agent/build-agent.ts";
 import { createEditorGenerator } from "./agent/editor-generate.ts";
 import { CompletionCache } from "./agent/editor-inference.ts";
 import { createRunErrorClassifier } from "./agent/error-taxonomy.ts";
@@ -61,14 +69,27 @@ import {
 import { registerApiRoutes, type ApiDeps } from "./http/api.ts";
 import { buildRoutes } from "./http/routes.ts";
 import type { RunRequest } from "./http/run-routes.ts";
+import { McpControl } from "./mcp/control.ts";
 import { createApprovalRegistry, type ApprovalRegistry } from "./permissions/approvals.ts";
-import { createAuditLog, createGate, createGrantLedger } from "./permissions/gate.ts";
+import {
+  authorizeProviderExecutedTool,
+  createAuditLog,
+  createGate,
+  createGrantLedger,
+} from "./permissions/gate.ts";
 import { createPlanGate } from "./permissions/plan-gate.ts";
 import { DEFAULT_PERMISSION_CONFIG } from "./permissions/engine.ts";
 import { resolveKey, secretSourceFromEnv } from "./providers/keys.ts";
 import { contextWindowFor } from "./providers/models.ts";
-import { resolveModel } from "./providers/registry.ts";
+import {
+  modelRefKey,
+  resolveModel,
+  routingChainFor,
+  type ModelRoutingPolicy,
+} from "./providers/registry.ts";
+import { estimateCostCentsFor } from "./providers/pricing.ts";
 import { buildToolDescriptors, type ToolDescriptor } from "./tools/registry.ts";
+import { WEB_SEARCH_PERMISSION_TOOL } from "./tools/web-search.ts";
 import { createProposePlanTool } from "./tools/plan.ts";
 import { workspaceClientFromEnv, type WorkspaceClient } from "./tools/workspace-client.ts";
 import type { RuntimeEnv } from "./main.ts";
@@ -100,12 +121,15 @@ export interface RuntimeDeps {
   readonly fetchImpl?: typeof fetch;
   readonly slots?: SlotManager;
   readonly now?: () => Date;
+  /** Process-level routing order; absent means the user's selected model only. */
+  readonly routingPolicy?: ModelRoutingPolicy | null;
 }
 
 /** Everything one Run needs that is scoped to that Run alone. */
 interface RunScope {
   readonly approvals: ApprovalRegistry;
   readonly descriptors: readonly ToolDescriptor[];
+  readonly providerTools: NonNullable<RunBinding["providerTools"]>;
 }
 
 /**
@@ -130,6 +154,7 @@ function bindRun(
     readonly workspace: WorkspaceClient;
     readonly workspaceRoot: string;
     readonly audit: ReturnType<typeof createAuditLog>;
+    readonly mcpTools: Parameters<typeof buildToolDescriptors>[0]["mcpTools"];
   },
 ): RunScope {
   const approvals = createApprovalRegistry({ runId: options.runId });
@@ -149,6 +174,15 @@ function bindRun(
         code: "permission_denied",
         message: reason,
         details: `tool: ${toolName}`,
+        retryable: false,
+      });
+    },
+    providerToolRefusal: (toolName: string, reason: string) => {
+      writer.providerToolError({
+        toolName,
+        kind: "network",
+        code: "permission_denied",
+        message: reason,
         retryable: false,
       });
     },
@@ -207,7 +241,7 @@ function bindRun(
 
   const planGated = createPlanGate({ ...gateContext, planBroker: approvals });
 
-  const descriptors = buildToolDescriptors({
+  const descriptorContext = {
     workspace: options.workspace,
     sessionId: options.sessionId,
     runId: options.runId,
@@ -222,9 +256,25 @@ function bindRun(
         for (const path of paths) planPaths.add(path);
       },
     }),
-  });
+    mcpTools: options.mcpTools,
+  } satisfies Parameters<typeof buildToolDescriptors>[0];
 
-  return { approvals, descriptors };
+  const descriptorsFor = (providerTools: readonly ToolDescriptor[]) =>
+    buildToolDescriptors({ ...descriptorContext, providerTools });
+  const descriptors = descriptorsFor([]);
+  let webSearchAuthorization: Promise<boolean> | null = null;
+  const providerTools: NonNullable<RunBinding["providerTools"]> = {
+    descriptorsFor,
+    authorizeWebSearch: () => {
+      webSearchAuthorization ??= authorizeProviderExecutedTool(gateContext, {
+        toolName: WEB_SEARCH_PERMISSION_TOOL,
+        kind: "network",
+      });
+      return webSearchAuthorization;
+    },
+  };
+
+  return { approvals, descriptors, providerTools };
 }
 
 /**
@@ -247,6 +297,7 @@ export function buildRuntimeRoutes(
   // Desktop_Core bridge URL is optional and never validated at startup, because a runtime
   // launched without it still serves catalogues and still fails workspace tools cleanly.
   const workspace = workspaceClientFromEnv(process.env, env.token, deps.fetchImpl);
+  const mcp = new McpControl(workspace);
   // ── Transcript history (R15.6, R34.6) ───────────────────────────────
   //
   // The port this file's header used to describe as unfillable: the endpoint it
@@ -292,20 +343,45 @@ export function buildRuntimeRoutes(
         // Resolution happens here, before admission, because a missing key or an unknown
         // provider is something the caller must be told *now* — whereas reading history
         // and dispatching belong inside `open`, which a queued Run does not reach.
-        const apiKey = await resolveKey(request.modelRef.provider, secrets);
+        const chain = routingChainFor(request.modelRef, deps.routingPolicy).filter(
+          (candidate) => deps.routingPolicy?.available?.[modelRefKey(candidate)] !== false,
+        );
+        const providers = [...new Set(chain.map((candidate) => candidate.provider))];
+        const apiKeys = Object.fromEntries(
+          await Promise.all(
+            providers.map(
+              async (provider) => [provider, await resolveKey(provider, secrets)] as const,
+            ),
+          ),
+        );
         const resolved = resolveModel({
-          model: {
-            provider: request.modelRef.provider,
-            modelId: request.modelRef.modelId,
-            baseUrl: request.modelRef.baseUrl ?? null,
-          },
-          apiKey,
+          model: request.modelRef,
+          apiKey: apiKeys[request.modelRef.provider] ?? null,
+          policy: deps.routingPolicy,
+          apiKeys,
         });
+        const selectedKey = modelRefKey({ provider: resolved.spec.id, modelId: resolved.modelId });
+        const selectedIndex = chain.findIndex(
+          (candidate) => modelRefKey(candidate) === selectedKey,
+        );
+        const fallbackModels: RunModelCandidate[] = [];
+        for (const candidate of chain.slice(Math.max(0, selectedIndex + 1))) {
+          try {
+            const fallback = resolveModel({
+              model: candidate,
+              apiKey: apiKeys[candidate.provider] ?? null,
+            });
+            fallbackModels.push(candidateFor(fallback));
+          } catch {
+            // A missing key or invalid fallback configuration removes that candidate;
+            // it must not reject a Run whose selected model is ready.
+          }
+        }
 
         return {
           provider: resolved.spec.id,
           model: resolved.modelId,
-          open: openRunStream(request, resolved),
+          open: openRunStream(request, resolved, fallbackModels),
         };
       },
     },
@@ -320,6 +396,7 @@ export function buildRuntimeRoutes(
           mode: "agent",
           gated: (_name, _kind, execute) => execute,
           proposePlan: null,
+          mcpTools: mcp.current.tools,
         }),
     },
     benchmark: {
@@ -351,6 +428,7 @@ export function buildRuntimeRoutes(
       // recent n", and the log is append-ordered.
       auditEntries: (limit) => audit.entries().slice(-limit),
     },
+    mcp: { control: mcp },
   };
 
   return buildRoutes(env, (router) => registerApiRoutes(router, apiDeps));
@@ -365,20 +443,51 @@ export function buildRuntimeRoutes(
   function openRunStream(
     request: RunRequest,
     resolved: ReturnType<typeof resolveModel>,
+    fallbackModels: readonly RunModelCandidate[],
   ): OpenRunStream {
     return async (binding) => {
+      // Discovery belongs inside the Slot-held thunk: queued Runs do not touch MCP
+      // processes, and every admitted Run receives one consistent enabled-tool snapshot.
+      // Workspace_Services isolates failed servers, so a broken peer contributes an
+      // error status and no tools while healthy peers remain available (R26.6).
+      const mcpSnapshot = await mcp.refresh();
       const instructions = await assembleInstructions({
         sessionId: request.sessionId,
         discoverRules,
         workspaceRoot: env.workspaceRoot,
         permissionMode: request.permissionMode,
         conversationMode: request.mode,
+        ...(request.rulesSelection === undefined ? {} : { enabledSources: request.rulesSelection }),
       });
 
       // One read, two derivations: the prior turns and the compaction pin come
       // from the same snapshot, so a Run cannot assemble its messages from one
       // state of the transcript and its pin from another.
       const stored = await loadTranscript(request.sessionId);
+      const persistedUserMessage: ZocUIMessage = {
+        id: request.userMessageId ?? `user-${binding.runId}`,
+        role: "user",
+        parts: [
+          { type: "text", text: request.prompt },
+          ...request.attachments.map((attachment) => ({
+            type: "file" as const,
+            mediaType: attachment.mediaType,
+            filename: attachment.name,
+            url:
+              attachment.dataUrl ??
+              `data:text/plain;charset=utf-8,${encodeURIComponent(attachment.text ?? "")}`,
+            providerMetadata: {
+              zoc: {
+                attachmentId: `${binding.runId}:${attachment.name}`,
+                attachmentKind: attachment.kind,
+                attachmentSize: attachment.size,
+                estimatedTokens: attachment.estimatedTokens,
+                ...(attachment.text === undefined ? {} : { extractedText: attachment.text }),
+              },
+            },
+          })),
+        ],
+      };
       const messages: HistoryMessage[] = [
         ...historyFrom(stored),
         { id: binding.messageId, role: "user", text: request.prompt },
@@ -392,6 +501,7 @@ export function buildRuntimeRoutes(
         // wasteful, where a fabricated one would drop turns the model needs.
         pin: pinFrom(compactionPartsFrom(stored)),
         mentions: request.mentions.map((mention) => mention.content ?? mention.ref),
+        attachments: request.attachments,
         toolSchemas: [],
         messages,
         contextLimit: contextWindowFor({
@@ -409,6 +519,7 @@ export function buildRuntimeRoutes(
         provider: resolved.spec.id,
         model: resolved.modelId,
         languageModel: resolved.model,
+        fallbackModels,
         conversationMode: request.mode,
         permissionMode: request.permissionMode,
         instructions,
@@ -422,9 +533,10 @@ export function buildRuntimeRoutes(
             workspace,
             workspaceRoot: env.workspaceRoot,
             audit,
+            mcpTools: mcpSnapshot.tools,
           });
           approvalsByRun.set(binding.runId, scope.approvals);
-          return { descriptors: scope.descriptors };
+          return { descriptors: scope.descriptors, providerTools: scope.providerTools };
         },
         // A real meter, not the null one: this is the answer stream, which is the one
         // thing Token_Rate is allowed to describe (R13.8).
@@ -432,12 +544,34 @@ export function buildRuntimeRoutes(
         // R15.6. Supplied here rather than left undefined, which is what made the
         // `onFinish` hook a no-op: the Run streamed, the user read the answer, and
         // nothing wrote it down. An aborted Run persists too, flagged.
-        persistence: transcripts,
+        persistence: {
+          persist: async (input) => {
+            const byId = new Map<string, ZocUIMessage>();
+            for (const raw of stored) {
+              if (typeof raw !== "object" || raw === null) continue;
+              const message = raw as Partial<ZocUIMessage>;
+              if (
+                typeof message.id !== "string" ||
+                !Array.isArray(message.parts) ||
+                (message.role !== "user" &&
+                  message.role !== "assistant" &&
+                  message.role !== "system" &&
+                  message.role !== "tool")
+              )
+                continue;
+              byId.set(message.id, message as ZocUIMessage);
+            }
+            byId.set(persistedUserMessage.id, persistedUserMessage);
+            for (const message of input.messages) byId.set(message.id, message);
+            await transcripts.persist({ ...input, messages: [...byId.values()] });
+          },
+        },
         // Bound to this Run's provider, so R13.7's card can name it.
         classifyError: createRunErrorClassifier({
           provider: resolved.spec.label,
           model: resolved.modelId,
         }),
+        estimateCostCents: estimateCostCentsFor(resolved.spec.id, resolved.modelId),
         signal: binding.signal,
         now,
       };
@@ -451,6 +585,20 @@ export function buildRuntimeRoutes(
       });
 
       return streamRun(context);
+    };
+  }
+
+  function candidateFor(resolved: ReturnType<typeof resolveModel>): RunModelCandidate {
+    return {
+      provider: resolved.spec.id,
+      model: resolved.modelId,
+      languageModel: resolved.model,
+      contextLimit: contextWindowFor({ provider: resolved.spec.id, modelId: resolved.modelId }),
+      classifyError: createRunErrorClassifier({
+        provider: resolved.spec.label,
+        model: resolved.modelId,
+      }),
+      estimateCostCents: estimateCostCentsFor(resolved.spec.id, resolved.modelId),
     };
   }
 }

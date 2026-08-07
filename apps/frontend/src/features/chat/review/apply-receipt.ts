@@ -2,6 +2,8 @@
  * The apply receipt and the rollback report — zoc-agent-chat-rebuild R10.5, R10.7, R10.15, R16.7,
  * task 18.2.
  *
+ * Feature: zoc-agent-chat-rebuild, task 18.2 (R10.5, R10.7, R10.15, R16.7).
+ *
  * After an apply, the plan card stops being a review and becomes a record: which files were written,
  * under which checkpoint, and what rolling back would do to each of them. This module is that record,
  * as a value — so Property 23's claim ("a partial failure names exactly what was applied") is an

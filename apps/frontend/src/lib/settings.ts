@@ -111,6 +111,18 @@ export const SETTINGS_REGISTRY: SettingSpec[] = [
       { value: "High", label: "High" },
     ],
   },
+  {
+    key: "agent.transcriptionBackend",
+    label: "Agent: Voice Transcription",
+    description: "Choose the transcription backend used by the chat composer microphone control.",
+    category: "Agent",
+    type: "enum",
+    default: "none",
+    options: [
+      { value: "none", label: "Off" },
+      { value: "browser", label: "Browser speech recognition" },
+    ],
+  },
 ];
 
 const USER_KEY = "zoc.settings.user";

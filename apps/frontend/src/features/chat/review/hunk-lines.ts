@@ -2,6 +2,8 @@
  * A hunk's lines, header, and accessible name — zoc-agent-chat-rebuild R10.2, R10.11–R10.14, R21.5,
  * R21.7, task 18.2.
  *
+ * Feature: zoc-agent-chat-rebuild, task 18.2 (R10.2, R10.11, R10.14, R21.5, R21.7).
+ *
  * The arithmetic half of the diff review, split from the components for the reason the timeline's model
  * is split from `ToolEntry`: line classification, numbering, the two side flags, and the accessible name
  * are all facts about a `Hunk`, and Properties 20, 21, and 56 should be assertable without mounting a

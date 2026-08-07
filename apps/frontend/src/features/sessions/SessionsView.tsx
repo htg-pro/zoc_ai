@@ -1,3 +1,25 @@
+/**
+ * The full-page workspace sessions surface — zoc-agent-chat-rebuild R15.3, R15.4, R35.2, task 25.2.
+ *
+ * Rewritten against {@link SessionRow} and {@link SessionDeleteDialog} rather than repointed. Its own
+ * `SessionCard` was the second of the two row markups R35.2 asks to consolidate (the other was
+ * `SessionsPanel`'s); both surfaces now render the 22.5 row.
+ *
+ * ## What did not consolidate
+ *
+ * The stats cards, the four filter tabs, and the sort toggle stay, reading `sessionStats`, `matchesFilter`,
+ * `matchesSearch`, and `tabCounts` out of the kept-as-is `lib/session-query.ts`. That is why this file
+ * renders {@link SessionRow} directly instead of {@link SessionList}: this surface's filter is four tabs
+ * over all workspaces, and the list's is two tabs scoped to one — layering them would show the
+ * intersection.
+ *
+ * The `window.confirm` delete gate is gone, for the reason given in `SessionDeleteDialog`. The stale-pin
+ * cleanup it guarded moved onto the dialog's confirm.
+ *
+ * The card's model chips — provider, gguf filename, quant, param count — went with the card. R15.3 names
+ * three facts for a row and none of them is the model; a Session's model belongs to the run that used it,
+ * and showing it per row was what made this markup diverge from the panel's in the first place.
+ */
 import { useMemo, useState } from "react";
 import {
   Activity,
@@ -6,13 +28,11 @@ import {
   Coins,
   Cpu,
   Download,
-  Folder,
   History,
   MessagesSquare,
   Pin,
   Plus,
   Search,
-  Trash2,
   TrendingUp,
 } from "lucide-react";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -24,7 +44,9 @@ import {
   sessionStats,
   tabCounts as computeTabCounts,
 } from "@/lib/session-query";
-import { sessionListItem } from "@/features/agent/session-origin";
+import { SessionDeleteDialog } from "./SessionDeleteDialog";
+import { SessionRow } from "./SessionRow";
+import { sessionRowModel } from "./session-list-model";
 import type { Session } from "@zoc-studio/shared-types";
 
 /* ── helpers ───────────────────────────────────────────────────── */
@@ -32,41 +54,11 @@ import type { Session } from "@zoc-studio/shared-types";
 type FilterTab = "all" | "active" | "pinned" | "archived";
 type SortKey = "updated" | "created";
 
-function formatDate(iso: string) {
-  const d = new Date(iso);
-  const now = new Date();
-  const diff = now.getTime() - d.getTime();
-  const mins = Math.floor(diff / 60_000);
-  if (mins < 1) return "just now";
-  if (mins < 60) return `${mins}m ago`;
-  const hrs = Math.floor(mins / 60);
-  if (hrs < 24) return `${hrs}h ago`;
-  return d.toLocaleDateString(undefined, { month: "numeric", day: "numeric" }) +
-    ", " + d.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
-}
-
-function extractModelInfo(model: string | null | undefined) {
-  if (!model) return { name: "-", quant: "", params: "", file: "" };
-  const file = model;
-  // Try to extract quant (e.g. Q4_K_M, Q6_K, Q8_0, F16)
-  const quantMatch = model.match(/[._-](Q\d+[_A-Z]*|F16|F32|BF16)/i);
-  const quant = quantMatch ? quantMatch[1] : "";
-  // Try to extract param size (e.g. 12B, 9B, 1B)
-  const paramMatch = model.match(/(\d+\.?\d*B)/i);
-  const params = paramMatch ? paramMatch[1] : "";
-  // Simplified display name
-  const name = model
-    .replace(/\.gguf$/i, "")
-    .replace(/[._-](Q\d+[_A-Z]*|F16|F32|BF16)/gi, "")
-    .replace(/[._]/g, " ")
-    .trim();
-  return { name, quant, params, file };
-}
-
 /* ── main component ───────────────────────────────────────────── */
 
 export function SessionsView() {
   const sessions = useApp((s) => s.sessions);
+  const activeSessionId = useApp((s) => s.activeSessionId);
   const select = useApp((s) => s.selectSession);
   const deleteSession = useApp((s) => s.deleteSession);
   const createSession = useApp((s) => s.createSession);
@@ -89,10 +81,7 @@ export function SessionsView() {
 
   /* ── filter + search (R2.6, R2.7: case-insensitive substring) ─ */
   const filtered = useMemo(
-    () =>
-      sessions.filter(
-        (s) => matchesFilter(s, tab, pinnedSet) && matchesSearch(s, q),
-      ),
+    () => sessions.filter((s) => matchesFilter(s, tab, pinnedSet) && matchesSearch(s, q)),
     [sessions, tab, pinnedSet, q],
   );
 
@@ -118,19 +107,16 @@ export function SessionsView() {
   const activeSessions = stats.activeSessions;
   const totalMessages = stats.tokensUsed;
   const uniqueModels = stats.modelsUsed;
-  const tabCounts = useMemo(
-    () => computeTabCounts(sessions, pinnedSet),
-    [sessions, pinnedSet],
-  );
+  const tabCounts = useMemo(() => computeTabCounts(sessions, pinnedSet), [sessions, pinnedSet]);
 
   /* ── handlers ───────────────────────────────────────────────── */
-  const remove = async (session: Session) => {
-    const ok = window.confirm(`Delete "${session.title}" and its chat history?`);
-    if (!ok) return;
-    const deleted = await deleteSession(session.id);
-    if (deleted && pinnedSet.has(session.id)) {
+  const [pendingDelete, setPendingDelete] = useState<Session | null>(null);
+
+  const remove = async (sessionId: string) => {
+    const deleted = await deleteSession(sessionId);
+    if (deleted && pinnedSet.has(sessionId)) {
       // Clear a stale pin for the now-deleted session.
-      togglePin(session.id);
+      togglePin(sessionId);
     }
   };
 
@@ -163,17 +149,13 @@ export function SessionsView() {
         {/* ── header ──────────────────────────────────────────── */}
         <div className="flex items-start justify-between gap-4">
           <div>
-            <h1 className="text-[21px] font-semibold leading-7 tracking-[-0.01em]">
-              Sessions
-            </h1>
+            <h1 className="text-[21px] font-semibold leading-7 tracking-[-0.01em]">Sessions</h1>
             <p className="mt-0.5 text-[12.5px] text-muted-foreground">
               Resume any past conversation. Pinned sessions stay at the top.
             </p>
           </div>
           <div className="flex shrink-0 items-center gap-2 pt-0.5">
-            <button
-              className="flex h-8 items-center gap-1.5 rounded-lg border border-[hsl(var(--border-muted))] bg-card px-3 text-[12px] font-medium text-foreground hover:border-muted-foreground/30"
-            >
+            <button className="flex h-8 items-center gap-1.5 rounded-lg border border-[hsl(var(--border-muted))] bg-card px-3 text-[12px] font-medium text-foreground hover:border-muted-foreground/30">
               <Download className="h-3.5 w-3.5 text-muted-foreground" />
               Import
             </button>
@@ -280,16 +262,26 @@ export function SessionsView() {
           {pinned.length > 0 && (
             <>
               <SectionLabel icon={<Pin className="h-2.5 w-2.5" />} label="Pinned" />
-              {pinned.map((s) => (
-                <SessionCard
-                  key={s.id}
-                  session={s}
-                  pinned
-                  onPin={() => togglePin(s.id)}
-                  onResume={() => { select(s.id); setMainView("editor"); }}
-                  onDelete={() => void remove(s)}
-                />
-              ))}
+              <ul role="list" aria-label="Pinned sessions">
+                {pinned.map((s) => (
+                  <SessionRow
+                    key={s.id}
+                    row={sessionRowModel(s, pinnedSessions)}
+                    active={s.id === activeSessionId}
+                    // This surface lists across every workspace, so the basename is what tells two
+                    // same-titled Sessions apart (R15.3).
+                    showWorkspace
+                    onSelect={() => {
+                      select(s.id);
+                      setMainView("editor");
+                    }}
+                    onTogglePin={() => togglePin(s.id)}
+                    onDelete={() => {
+                      setPendingDelete(s);
+                    }}
+                  />
+                ))}
+              </ul>
             </>
           )}
 
@@ -301,17 +293,24 @@ export function SessionsView() {
                 label="Recent"
                 className={pinned.length > 0 ? "mt-4" : undefined}
               />
-              {recent.map((s, i) => (
-                <SessionCard
-                  key={s.id}
-                  session={s}
-                  pinned={false}
-                  highlight={i === 0}
-                  onPin={() => togglePin(s.id)}
-                  onResume={() => { select(s.id); setMainView("editor"); }}
-                  onDelete={() => void remove(s)}
-                />
-              ))}
+              <ul role="list" aria-label="Recent sessions">
+                {recent.map((s) => (
+                  <SessionRow
+                    key={s.id}
+                    row={sessionRowModel(s, pinnedSessions)}
+                    active={s.id === activeSessionId}
+                    showWorkspace
+                    onSelect={() => {
+                      select(s.id);
+                      setMainView("editor");
+                    }}
+                    onTogglePin={() => togglePin(s.id)}
+                    onDelete={() => {
+                      setPendingDelete(s);
+                    }}
+                  />
+                ))}
+              </ul>
             </>
           )}
 
@@ -323,6 +322,17 @@ export function SessionsView() {
           )}
         </div>
       </div>
+
+      <SessionDeleteDialog
+        session={pendingDelete}
+        onCancel={() => {
+          setPendingDelete(null);
+        }}
+        onConfirm={(sessionId) => {
+          setPendingDelete(null);
+          void remove(sessionId);
+        }}
+      />
     </ScrollArea>
   );
 }
@@ -356,16 +366,9 @@ function StatsCard({
         {dot && (
           <span className="pulse-status-dot h-1.5 w-1.5 shrink-0 rounded-full bg-emerald-400" />
         )}
-        <span className="font-mono text-[17px] font-semibold leading-none">
-          {value}
-        </span>
+        <span className="font-mono text-[17px] font-semibold leading-none">{value}</span>
       </div>
-      <p
-        className={cn(
-          "mt-1.5 text-[10px] text-muted-foreground/60",
-          monoSub && "font-mono",
-        )}
-      >
+      <p className={cn("mt-1.5 text-[10px] text-muted-foreground/60", monoSub && "font-mono")}>
         {sub}
       </p>
     </div>
@@ -389,126 +392,6 @@ function SectionLabel({
       <span className="text-[10px] font-semibold uppercase tracking-[0.09em] text-muted-foreground/50">
         {label}
       </span>
-    </div>
-  );
-}
-
-/* ── SessionCard ───────────────────────────────────────────────── */
-
-function SessionCard({
-  session,
-  pinned,
-  highlight,
-  onPin,
-  onResume,
-  onDelete,
-}: {
-  session: Session;
-  pinned: boolean;
-  highlight?: boolean;
-  onPin: () => void;
-  onResume: () => void;
-  onDelete: () => void;
-}) {
-  const { quant, params, file } = extractModelInfo(session.model);
-  const isActive = session.status === "active";
-  const msgCount = session.messages?.length ?? 0;
-
-  return (
-    <div
-      className={cn(
-        "group flex items-center justify-between gap-4 rounded-[10px] border px-4 py-2.5 transition-colors",
-        highlight
-          ? "border-muted-foreground/30 bg-accent"
-          : "border-[hsl(var(--border-muted))] bg-card hover:bg-accent/50",
-      )}
-    >
-      {/* Left side */}
-      <div className="min-w-0">
-        <div className="flex items-center gap-2">
-          <span
-            className={cn(
-              "h-1.5 w-1.5 shrink-0 rounded-full",
-              isActive
-                ? "pulse-status-dot bg-emerald-400"
-                : "bg-muted-foreground/40",
-            )}
-          />
-          <span className="truncate text-[13px] font-medium">{session.title}</span>
-          {pinned && (
-            <Pin className="h-3 w-3 shrink-0 rotate-45 text-primary" />
-          )}
-        </div>
-        <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
-          <span
-            className={cn(
-              "rounded px-1.5 py-px font-mono text-[9.5px]",
-              isActive
-                ? "border border-emerald-400/25 bg-emerald-400/10 text-emerald-400"
-                : "border border-muted-foreground/20 bg-muted text-muted-foreground",
-            )}
-          >
-            {session.status}
-          </span>
-          <span className="rounded border border-[hsl(var(--border-muted))] bg-accent px-1.5 py-px font-mono text-[9.5px] text-muted-foreground">
-            {session.provider ?? "llamacpp"}
-          </span>
-          {file && (
-            <span
-              className="max-w-[280px] truncate rounded border border-[hsl(var(--border-muted))] bg-accent px-1.5 py-px font-mono text-[9.5px] text-muted-foreground"
-              title={file}
-            >
-              {file}
-            </span>
-          )}
-          {(quant || params) && (
-            <span className="rounded border border-[hsl(var(--border-muted))] bg-accent px-1.5 py-px font-mono text-[9.5px] text-muted-foreground/60">
-              {[quant, params].filter(Boolean).join(" · ")}
-            </span>
-          )}
-        </div>
-        <p className="mt-1.5 flex items-center gap-1 font-mono text-[10px] text-muted-foreground/50">
-          <span>Updated {formatDate(session.updated_at)} · {msgCount} messages</span>
-          <span className="text-muted-foreground/30">·</span>
-          <Folder className="h-2.5 w-2.5 shrink-0" />
-          <span
-            data-testid="session-card-root"
-            title={session.workspace_root}
-            className="truncate"
-          >
-            {sessionListItem(session).rootBasename}
-          </span>
-        </p>
-      </div>
-
-      {/* Right side — actions */}
-      <div className="flex shrink-0 items-center gap-1">
-        <button
-          onClick={onPin}
-          className="flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground"
-          title={pinned ? "Unpin session" : "Pin session"}
-        >
-          <Pin className="h-3.5 w-3.5" />
-        </button>
-        <button
-          onClick={onDelete}
-          className="flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-destructive"
-          title="Delete session"
-        >
-          <Trash2 className="h-3.5 w-3.5" />
-        </button>
-        <button
-          onClick={onResume}
-          className={cn(
-            "ml-1 h-7 rounded-lg px-3 text-[11.5px] font-medium",
-            highlight
-              ? "bg-primary text-primary-foreground hover:bg-primary/90"
-              : "border border-[hsl(var(--border-muted))] bg-accent text-foreground hover:border-muted-foreground/30",
-          )}
-        >
-          Resume
-        </button>
-      </div>
     </div>
   );
 }

@@ -1,6 +1,8 @@
 /**
  * The plan card — zoc-agent-chat-rebuild R10.1, R10.7, R10.9, R10.11, R10.15, R16.7, R21.5, task 18.2.
  *
+ * Feature: zoc-agent-chat-rebuild, task 18.2 (R10.1, R10.7, R10.9, R10.11, R10.15, R16.7).
+ *
  * The decision tier's one card: a file list with an action badge and per-file change counts, the verify
  * line, and a footer that is the commit point. After an apply it stops being a review and becomes a
  * receipt naming what landed, under which checkpoint, and what rolling back would do.
@@ -73,6 +75,14 @@ export interface PlanRowProps {
   onDiscard?: () => void;
   onRegenerate?: (path: string) => void;
   onRollback?: (checkpointId: string) => void;
+  /**
+   * R1.4: a read-only viewer reads the plan and decides nothing.
+   *
+   * Set, the footer keeps its tally and loses its two controls, and every file's hunks become
+   * undecidable — the card is still the whole answer to "what was proposed", which is what a viewer
+   * came for.
+   */
+  readOnly?: boolean;
   className?: string;
 }
 
@@ -85,6 +95,7 @@ export function PlanRow({
   onDiscard,
   onRegenerate,
   onRollback,
+  readOnly = false,
   className,
 }: PlanRowProps) {
   const hunkDecisions = useChatSurface((state) => state.hunkDecisions);
@@ -224,6 +235,7 @@ export function PlanRow({
                   className="pl-6 pt-1"
                   diff={diff}
                   stale={stale}
+                  readOnly={readOnly}
                   decisions={fileDecisions}
                   isExpanded={(hunkId) => expanded.has(hunkRowKey(plan.planId, file.path, hunkId))}
                   onDecideHunk={(hunkId, decision) => {
@@ -278,7 +290,7 @@ export function PlanRow({
           </span>
         ) : null}
         <span className="flex-1" />
-        {confirmingDiscard ? (
+        {readOnly ? null : confirmingDiscard ? (
           <>
             <span style={{ color: "var(--zoc-text)", fontSize: "var(--zoc-text-label)" }}>
               Discard the plan? Nothing has been written.

@@ -1,6 +1,8 @@
 /**
  * The historical row — zoc-agent-chat-rebuild R23.2, task 16.3.
  *
+ * Feature: zoc-agent-chat-rebuild, task 16.3 (R23.2).
+ *
  * A pre-upgrade conversation contains legacy events with no Message_Part equivalent. R23.2 says
  * the surface renders a neutral row for them "rather than failing", and this is that row: one muted
  * line with an italic label naming the legacy event kind, its time, and the original record verbatim

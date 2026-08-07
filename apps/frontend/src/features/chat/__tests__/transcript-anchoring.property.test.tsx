@@ -86,7 +86,9 @@ function append(
 ): ZocUIMessage[] {
   const next = [...messages];
   for (let index = 0; index < rows; index += 1) {
-    next.push(assistantMessage(`late-${String(next.length)}`, `late answer ${String(next.length)}`));
+    next.push(
+      assistantMessage(`late-${String(next.length)}`, `late answer ${String(next.length)}`),
+    );
   }
   harness.setProps({ messages: next });
   flushFrame(harness);
@@ -101,26 +103,29 @@ function jumpControl(harness: TranscriptHarness): HTMLElement | null {
 describe("Feature: zoc-agent-chat-rebuild, Property 48: scroll anchoring holds in both branches", () => {
   it("keeps the newest row in view while anchored, across any sequence of appends (R20.7)", () => {
     fc.assert(
-      fc.property(fc.array(fc.integer({ min: 1, max: 4 }), { minLength: 1, maxLength: 4 }), (batches) => {
-        // Per *iteration*, not per test: the chat-local store is a module singleton, so an iteration
-        // that left the view un-anchored with a backlog would seed the next one with both.
-        cleanup();
-        resetChatSurface();
-        let messages = seed(SEED_ROWS);
-        const harness = renderTranscript({ messages, streaming: false });
-        const element = harness.scrollElement();
+      fc.property(
+        fc.array(fc.integer({ min: 1, max: 4 }), { minLength: 1, maxLength: 4 }),
+        (batches) => {
+          // Per *iteration*, not per test: the chat-local store is a module singleton, so an iteration
+          // that left the view un-anchored with a backlog would seed the next one with both.
+          cleanup();
+          resetChatSurface();
+          let messages = seed(SEED_ROWS);
+          const harness = renderTranscript({ messages, streaming: false });
+          const element = harness.scrollElement();
 
-        expect(useChatSurface.getState().anchored).toBe(true);
+          expect(useChatSurface.getState().anchored).toBe(true);
 
-        for (const rows of batches) {
-          messages = append(harness, messages, rows);
-          expect(distanceFromBottom(element)).toBeLessThanOrEqual(ANCHOR_GUARANTEE_PX);
-          // An anchored transcript has nothing to jump to.
-          expect(jumpControl(harness)).toBeNull();
-        }
+          for (const rows of batches) {
+            messages = append(harness, messages, rows);
+            expect(distanceFromBottom(element)).toBeLessThanOrEqual(ANCHOR_GUARANTEE_PX);
+            // An anchored transcript has nothing to jump to.
+            expect(jumpControl(harness)).toBeNull();
+          }
 
-        harness.unmount();
-      }),
+          harness.unmount();
+        },
+      ),
       { numRuns: 200 },
     );
   });

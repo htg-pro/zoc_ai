@@ -157,10 +157,12 @@ describe("Feature: zoc-agent-chat-rebuild, task 22.8: the run snapshot", () => {
   it("marks an interrupted Run continuable, and a cancelled one not", () => {
     const cut = [assistant([lifecycle("interrupted", { code: "stream_lost" })])];
     const stopped = [assistant([lifecycle("cancelled")])];
-    expect(runSnapshotOf({ messages: cut, status: "ready", ...NO_APPROVAL }).interrupted).toBe(true);
-    expect(
-      runSnapshotOf({ messages: stopped, status: "ready", ...NO_APPROVAL }).interrupted,
-    ).toBe(false);
+    expect(runSnapshotOf({ messages: cut, status: "ready", ...NO_APPROVAL }).interrupted).toBe(
+      true,
+    );
+    expect(runSnapshotOf({ messages: stopped, status: "ready", ...NO_APPROVAL }).interrupted).toBe(
+      false,
+    );
   });
 
   it("times the Run from its earliest part, not its newest (R13.9)", () => {
@@ -177,8 +179,12 @@ describe("Feature: zoc-agent-chat-rebuild, task 22.8: the run snapshot", () => {
   it("shows the live rate while active and drops it the moment the Run settles (R13.9, R13.10)", () => {
     const running = [assistant([lifecycle("running"), usage({ tokensPerSecond: 42 })])];
     const done = [assistant([lifecycle("completed", { seq: 12 }), usage({ tokensPerSecond: 42 })])];
-    expect(runSnapshotOf({ messages: running, status: "streaming", ...NO_APPROVAL }).tokensPerSecond).toBe(42);
-    expect(runSnapshotOf({ messages: done, status: "ready", ...NO_APPROVAL }).tokensPerSecond).toBeNull();
+    expect(
+      runSnapshotOf({ messages: running, status: "streaming", ...NO_APPROVAL }).tokensPerSecond,
+    ).toBe(42);
+    expect(
+      runSnapshotOf({ messages: done, status: "ready", ...NO_APPROVAL }).tokensPerSecond,
+    ).toBeNull();
   });
 
   it("ignores a rate of zero or a missing one rather than reporting it as measured", () => {
@@ -193,10 +199,7 @@ describe("Feature: zoc-agent-chat-rebuild, task 22.8: the run snapshot", () => {
   it("orders lifecycle parts by seq, so a replayed stream cannot rewind the state (R16.4)", () => {
     // The terminal part arrives in an earlier array slot than a replayed `running`.
     const messages = [
-      assistant([
-        lifecycle("completed", { seq: 20 }),
-        lifecycle("running", { seq: 4 }),
-      ]),
+      assistant([lifecycle("completed", { seq: 20 }), lifecycle("running", { seq: 4 })]),
     ];
     expect(runSnapshotOf({ messages, status: "ready", ...NO_APPROVAL }).state).toBe("completed");
   });
@@ -300,6 +303,8 @@ describe("Feature: zoc-agent-chat-rebuild, task 22.8: the empty state's suggesti
     const suggestions = suggestionsFor(null);
     expect(suggestions).toHaveLength(3);
     // Nothing that would need a workspace to answer, because R32.13 blocks a write-capable Run anyway.
-    expect(suggestions.every((suggestion) => !suggestion.prompt.includes("uncommitted"))).toBe(true);
+    expect(suggestions.every((suggestion) => !suggestion.prompt.includes("uncommitted"))).toBe(
+      true,
+    );
   });
 });

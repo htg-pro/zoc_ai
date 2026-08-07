@@ -1,6 +1,8 @@
 /**
  * Reaching the approval dock from elsewhere — zoc-agent-chat-rebuild R11.8, R21.3, task 19.1.
  *
+ * Feature: zoc-agent-chat-rebuild, task 19.1 (R11.8, R21.3).
+ *
  * Two exports, both about the same small problem: the transcript's line for a pending request has to be
  * able to move focus to the dock, and the dock has to be able to move focus to the request inside it.
  *

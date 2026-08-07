@@ -169,9 +169,7 @@ class IndexPersistence:
         self._atomic_binary(embeddings_path, lambda handle: np.save(handle, matrix))
         self._atomic_binary(
             bm25_path,
-            lambda handle: pickle.dump(
-                bm25_index, handle, protocol=pickle.HIGHEST_PROTOCOL
-            ),
+            lambda handle: pickle.dump(bm25_index, handle, protocol=pickle.HIGHEST_PROTOCOL),
         )
         chunk_payload = [chunk.model_dump(mode="json", by_alias=True) for chunk in chunk_rows]
         self._atomic_text(
@@ -221,14 +219,8 @@ class IndexPersistence:
                 current_embedder.dim,
             ):
                 return None
-            embeddings = tuple(
-                tuple(float(value) for value in row.tolist()) for row in matrix
-            )
-            if any(
-                not math.isfinite(value)
-                for row in embeddings
-                for value in row
-            ):
+            embeddings = tuple(tuple(float(value) for value in row.tolist()) for row in matrix)
+            if any(not math.isfinite(value) for row in embeddings for value in row):
                 return None
 
             bm25_path = self._artifact_path(directory, BM25_FILE)
@@ -247,9 +239,7 @@ class IndexPersistence:
         except Exception:
             return None
 
-    def _validated_directory(
-        self, workspace_root: Path | str, *, create: bool
-    ) -> Path:
+    def _validated_directory(self, workspace_root: Path | str, *, create: bool) -> Path:
         root = self.indices_root
         if create:
             root.mkdir(parents=True, exist_ok=True)
@@ -277,9 +267,7 @@ class IndexPersistence:
 
     @staticmethod
     def _atomic_text(path: Path, content: str) -> None:
-        IndexPersistence._atomic_binary(
-            path, lambda handle: handle.write(content.encode("utf-8"))
-        )
+        IndexPersistence._atomic_binary(path, lambda handle: handle.write(content.encode("utf-8")))
 
     @staticmethod
     def _atomic_binary(path: Path, write: Callable[[Any], object]) -> None:

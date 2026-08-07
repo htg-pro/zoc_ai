@@ -111,17 +111,12 @@ def conforming_payloads(draw: st.DrawFn) -> dict[str, object]:
         base["id"] = draw(st.text(min_size=1, max_size=12))
         base["status"] = draw(st.sampled_from(["pending", "active", "done"]))
     elif kind == "map-files":
-        base["readList"] = draw(
-            st.lists(st.text(min_size=1, max_size=8), max_size=8)
-        )
-        base["writeList"] = draw(
-            st.lists(st.text(min_size=1, max_size=8), max_size=4)
-        )
+        base["readList"] = draw(st.lists(st.text(min_size=1, max_size=8), max_size=8))
+        base["writeList"] = draw(st.lists(st.text(min_size=1, max_size=8), max_size=4))
         base["rationale"] = draw(st.text(max_size=20))
     elif kind == "read-files":
         base["files"] = [
-            {"path": p}
-            for p in draw(st.lists(st.text(min_size=1, max_size=8), max_size=3))
+            {"path": p} for p in draw(st.lists(st.text(min_size=1, max_size=8), max_size=3))
         ]
     elif kind == "edit-file":
         base["path"] = draw(st.text(min_size=1, max_size=12))
@@ -179,13 +174,35 @@ _REQUIRED_BY_KIND: dict[str, tuple[str, ...]] = {
     "done": ("type", "seq", "runId", "ts", "ok"),
     "recovery-attempt": ("type", "seq", "runId", "ts", "attempt", "failures"),
     "budget": (
-        "type", "seq", "runId", "ts", "tokensUsed", "tokenLimit", "iterations", "recoveries"
+        "type",
+        "seq",
+        "runId",
+        "ts",
+        "tokensUsed",
+        "tokenLimit",
+        "iterations",
+        "recoveries",
     ),
     "test-results": (
-        "type", "seq", "runId", "ts", "status", "command", "source", "passed", "failed", "exitCode"
+        "type",
+        "seq",
+        "runId",
+        "ts",
+        "status",
+        "command",
+        "source",
+        "passed",
+        "failed",
+        "exitCode",
     ),
     "context-compressed": (
-        "type", "seq", "runId", "ts", "originalTokens", "compressedTokens", "compressionRatio"
+        "type",
+        "seq",
+        "runId",
+        "ts",
+        "originalTokens",
+        "compressedTokens",
+        "compressionRatio",
     ),
 }
 
@@ -193,9 +210,7 @@ _REQUIRED_BY_KIND: dict[str, tuple[str, ...]] = {
 @st.composite
 def unknown_type_payloads(draw: st.DrawFn) -> dict[str, object]:
     """A payload whose ``type`` is a string but not one of the eight row kinds."""
-    bad_type = draw(
-        st.text(min_size=1, max_size=20).filter(lambda s: s not in VALID_TYPES)
-    )
+    bad_type = draw(st.text(min_size=1, max_size=20).filter(lambda s: s not in VALID_TYPES))
     return {
         "type": bad_type,
         "seq": draw(st.integers(min_value=0, max_value=1_000_000)),

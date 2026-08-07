@@ -11,11 +11,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import {
-  Tabs,
-  TabsList,
-  TabsTrigger,
-} from "@/components/ui/tabs";
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Button } from "@/components/ui/button";
 import { useApp } from "@/lib/store";
 import {
@@ -202,11 +198,7 @@ function SettingControl({
     );
   }
   return (
-    <Input
-      className="h-8 w-44"
-      value={String(value)}
-      onChange={(e) => onChange(e.target.value)}
-    />
+    <Input className="h-8 w-44" value={String(value)} onChange={(e) => onChange(e.target.value)} />
   );
 }
 

@@ -3,6 +3,8 @@
  * Part of task 9.10's unit suite: precedence order across the four source tiers,
  * root before nested, and a malformed source skipped with the rest still applied.
  *
+ * Feature: zoc-agent-chat-rebuild, task 9.10 (R30.1, R30.3, R30.4).
+ *
  * The contract block at the bottom is the one that matters most over time: it pins
  * this runtime copy of the classifier to the renderer's, because the whole reason
  * the copy exists is that the Rules display and the prompt must not be able to

@@ -1,6 +1,8 @@
 /**
  * The reasoning row — zoc-agent-chat-rebuild R8.2, R8.3, R8.4, R19.3, R21.4, task 15.6.
  *
+ * Feature: zoc-agent-chat-rebuild, task 15.6 (R8.2, R8.3, R8.4, R19.3, R21.4).
+ *
  * Reasoning is a *separate* disclosure from the answer, and separate is the requirement:
  * R8.2 asks for a visually distinct, independently collapsible region, so this is its own
  * component with its own open state rather than a section of `AnswerRow`. A user who wants

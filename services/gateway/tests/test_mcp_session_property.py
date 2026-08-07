@@ -59,7 +59,10 @@ def _init_response(request_id: int = 1) -> dict[str, object]:
 
 # Feature: mcp-host-and-servers, Property 5: Argv integrity on spawn
 @settings(max_examples=200)
-@given(command=st.text(min_size=1, max_size=8), args=st.lists(st.text(min_size=1, max_size=8), max_size=4))
+@given(
+    command=st.text(min_size=1, max_size=8),
+    args=st.lists(st.text(min_size=1, max_size=8), max_size=4),
+)
 def test_argv_integrity(command: str, args: list[str]) -> None:
     """Validates: Requirements 2.1, 9.1."""
     recorded: list[list[str]] = []
@@ -99,7 +102,10 @@ def test_env_overlay(inherited: dict[str, str], config: dict[str, str]) -> None:
 
 # Feature: mcp-host-and-servers, Property 7: Initialize-handshake ordering
 @settings(max_examples=200)
-@given(n_notifications=st.integers(min_value=0, max_value=3), n_roots=st.integers(min_value=0, max_value=3))
+@given(
+    n_notifications=st.integers(min_value=0, max_value=3),
+    n_roots=st.integers(min_value=0, max_value=3),
+)
 def test_initialize_ordering(n_notifications: int, n_roots: int) -> None:
     """Validates: Requirements 2.5."""
     outbound: list[bytes] = []

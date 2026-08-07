@@ -82,9 +82,27 @@ export const BUILTIN_PROVIDERS: ProviderConfig[] = [
     requiresKey: true,
     builtin: true,
     models: [
-      { id: "gemini-2.0-flash", name: "Gemini 2.0 Flash", contextWindow: 1_000_000, tools: true, vision: true },
-      { id: "gemini-1.5-pro", name: "Gemini 1.5 Pro", contextWindow: 2_000_000, tools: true, vision: true },
-      { id: "gemini-1.5-flash", name: "Gemini 1.5 Flash", contextWindow: 1_000_000, tools: true, vision: true },
+      {
+        id: "gemini-2.0-flash",
+        name: "Gemini 2.0 Flash",
+        contextWindow: 1_000_000,
+        tools: true,
+        vision: true,
+      },
+      {
+        id: "gemini-1.5-pro",
+        name: "Gemini 1.5 Pro",
+        contextWindow: 2_000_000,
+        tools: true,
+        vision: true,
+      },
+      {
+        id: "gemini-1.5-flash",
+        name: "Gemini 1.5 Flash",
+        contextWindow: 1_000_000,
+        tools: true,
+        vision: true,
+      },
     ],
   },
   {
@@ -94,8 +112,18 @@ export const BUILTIN_PROVIDERS: ProviderConfig[] = [
     requiresKey: true,
     builtin: true,
     models: [
-      { id: "llama-3.3-70b-versatile", name: "Llama 3.3 70B Versatile", contextWindow: 128_000, tools: true },
-      { id: "llama-3.1-8b-instant", name: "Llama 3.1 8B Instant", contextWindow: 128_000, tools: true },
+      {
+        id: "llama-3.3-70b-versatile",
+        name: "Llama 3.3 70B Versatile",
+        contextWindow: 128_000,
+        tools: true,
+      },
+      {
+        id: "llama-3.1-8b-instant",
+        name: "Llama 3.1 8B Instant",
+        contextWindow: 128_000,
+        tools: true,
+      },
       { id: "openai/gpt-oss-120b", name: "GPT-OSS 120B", contextWindow: 128_000, tools: true },
     ],
   },
@@ -107,7 +135,13 @@ export const BUILTIN_PROVIDERS: ProviderConfig[] = [
     builtin: true,
     models: [
       { id: "grok-2-latest", name: "Grok 2", contextWindow: 131_072, tools: true },
-      { id: "grok-2-vision-latest", name: "Grok 2 Vision", contextWindow: 32_768, tools: true, vision: true },
+      {
+        id: "grok-2-vision-latest",
+        name: "Grok 2 Vision",
+        contextWindow: 32_768,
+        tools: true,
+        vision: true,
+      },
       { id: "grok-beta", name: "Grok Beta", contextWindow: 131_072, tools: true },
     ],
   },
@@ -123,8 +157,20 @@ export const BUILTIN_PROVIDERS: ProviderConfig[] = [
       // model id — so listing it as a second row would offer a model that does
       // not exist, and pinning 1M here would size the meter against a window the
       // Run will not have.
-      { id: "claude-opus-5", name: "Claude Opus 5", contextWindow: 200_000, tools: true, vision: true },
-      { id: "claude-sonnet-5", name: "Claude Sonnet 5", contextWindow: 200_000, tools: true, vision: true },
+      {
+        id: "claude-opus-5",
+        name: "Claude Opus 5",
+        contextWindow: 200_000,
+        tools: true,
+        vision: true,
+      },
+      {
+        id: "claude-sonnet-5",
+        name: "Claude Sonnet 5",
+        contextWindow: 200_000,
+        tools: true,
+        vision: true,
+      },
       {
         id: "claude-haiku-4-5-20251001",
         name: "Claude Haiku 4.5",
@@ -175,7 +221,8 @@ function read(): ProviderConfig[] {
     const raw = store.getItem(STORE_KEY);
     if (!raw) return BUILTIN_PROVIDERS.map((p) => ({ ...p, models: [...p.models] }));
     const parsed = JSON.parse(raw);
-    if (!Array.isArray(parsed)) return BUILTIN_PROVIDERS.map((p) => ({ ...p, models: [...p.models] }));
+    if (!Array.isArray(parsed))
+      return BUILTIN_PROVIDERS.map((p) => ({ ...p, models: [...p.models] }));
     return mergeWithBuiltins(parsed as ProviderConfig[]);
   } catch {
     return BUILTIN_PROVIDERS.map((p) => ({ ...p, models: [...p.models] }));

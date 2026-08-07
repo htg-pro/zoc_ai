@@ -1,6 +1,8 @@
 /**
  * The transcript's line for an approval — zoc-agent-chat-rebuild R11.8, R11.9, task 19.1.
  *
+ * Feature: zoc-agent-chat-rebuild, task 19.1 (R11.8, R11.9).
+ *
  * One muted line at the position the request arrived in, and a control that moves focus to the dock.
  * While the request is pending it says so; once decided it says what was decided, so a transcript read
  * later records the decision rather than a question that appears never to have been answered.

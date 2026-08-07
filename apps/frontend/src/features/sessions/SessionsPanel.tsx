@@ -1,35 +1,38 @@
-import { useEffect, useMemo, useState } from "react";
+/**
+ * The workspace sessions side panel — zoc-agent-chat-rebuild R15.3, R15.4, R35.2, task 25.2.
+ *
+ * Rewritten against {@link SessionRow} and {@link SessionDeleteDialog} rather than repointed. It used to
+ * carry its own `SessionRow` — an inline rename editor plus hover pin/delete buttons — which was one of the
+ * two row markups R35.2 asks to consolidate; the other was `SessionsView`'s `SessionCard`. Both now render
+ * the 22.5 row, so a change to how a Session presents itself lands in one file.
+ *
+ * ## What did not consolidate
+ *
+ * The recency grouping stays here, reading `groupSessions` out of the kept-as-is `lib/session-query.ts`.
+ * That is why this file renders {@link SessionRow} directly instead of {@link SessionList}: the list owns a
+ * search box, filter tabs, and its own scope-partition-sort pipeline, so one list per group would give four
+ * search boxes and would re-sort groups that are already ordered. The rows are what R35.2 is about.
+ *
+ * The `window.confirm` delete gate is gone. It was untrappable, unstylable, and absent from the
+ * accessibility tree, so the R15.4 confirmation could not be asserted through it at all.
+ */
+import { useMemo, useState } from "react";
 import type { Session } from "@zoc-studio/shared-types";
-import { Check, ChevronsDownUp, Folder, Pencil, Pin, PinOff, Plus, Search, Trash2, X } from "lucide-react";
+import { ChevronsDownUp, Pin, Plus, Search } from "lucide-react";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { useApp } from "@/lib/store";
 import { groupSessions } from "@/lib/session-query";
-import { sessionListItem } from "@/features/agent/session-origin";
-import { cn } from "@/lib/utils";
+import { SessionDeleteDialog } from "./SessionDeleteDialog";
+import { SessionRow } from "./SessionRow";
+import { sessionRowModel } from "./session-list-model";
 
-type Group = { key: "pinned" | "today" | "yesterday" | "older"; label: string; sessions: Session[] };
+type Group = {
+  key: "pinned" | "today" | "yesterday" | "older";
+  label: string;
+  sessions: Session[];
+};
 
-function modelLabel(model: string | null | undefined): string {
-  if (!model) return "—";
-  const clean = model.replace(/\.gguf$/i, "");
-  const quantMatch = model.match(/[._-](Q\d+[_A-Z]*|F16|F32)/i);
-  const paramMatch = model.match(/(\d+B|\d+M)/i);
-  const quant = quantMatch ? quantMatch[1] : "";
-  const param = paramMatch ? paramMatch[1] : "";
-  if (param || quant) return [param, quant].filter(Boolean).join(" · ");
-  return clean.length > 22 ? `${clean.slice(0, 22)}…` : clean;
-}
-
-function timeLabel(iso: string): string {
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return "—";
-  return d.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
-}
-
-function groupSessionsForPanel(
-  sessions: Session[],
-  pinned: Record<string, true>,
-): Group[] {
+function groupSessionsForPanel(sessions: Session[], pinned: Record<string, true>): Group[] {
   // Compute the display offset and `now` at the component/selector boundary and
   // pass them into the canonical pure `groupSessions` (which never reads the
   // host clock itself). `-getTimezoneOffset()` gives the display-tz offset in
@@ -64,6 +67,7 @@ export function SessionsPanel() {
   const workspaceRoot = useApp((s) => s.workspaceRoot);
 
   const groups = useMemo(() => groupSessionsForPanel(sessions, pinned), [sessions, pinned]);
+  const [pendingDelete, setPendingDelete] = useState<Session | null>(null);
 
   const onNew = async () => {
     // No "/" fallback: a session needs a real folder (R2.x). Disabled below when
@@ -86,12 +90,6 @@ export function SessionsPanel() {
     ).trim();
     return root !== "" && root !== "/";
   })();
-
-  const onDelete = async (id: string, title: string) => {
-    const ok = window.confirm(`Delete "${title}" and its chat history?`);
-    if (!ok) return;
-    await deleteSession(id);
-  };
 
   return (
     <div className="flex h-full min-h-0 min-w-0 flex-col">
@@ -144,25 +142,42 @@ export function SessionsPanel() {
                   {group.label}
                 </span>
               </div>
-              {group.sessions.map((s) => (
-                <SessionRow
-                  key={s.id}
-                  session={s}
-                  isActive={s.id === active}
-                  isPinned={!!pinned[s.id]}
-                  onSelect={() => {
-                    select(s.id);
-                    setMainView("editor");
-                  }}
-                  onPin={() => togglePin(s.id)}
-                  onRename={(title) => renameSession(s.id, title)}
-                  onDelete={() => void onDelete(s.id, s.title)}
-                />
-              ))}
+              <ul role="list" aria-label={group.label}>
+                {group.sessions.map((s) => (
+                  <SessionRow
+                    key={s.id}
+                    row={sessionRowModel(s, pinned)}
+                    active={s.id === active}
+                    // Rows here span every workspace the store knows about, so the basename is what tells
+                    // two same-titled Sessions apart (R15.3).
+                    showWorkspace
+                    onSelect={() => {
+                      select(s.id);
+                      setMainView("editor");
+                    }}
+                    onTogglePin={() => togglePin(s.id)}
+                    onRename={(title) => void renameSession(s.id, title)}
+                    onDelete={() => {
+                      setPendingDelete(s);
+                    }}
+                  />
+                ))}
+              </ul>
             </div>
           );
         })}
       </ScrollArea>
+
+      <SessionDeleteDialog
+        session={pendingDelete}
+        onCancel={() => {
+          setPendingDelete(null);
+        }}
+        onConfirm={(sessionId) => {
+          setPendingDelete(null);
+          void deleteSession(sessionId);
+        }}
+      />
 
       {/* ── footer ──────────────────────────────── */}
       <button
@@ -172,195 +187,6 @@ export function SessionsPanel() {
         <span>Open sessions view</span>
         <span className="text-xs">→</span>
       </button>
-    </div>
-  );
-}
-
-function SessionRow({
-  session,
-  isActive,
-  isPinned,
-  onSelect,
-  onPin,
-  onRename,
-  onDelete,
-}: {
-  session: Session;
-  isActive: boolean;
-  isPinned: boolean;
-  onSelect: () => void;
-  onPin: () => void;
-  onRename: (title: string) => Promise<boolean>;
-  onDelete: () => void;
-}) {
-  const isRunning = session.status === "active";
-  const [editing, setEditing] = useState(false);
-  const [draft, setDraft] = useState(session.title);
-
-  useEffect(() => {
-    if (!editing) setDraft(session.title);
-  }, [editing, session.title]);
-
-  const submitRename = async () => {
-    const title = draft.trim();
-    if (!title || title === session.title) {
-      setEditing(false);
-      setDraft(session.title);
-      return;
-    }
-    const ok = await onRename(title);
-    if (ok) setEditing(false);
-  };
-
-  return (
-    <div
-      data-testid="session-row"
-      data-session-id={session.id}
-      className={cn(
-        "group relative mt-0.5 rounded-lg px-2.5 py-[7px] transition-colors",
-        isActive ? "bg-[hsl(var(--primary)/0.10)]" : "hover:bg-accent",
-      )}
-    >
-      {isActive && (
-        <span className="absolute left-0 top-1/2 h-[58%] w-[2px] -translate-y-1/2 rounded-r bg-primary" />
-      )}
-
-      {editing ? (
-        <div className="pr-14">
-          <input
-            value={draft}
-            onChange={(e) => setDraft(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter") {
-                e.preventDefault();
-                void submitRename();
-              }
-              if (e.key === "Escape") {
-                e.preventDefault();
-                setDraft(session.title);
-                setEditing(false);
-              }
-            }}
-            autoFocus
-            data-testid="session-rename-input"
-            className="h-6 w-full rounded border border-[hsl(var(--border-muted))] bg-background px-1.5 text-[12.5px] text-foreground outline-none focus:border-primary"
-            aria-label={`Rename ${session.title}`}
-          />
-        </div>
-      ) : (
-        <button type="button" onClick={onSelect} className="w-full text-left">
-          <div className="flex items-center gap-2">
-            <span
-              className={cn(
-                "h-1.5 w-1.5 shrink-0 rounded-full",
-                isRunning ? "animate-pulse-dot-green bg-success" : "bg-muted-foreground/40",
-              )}
-            />
-            <span
-              data-testid="session-row-title"
-              className={cn(
-                "truncate text-[12.5px] font-medium",
-                isActive ? "text-foreground" : "text-foreground/85",
-              )}
-            >
-              {session.title}
-            </span>
-          </div>
-          <div className="mt-1 flex items-center justify-between gap-2 pl-[14px]">
-            <span className="truncate rounded border border-[hsl(var(--border-muted))] bg-accent/60 px-1 py-px font-mono text-[9.5px] text-muted-foreground">
-              {modelLabel(session.model)}
-            </span>
-            <span
-              data-testid="session-row-root"
-              title={session.workspace_root}
-              className="flex min-w-0 items-center gap-0.5 truncate font-mono text-[9.5px] text-muted-foreground/60"
-            >
-              <Folder className="h-2 w-2 shrink-0" />
-              <span className="truncate">{sessionListItem(session).rootBasename}</span>
-            </span>
-            <span className="shrink-0 font-mono text-[9.5px] text-muted-foreground/60">
-              {timeLabel(session.updated_at)}
-            </span>
-          </div>
-        </button>
-      )}
-
-      {/* Hover actions */}
-      <div className="absolute right-1 top-1 flex items-center gap-0.5 opacity-0 transition-opacity group-hover:opacity-100 focus-within:opacity-100">
-        {editing ? (
-          <>
-            <button
-              type="button"
-              data-testid="session-rename-save"
-              className="flex h-5 w-5 items-center justify-center rounded text-muted-foreground/60 hover:bg-accent hover:text-success"
-              onClick={(e) => {
-                e.stopPropagation();
-                void submitRename();
-              }}
-              aria-label={`Save ${session.title}`}
-              title="Save name"
-            >
-              <Check className="h-2.5 w-2.5" />
-            </button>
-            <button
-              type="button"
-              className="flex h-5 w-5 items-center justify-center rounded text-muted-foreground/60 hover:bg-accent hover:text-foreground"
-              onClick={(e) => {
-                e.stopPropagation();
-                setDraft(session.title);
-                setEditing(false);
-              }}
-              aria-label={`Cancel rename ${session.title}`}
-              title="Cancel rename"
-            >
-              <X className="h-2.5 w-2.5" />
-            </button>
-          </>
-        ) : (
-          <button
-            type="button"
-            data-testid="session-rename-button"
-            className="flex h-5 w-5 items-center justify-center rounded text-muted-foreground/60 hover:bg-accent hover:text-foreground"
-            onClick={(e) => {
-              e.stopPropagation();
-              setEditing(true);
-            }}
-            aria-label={`Rename ${session.title}`}
-            title="Rename session"
-          >
-            <Pencil className="h-2.5 w-2.5" />
-          </button>
-        )}
-        <button
-          type="button"
-          className={cn(
-            "flex h-5 w-5 items-center justify-center rounded text-muted-foreground/60 hover:bg-accent hover:text-foreground",
-            isPinned && "text-primary",
-          )}
-          onClick={(e) => {
-            e.stopPropagation();
-            onPin();
-          }}
-          aria-label={isPinned ? `Unpin ${session.title}` : `Pin ${session.title}`}
-          title={isPinned ? "Unpin" : "Pin"}
-          disabled={editing}
-        >
-          {isPinned ? <PinOff className="h-2.5 w-2.5" /> : <Pin className="h-2.5 w-2.5" />}
-        </button>
-        <button
-          type="button"
-          className="flex h-5 w-5 items-center justify-center rounded text-muted-foreground/60 hover:bg-accent hover:text-destructive"
-          onClick={(e) => {
-            e.stopPropagation();
-            onDelete();
-          }}
-          aria-label={`Delete ${session.title}`}
-          title="Delete session"
-          disabled={editing}
-        >
-          <Trash2 className="h-2.5 w-2.5" />
-        </button>
-      </div>
     </div>
   );
 }

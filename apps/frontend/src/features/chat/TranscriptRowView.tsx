@@ -1,6 +1,8 @@
 /**
  * The transcript row renderer — zoc-agent-chat-rebuild task 17.1.
  *
+ * Feature: zoc-agent-chat-rebuild, task 17.1.
+ *
  * One `TranscriptRow` drawn. Paired with `transcript-model.ts` and split from it for the reason
  * `reasoning-duration.ts` gives: a module exporting both a component and a function is a
  * fast-refresh boundary, and the model is what the properties import — a test asserting which rows
@@ -27,6 +29,7 @@ import { CompactionRow } from "./CompactionRow";
 import { ErrorRow } from "./ErrorRow";
 import { HistoricalRow } from "./HistoricalRow";
 import { ReasoningRow } from "./ReasoningRow";
+import { SourcesRow } from "./SourcesRow";
 import { PermissionWaitingRow } from "./permission/PermissionWaitingRow";
 import { DiffReview } from "./review/DiffReview";
 import { PlanRow } from "./review/PlanRow";
@@ -58,54 +61,85 @@ export function TranscriptRowView({
   onErrorContinue,
   resolveFoldedTurn,
 }: TranscriptRowViewProps) {
+  const attribute = (content: React.ReactNode) =>
+    row.agentName === undefined ? (
+      content
+    ) : (
+      <div className="flex flex-col gap-1" data-zoc-agent-attribution={row.agentName}>
+        <span
+          className="w-fit rounded-[var(--zoc-radius-chip)] border px-1.5 py-0.5 font-mono"
+          style={{
+            borderColor: "var(--zoc-border)",
+            color: "var(--zoc-agent)",
+            fontSize: "var(--zoc-text-label)",
+          }}
+        >
+          Sub-agent · {row.agentName}
+        </span>
+        {content}
+      </div>
+    );
+
   switch (row.kind) {
     case "user":
-      return <UserTurnRow text={row.text} />;
+      return (
+        <UserTurnRow
+          text={row.text}
+          {...(row.attachments === undefined ? {} : { attachments: row.attachments })}
+        />
+      );
 
     case "answer":
-      return <AnswerRow text={row.text} streaming={row.streaming} />;
+      return attribute(
+        <AnswerRow
+          text={row.text}
+          streaming={row.streaming}
+          {...(row.citations === undefined ? {} : { citations: row.citations })}
+          {...(row.sources === undefined ? {} : { sources: row.sources })}
+        />,
+      );
 
     case "reasoning":
-      return (
+      return attribute(
         <ReasoningRow
           text={row.text}
           streaming={row.streaming}
           terminal={row.terminal}
           elapsedMs={row.elapsedMs}
           redacted={row.redacted}
-        />
+        />,
       );
 
     case "tools":
-      return (
+      return attribute(
         <ToolTimeline
           entries={row.entries}
           {...(onToolRetry === undefined ? {} : { onRetry: onToolRetry })}
-        />
+        />,
       );
 
     case "usage":
-      return (
-        <UsageRow usage={row.usage} {...(row.model === undefined ? {} : { model: row.model })} />
+      return attribute(
+        <UsageRow usage={row.usage} {...(row.model === undefined ? {} : { model: row.model })} />,
       );
 
     case "error":
-      return (
+      return attribute(
         <ErrorRow
           error={row.error}
           {...(onErrorRetry === undefined ? {} : { onRetry: onErrorRetry })}
           {...(onErrorContinue !== undefined && isInterrupted(row.error)
             ? { onContinue: onErrorContinue }
             : {})}
-        />
+        />,
       );
 
     case "compaction":
-      return (
+      return attribute(
         <CompactionRow
           compaction={row.compaction}
           {...(resolveFoldedTurn === undefined ? {} : { resolveFoldedTurn })}
-        />
+        />,
       );
 
     case "historical":
@@ -115,19 +149,18 @@ export function TranscriptRowView({
       return <UnknownPartRow discriminant={row.discriminant} />;
 
     case "plan":
-      return <PlanRowSlot row={row} />;
+      return attribute(<PlanRowSlot row={row} />);
 
     case "diff":
-      return <DiffRowSlot row={row} />;
+      return attribute(<DiffRowSlot row={row} />);
 
     case "permission":
       // The decision itself is made in the dock, outside this scroll container (R11.8). What belongs
       // here is the record: what was asked, and what was decided.
-      return <PermissionWaitingRow request={row.request} />;
+      return attribute(<PermissionWaitingRow request={row.request} />);
 
-    // ── Classified, not yet drawn ──────────────────────────────────────
     case "sources":
-      return null;
+      return attribute(<SourcesRow source={row.source} />);
   }
 }
 
@@ -159,6 +192,7 @@ function PlanRowSlot({ row }: { row: Extract<TranscriptRow, { kind: "plan" }> })
       plan={row.plan}
       diffs={row.diffs}
       receipt={receipt}
+      readOnly={surface.readOnly === true}
       {...(surface.onDisk === undefined ? {} : { onDisk: surface.onDisk })}
       {...(surface.onApply === undefined ? {} : { onApply: surface.onApply })}
       {...(surface.onDiscard === undefined
@@ -205,6 +239,7 @@ function DiffRowSlot({ row }: { row: Extract<TranscriptRow, { kind: "diff" }> })
     <DiffReview
       diff={row.diff}
       stale={stale}
+      readOnly={surface.readOnly === true}
       decisions={decisions ?? {}}
       isExpanded={(hunkId) => expanded.has(key(hunkId))}
       onDecideHunk={(hunkId, decision) => {

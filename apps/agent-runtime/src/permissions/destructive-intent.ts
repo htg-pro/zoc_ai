@@ -1,6 +1,8 @@
 /**
  * Destructive-intent detection — one ruleset, shared by the gate and the composer's pre-flight warning (R11.6).
  *
+ * Feature: zoc-agent-chat-rebuild, R11.6.
+ *
  * **A copy, not a move** — zoc-agent-chat-rebuild task 8.1.
  *
  * The `lib` original at `apps/frontend/src/lib/destructive-intent.ts` stays in place until

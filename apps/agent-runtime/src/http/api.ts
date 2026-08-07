@@ -1,6 +1,8 @@
 /**
  * The runtime's route table, composed — zoc-agent-chat-rebuild 9.7, design.md:1404.
  *
+ * Feature: zoc-agent-chat-rebuild, task 9.7.
+ *
  * One function that registers every group, so there is a single answer to "what
  * does this process expose". The groups themselves live in their own modules and
  * know nothing about each other; this file is the only place that knows there are
@@ -24,9 +26,9 @@
  * POST /v1/inline-edit                  editor-routes.ts
  * ```
  *
- * One entry from the design's list is absent and is absent on purpose: `/v1/mcp`
- * belongs to M2's §30. Registering an endpoint before the thing behind it exists would
- * mean a 200 describing nothing.
+ * M2's MCP control surface is registered here as concrete `/v1/mcp/*` routes. The
+ * collection root itself remains undefined, so clients cannot mistake an empty 200
+ * for a server/tool snapshot.
  *
  * **`deps` is one object per group rather than one flat bag.** The groups have
  * genuinely disjoint needs — the catalogue routes must not be able to reach the run
@@ -40,6 +42,7 @@ import { registerBenchmarkRoutes, type BenchmarkRoutesDeps } from "./benchmark-r
 import { registerCompactionRoutes, type CompactionRouteDeps } from "./compaction-routes.ts";
 import { registerEditorRoutes, type EditorRoutesDeps } from "./editor-routes.ts";
 import { registerPermissionRoutes, type PermissionRoutesDeps } from "./permission-routes.ts";
+import { registerMcpRoutes, type McpRouteDeps } from "./mcp-routes.ts";
 import { registerRunRoutes, type RunRoutesDeps } from "./run-routes.ts";
 import { registerSessionRoutes, type SessionRoutesDeps } from "./session-routes.ts";
 import type { Router } from "./routes.ts";
@@ -52,6 +55,7 @@ export interface ApiDeps {
   readonly editor: EditorRoutesDeps;
   readonly compaction: CompactionRouteDeps;
   readonly permissions: PermissionRoutesDeps;
+  readonly mcp: McpRouteDeps;
 }
 
 export function registerApiRoutes(router: Router, deps: ApiDeps): void {
@@ -62,4 +66,5 @@ export function registerApiRoutes(router: Router, deps: ApiDeps): void {
   registerCompactionRoutes(router, deps.compaction);
   registerSessionRoutes(router, deps.sessions);
   registerEditorRoutes(router, deps.editor);
+  registerMcpRoutes(router, deps.mcp);
 }

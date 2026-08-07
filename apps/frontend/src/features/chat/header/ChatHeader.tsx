@@ -1,6 +1,8 @@
 /**
  * The panel header — zoc-agent-chat-rebuild R11.1, R13.1, R13.9, R21.7, task 22.2.
  *
+ * Feature: zoc-agent-chat-rebuild, task 22.2 (R11.1, R13.1, R13.9, R21.7).
+ *
  * 48 px, one row, container-query responsive. Left to right: the mark, the session title as a switcher, the
  * model picker, the **Approval** control, the context figure, the run status pill, the menu.
  *
@@ -61,6 +63,7 @@ export interface ChatHeaderProps {
 
   onCompact?: () => void;
   onRestartRuntime?: () => void;
+  onOpenRules?: () => void;
   className?: string;
 }
 
@@ -82,6 +85,7 @@ export function ChatHeader({
   onCancelRun,
   onCompact,
   onRestartRuntime,
+  onOpenRules,
   className,
 }: ChatHeaderProps) {
   return (
@@ -130,6 +134,7 @@ export function ChatHeader({
       <ChatMenu
         {...(onCompact === undefined ? {} : { onCompact })}
         {...(onRestartRuntime === undefined ? {} : { onRestartRuntime })}
+        {...(onOpenRules === undefined ? {} : { onOpenRules })}
       />
     </header>
   );

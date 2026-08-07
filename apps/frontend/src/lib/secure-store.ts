@@ -1,15 +1,23 @@
 /**
  * Renderer secret façade — zoc-agent-chat-rebuild R14.2, R14.3, R23.5.
  *
- * **Additive until task 26.2.** `get` is still here and still working, and that
- * is deliberate rather than an oversight: the Legacy_Panel's `ModelPicker.tsx`
- * reads through `secureStore.get` for its key badge, so removing the method — or
- * revoking the `secret_get` capability behind it — makes the legacy
- * cloud-provider gate report "no key" for every provider on every mid-cutover
- * build. R14.2 becomes *structural* when 26.2 removes the capability; until then
- * it is conventional, and `has()` is what new code uses.
+ * **R14.2 is structural as of task 26.3.** There is no `get`. The renderer can
+ * ask whether a key exists, write one, and clear one; it cannot read one back,
+ * and the `secret_get` capability behind that read is revoked in
+ * `apps/desktop/capabilities/default.json`. Both halves matter — removing the
+ * method alone leaves the door open, and revoking the capability alone would
+ * have been *worse* than doing nothing, because `get`'s vault-unavailable
+ * `catch` fell through to the `localStorage` shadow: every caller would have
+ * silently started reading plaintext out of renderer-accessible storage while a
+ * capability-set test reported success.
  *
- * What ships now: `has(key)`, `set`/`clear` routed through the three-tier vault,
+ * The three callers that made this a real read path — `Providers.tsx`'s key
+ * field, `active-model-context.ts`, and `store.ts`'s `resolveProviderCreds` —
+ * were repointed first. Each of them wanted one of two things the value was
+ * never needed for: whether a key exists (`has`), or a credential the service
+ * on the other end resolves for itself (R7.8).
+ *
+ * What ships: `has(key)`, `set`/`clear` routed through the three-tier vault,
  * the backend-status query, and the one-shot migration that empties the
  * `localStorage` shadow (R14.3).
  *
@@ -22,7 +30,17 @@
  */
 import { isTauri } from "./tauri-bridge";
 
-const PREFIX = "zoc-studio.secret.";
+/**
+ * Namespace for the browser-preview shadow.
+ *
+ * Exported for the tests that assert on the shadow tier directly. With `get`
+ * gone they have no other way to observe what `set`/`clear` wrote, and a test
+ * that re-declared this string would keep passing vacuously if the prefix ever
+ * changed.
+ */
+export const SECRET_STORAGE_PREFIX = "zoc-studio.secret.";
+
+const PREFIX = SECRET_STORAGE_PREFIX;
 
 /** Set once the one-shot sweep has run, so it cannot run twice (R14.3). */
 const MIGRATION_MARKER = "zoc-studio.secret-migration.v1";
@@ -96,25 +114,6 @@ export function subscribeSecrets(cb: (key: string) => void): () => void {
 }
 
 export const secureStore = {
-  /**
-   * **Legacy read path. Do not add callers.**
-   *
-   * Retained until 26.2 for `ModelPicker.tsx` only. New code asks `has()`,
-   * which answers the same question the badge actually needs without a key
-   * value crossing into the renderer (R14.2).
-   */
-  async get(key: string): Promise<string | null> {
-    if (isTauri()) {
-      try {
-        const value = await tauriInvoke<string | null>("secret_get", { key });
-        if (value != null && value !== "") return value;
-      } catch {
-        /* vault unavailable — fall through to the shadow until it is swept */
-      }
-    }
-    return shadowGet(key);
-  },
-
   /**
    * Does a key exist? This is what `hasKey` is built on (R14.2).
    *

@@ -40,12 +40,7 @@ describe("session-lifecycle", () => {
 });
 
 // Feature: chat-memory-session-system, Property 7: Resume only on explicit existing pointer
-const TRIGGERS: LifecycleTrigger[] = [
-  "app-open",
-  "new-chat",
-  "select",
-  "delete-active",
-];
+const TRIGGERS: LifecycleTrigger[] = ["app-open", "new-chat", "select", "delete-active"];
 
 /**
  * A lifecycle input over the full trigger/session/pointer space. `lastActiveId`
@@ -53,22 +48,20 @@ const TRIGGERS: LifecycleTrigger[] = [
  * present, or `null`, so the generator covers the "names an existing session",
  * "names a missing session", and "unset" cases for the resume decision.
  */
-const arbLifecycleInput: fc.Arbitrary<LifecycleInput> = arbSessionsUniqueIds.chain(
-  (sessions) => {
-    const ids = sessions.map((s) => s.id);
-    const arbPointer = fc.oneof(
-      fc.constant(null),
-      arbId,
-      ids.length > 0 ? fc.constantFrom(...ids) : fc.constant(null),
-    );
-    return fc.record({
-      trigger: fc.constantFrom(...TRIGGERS),
-      sessions: fc.constant(sessions),
-      lastActiveId: arbPointer,
-      selectedId: arbPointer,
-    });
-  },
-);
+const arbLifecycleInput: fc.Arbitrary<LifecycleInput> = arbSessionsUniqueIds.chain((sessions) => {
+  const ids = sessions.map((s) => s.id);
+  const arbPointer = fc.oneof(
+    fc.constant(null),
+    arbId,
+    ids.length > 0 ? fc.constantFrom(...ids) : fc.constant(null),
+  );
+  return fc.record({
+    trigger: fc.constantFrom(...TRIGGERS),
+    sessions: fc.constant(sessions),
+    lastActiveId: arbPointer,
+    selectedId: arbPointer,
+  });
+});
 
 describe("session-lifecycle: Property 7 (resume only on explicit existing pointer)", () => {
   // Property 7: Resume only on explicit existing pointer
@@ -98,8 +91,7 @@ describe("session-lifecycle: Property 7 (resume only on explicit existing pointe
     fc.assert(
       fc.property(arbLifecycleInput, (input) => {
         const named =
-          input.lastActiveId != null &&
-          input.sessions.some((s) => s.id === input.lastActiveId);
+          input.lastActiveId != null && input.sessions.some((s) => s.id === input.lastActiveId);
 
         if (input.trigger === "app-open" && !named) {
           expect(resolveSessionIntent(input).kind).toBe("fresh");

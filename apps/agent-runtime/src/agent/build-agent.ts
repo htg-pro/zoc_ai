@@ -2,6 +2,8 @@
  * One `ToolLoopAgent` per Run, and the single stream every part travels on —
  * zoc-agent-chat-rebuild R5.1, R8.1, R8.2, R9.1, R15.6, R30.4, design.md:2322.
  *
+ * Feature: zoc-agent-chat-rebuild, R5.1, R8.1, R8.2, R9.1, R15.6, R30.4.
+ *
  * ## The agent is built inside `execute`, not before it
  *
  * Everything Run-scoped derives from the writer: the permission gate writes
@@ -87,10 +89,12 @@ import type {
   PermissionRequestPart,
   PlanPart,
   RunLifecyclePart,
+  SourcePart,
   UsagePart,
 } from "@zoc-studio/shared-types";
 
 import { COMPLETION_TOOL, toToolMap, type ToolDescriptor } from "../tools/registry.ts";
+import { isFallbackFailureCode } from "../providers/registry.ts";
 import { ErrorCode, boundDetails } from "../http/errors.ts";
 import { classifyRunError, isAbortFailure } from "./error-taxonomy.ts";
 import {
@@ -108,6 +112,8 @@ import {
 import type { PermissionMode } from "../permissions/gate.ts";
 import type { AssembledInstructions } from "./system-instructions.ts";
 import { createRunWriter, type RunWriter } from "./writer.ts";
+import { SourceAccumulator } from "./source-adapters.ts";
+import { webSearchToolFor, withoutWebSearch } from "../tools/web-search.ts";
 
 /** R8.2's step ceiling. A Run that has not finished in forty steps is looping. */
 export const MAX_STEPS = 40;
@@ -149,6 +155,7 @@ type ZocDataParts = {
   "zoc-run": RunLifecyclePart;
   "zoc-usage": UsagePart;
   "zoc-error": ErrorPart;
+  "zoc-source": SourcePart;
   "zoc-compaction": CompactionPart;
 };
 
@@ -211,6 +218,13 @@ export interface RunBinding {
    * reads it by name, and this module neither builds nor inspects them.
    */
   readonly context?: Readonly<Record<string, unknown>>;
+  /** Registration-time provider tools, absent from older unit seams. */
+  readonly providerTools?: {
+    readonly descriptorsFor: (
+      providerTools: readonly ToolDescriptor[],
+    ) => readonly ToolDescriptor[];
+    readonly authorizeWebSearch: () => Promise<boolean>;
+  };
 }
 
 export type BindRun = (writer: RunWriter) => RunBinding;
@@ -396,9 +410,37 @@ export function instructionsFor(
  */
 export function toModelMessages(request: AssembledRequest): ModelMessage[] {
   const messages: ModelMessage[] = [];
-  for (const message of request.messages) {
+  const newestUserIndex = request.messages.findLastIndex((message) => message.role === "user");
+  for (const [index, message] of request.messages.entries()) {
     if (message.role === "system") continue;
-    messages.push({ role: message.role, content: message.text });
+    if (
+      message.role !== "user" ||
+      index !== newestUserIndex ||
+      (request.attachments?.length ?? 0) === 0
+    ) {
+      messages.push({ role: message.role, content: message.text });
+      continue;
+    }
+
+    const documents = (request.attachments ?? []).filter(
+      (attachment) => attachment.kind === "document" && attachment.text !== undefined,
+    );
+    const text = [
+      message.text,
+      ...documents.map(
+        (attachment) => `\n\n[Attached document: ${attachment.name}]\n${attachment.text ?? ""}`,
+      ),
+    ].join("");
+    const content: Extract<ModelMessage, { role: "user" }>["content"] = [
+      { type: "text", text },
+      ...(request.attachments ?? []).flatMap((attachment) => {
+        if (attachment.kind !== "image" || attachment.dataUrl === undefined) return [];
+        const comma = attachment.dataUrl.indexOf(",");
+        const image = comma < 0 ? attachment.dataUrl : attachment.dataUrl.slice(comma + 1);
+        return [{ type: "image" as const, image, mediaType: attachment.mediaType }];
+      }),
+    ];
+    messages.push({ role: "user", content });
   }
   return messages;
 }
@@ -447,6 +489,8 @@ export interface RunContext {
   readonly provider: string;
   readonly model: string;
   readonly languageModel: LanguageModel;
+  /** Later candidates in the configured routing chain (R27.5/R27.6). */
+  readonly fallbackModels?: readonly RunModelCandidate[];
   readonly conversationMode: ConversationMode;
   readonly permissionMode: PermissionMode;
   /** 9.4's output. Its `appliedSources` become the message's `rulesSources`. */
@@ -478,6 +522,15 @@ export interface RunContext {
   readonly maxSteps?: number;
   readonly temperature?: number;
   readonly maxOutputTokens?: number;
+}
+
+export interface RunModelCandidate {
+  readonly provider: string;
+  readonly model: string;
+  readonly languageModel: LanguageModel;
+  readonly contextLimit: number;
+  readonly classifyError?: ClassifyRunError;
+  readonly estimateCostCents?: RunContext["estimateCostCents"];
 }
 
 /**
@@ -540,20 +593,35 @@ export function streamRun(ctx: RunContext): ReadableStream<ZocUIChunk> {
         writer,
         now,
       });
+      const sourceAccumulator = new SourceAccumulator();
+
+      const emitSources = (toolName: string | null): void => {
+        const snapshot = sourceAccumulator.snapshot();
+        if (snapshot.sources.length === 0 && snapshot.citations.length === 0) return;
+        runWriter.source({ ...snapshot, toolName });
+      };
 
       let request = ctx.request;
       let census = censusOf(request);
+      let active: RunModelCandidate = {
+        provider: ctx.provider,
+        model: ctx.model,
+        languageModel: ctx.languageModel,
+        contextLimit: request.contextLimit,
+        classifyError: ctx.classifyError,
+        estimateCostCents: ctx.estimateCostCents,
+      };
 
       const metadata = (finishedAt: string | null): RunMessageMetadata => ({
         runId: ctx.runId,
-        provider: ctx.provider,
-        model: ctx.model,
+        provider: active.provider,
+        model: active.model,
         conversationMode: ctx.conversationMode,
         startedAt,
         finishedAt,
         inputTokens: totals.inputTokens,
         outputTokens: totals.outputTokens,
-        estimatedCostCents: ctx.estimateCostCents?.(totals) ?? null,
+        estimatedCostCents: active.estimateCostCents?.(totals) ?? null,
         tokensPerSecond: rate.current(),
         messagesInContext: census.messagesInContext,
         sessionMessageCount: census.sessionMessageCount,
@@ -569,7 +637,7 @@ export function streamRun(ctx: RunContext): ReadableStream<ZocUIChunk> {
           reasoningTokens: totals.reasoningTokens,
           cachedInputTokens: totals.cachedInputTokens,
           contextLimit: request.contextLimit,
-          estimatedCostCents: ctx.estimateCostCents?.(totals) ?? null,
+          estimatedCostCents: active.estimateCostCents?.(totals) ?? null,
           tokensPerSecond: rate.current(),
           messagesInContext: census.messagesInContext,
           sessionMessageCount: census.sessionMessageCount,
@@ -579,7 +647,7 @@ export function streamRun(ctx: RunContext): ReadableStream<ZocUIChunk> {
       };
 
       writer.write({ type: "start", messageId: ctx.messageId, messageMetadata: metadata(null) });
-      runWriter.lifecycle({ state: "running", provider: ctx.provider, model: ctx.model });
+      runWriter.lifecycle({ state: "running", provider: active.provider, model: active.model });
 
       if (ctx.compaction !== undefined) {
         const outcome = await compactIfNeeded(
@@ -613,127 +681,181 @@ export function streamRun(ctx: RunContext): ReadableStream<ZocUIChunk> {
       }
 
       const binding = ctx.bind(runWriter);
-      const agent = buildAgent({
-        rejectedInputs,
-        model: ctx.languageModel,
-        instructions: instructionsFor(ctx.instructions, request),
-        descriptors: binding.descriptors,
-        experimentalContext: {
-          runId: ctx.runId,
-          sessionId: ctx.sessionId,
-          mode: ctx.conversationMode,
-          permissionMode: ctx.permissionMode,
-          writer: runWriter,
-          rate,
-          census,
-          ...(binding.context ?? {}),
-        },
-        onStepFinish: ({ usage }) => {
-          addUsage(totals, usage);
-          rate.reconcile(totals.outputTokens);
-          emitUsage();
-        },
-        ...(ctx.maxSteps === undefined ? {} : { maxSteps: ctx.maxSteps }),
-        ...(ctx.temperature === undefined ? {} : { temperature: ctx.temperature }),
-        ...(ctx.maxOutputTokens === undefined ? {} : { maxOutputTokens: ctx.maxOutputTokens }),
-      });
 
+      const runAttempt = async (
+        candidate: RunModelCandidate,
+      ): Promise<{
+        terminal: RunLifecyclePart["state"];
+        failure: ReturnType<ClassifyRunError> | null;
+      }> => {
+        const classifyAttempt = candidate.classifyError ?? classifyRunError;
+        const nativeSearch = webSearchToolFor(candidate.provider);
+        let descriptors = binding.descriptors;
+        let dispatchInstructions = instructionsFor(ctx.instructions, request);
+        if (binding.providerTools !== undefined) {
+          const searchEnabled =
+            nativeSearch !== null && (await binding.providerTools.authorizeWebSearch());
+          descriptors = binding.providerTools.descriptorsFor(searchEnabled ? [nativeSearch] : []);
+          if (!searchEnabled) dispatchInstructions = withoutWebSearch(dispatchInstructions);
+        }
+        const agent = buildAgent({
+          rejectedInputs,
+          model: candidate.languageModel,
+          instructions: dispatchInstructions,
+          descriptors,
+          experimentalContext: {
+            runId: ctx.runId,
+            sessionId: ctx.sessionId,
+            mode: ctx.conversationMode,
+            permissionMode: ctx.permissionMode,
+            writer: runWriter,
+            rate,
+            census,
+            ...(binding.context ?? {}),
+          },
+          onStepFinish: ({ usage }) => {
+            addUsage(totals, usage);
+            rate.reconcile(totals.outputTokens);
+            emitUsage();
+          },
+          ...(ctx.maxSteps === undefined ? {} : { maxSteps: ctx.maxSteps }),
+          ...(ctx.temperature === undefined ? {} : { temperature: ctx.temperature }),
+          ...(ctx.maxOutputTokens === undefined ? {} : { maxOutputTokens: ctx.maxOutputTokens }),
+        });
+
+        let terminal: RunLifecyclePart["state"] = "completed";
+        let failure: ReturnType<ClassifyRunError> | null = null;
+        const caught: { error: unknown } = { error: null };
+        let streamFailed = false;
+        let streamError: unknown = null;
+        const searchToolCalls = new Set<string>();
+
+        try {
+          const result = await agent.stream({
+            messages: convert(request),
+            ...(ctx.signal === undefined ? {} : { abortSignal: ctx.signal }),
+          });
+
+          const stream = result.toUIMessageStream<ZocUIMessage>({
+            sendReasoning: true,
+            sendSources: true,
+            sendStart: false,
+            sendFinish: false,
+            onError: (error) => {
+              caught.error = error;
+              return boundDetails(messageOf(error)) ?? "The step failed.";
+            },
+          });
+
+          const reader = stream.getReader();
+          for (;;) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            const enriched = annotateSearchChunk(
+              value,
+              nativeSearch?.name ?? null,
+              searchToolCalls,
+            );
+            if (sourceAccumulator.ingestChunk(candidate.provider, enriched)) {
+              emitSources(nativeSearch?.name ?? null);
+            }
+            if (enriched.type === "text-delta" || enriched.type === "reasoning-delta") {
+              rate.observeDelta(estimateTokens(enriched.delta));
+            }
+            if (enriched.type === "tool-input-available") rate.pause();
+            if (
+              enriched.type === "tool-output-available" ||
+              enriched.type === "tool-output-error" ||
+              enriched.type === "tool-output-denied"
+            ) {
+              rate.resume();
+            }
+            if (enriched.type === "abort") terminal = "cancelled";
+            if (enriched.type === "error") {
+              streamFailed = true;
+              streamError = caught.error;
+              continue;
+            }
+            writer.write(codedToolError(enriched, rejectedInputs, searchToolCalls));
+          }
+
+          try {
+            const [sources, providerMetadata] = await Promise.all([
+              result.sources,
+              result.providerMetadata,
+            ]);
+            if (sourceAccumulator.ingestResult(candidate.provider, { sources, providerMetadata })) {
+              emitSources(nativeSearch?.name ?? null);
+            }
+          } catch {
+            // The stream failure path below already owns provider promise failures.
+          }
+        } catch (error) {
+          if (isAbort(error) || ctx.signal?.aborted === true) terminal = "cancelled";
+          else {
+            terminal = "failed";
+            failure = classifyAttempt(error);
+          }
+        }
+
+        if (streamFailed && terminal !== "cancelled") {
+          if (isAbort(streamError) || ctx.signal?.aborted === true) terminal = "cancelled";
+          else {
+            terminal = "failed";
+            failure = classifyAttempt(streamError);
+          }
+        }
+        return { terminal, failure };
+      };
+
+      const candidates: RunModelCandidate[] = [active, ...(ctx.fallbackModels ?? [])];
       let terminal: RunLifecyclePart["state"] = "completed";
       let failure: ReturnType<ClassifyRunError> | null = null;
 
-      // A provider failure does not reject `agent.stream()`. `toUIMessageStream` catches it
-      // and turns it into a native `error` chunk, handing the raw error to its own
-      // `onError` on the way past (ai@6.0.235 `dist/index.mjs`, the `case "error"` arm) —
-      // so that callback is the only place the error object itself is reachable and the
-      // `catch` below never runs for the most common failure the Run has. Recorded into a
-      // holder rather than straight into `failure` because an assignment inside a callback
-      // does not participate in the narrowing that `failure !== null` depends on.
-      //
-      // **`onError` fires for a failing *tool* as well as for a failing stream**, which is
-      // why the holder alone cannot decide the Run's fate: R6.6 makes a tool failure
-      // non-fatal, and treating every `onError` as terminal would end a Run for a step the
-      // model was about to retry. The native `error` chunk is what distinguishes them, and
-      // only the pump sees it.
-      const caught: { error: unknown } = { error: null };
-      let streamFailed = false;
-      let streamError: unknown = null;
+      for (let index = 0; index < candidates.length; index += 1) {
+        const candidate = candidates[index] as RunModelCandidate;
+        active = candidate;
+        if (request.contextLimit !== candidate.contextLimit) {
+          request = { ...request, contextLimit: candidate.contextLimit };
+          census = censusOf(request);
+        }
 
-      try {
-        const result = await agent.stream({
-          messages: convert(request),
-          ...(ctx.signal === undefined ? {} : { abortSignal: ctx.signal }),
+        const outcome = await runAttempt(candidate);
+        terminal = outcome.terminal;
+        failure = outcome.failure;
+        if (terminal === "cancelled" || failure === null) break;
+
+        const fallback = candidates[index + 1];
+        if (!isFallbackFailureCode(failure.code) || fallback === undefined) {
+          if (isFallbackFailureCode(failure.code)) {
+            failure = {
+              code: ErrorCode.MODEL_UNAVAILABLE,
+              message: "No model in the configured fallback chain is available.",
+              details: failure.details,
+              retryable: true,
+            };
+          }
+          break;
+        }
+
+        const from = `${candidate.provider}/${candidate.model}`;
+        const to = `${fallback.provider}/${fallback.model}`;
+        const fallbackMessage = `${from} was unavailable, so this run is falling back to ${to}. ${failure.message}`;
+        runWriter.error({
+          code: ErrorCode.MODEL_FALLBACK,
+          message: fallbackMessage,
+          details: null,
+          retryable: false,
         });
-
-        const stream = result.toUIMessageStream<ZocUIMessage>({
-          sendReasoning: true,
-          // Written by hand above and below, so the terminal lifecycle can sit
-          // between the model's last chunk and the message's `finish`.
-          sendStart: false,
-          sendFinish: false,
-          onError: (error) => {
-            caught.error = error;
-            // The bounded raw text, not the classified sentence. For a stream failure this
-            // string is discarded with the chunk that carries it; for a *tool* failure it
-            // becomes the tool's `errorText`, which is what the model reads back and
-            // retries from — and "The model provider is not answering" tells it nothing
-            // about the argument it got wrong.
-            return boundDetails(messageOf(error)) ?? "The step failed.";
-          },
+        runWriter.lifecycle({
+          state: "running",
+          code: ErrorCode.MODEL_FALLBACK,
+          message: fallbackMessage,
+          provider: fallback.provider,
+          model: fallback.model,
         });
-
-        const reader = stream.getReader();
-        for (;;) {
-          const { done, value } = await reader.read();
-          if (done) break;
-          if (value.type === "text-delta" || value.type === "reasoning-delta") {
-            // The one place every delta passes through: 9.9's measurement point.
-            rate.observeDelta(estimateTokens(value.delta));
-          }
-          // The interval is generation time, so the stretch a tool holds is excluded
-          // (R13.8). Bracketed off the stream rather than guessed from a gap threshold:
-          // these two chunks say exactly when the model stopped and started again.
-          if (value.type === "tool-input-available") rate.pause();
-          if (
-            value.type === "tool-output-available" ||
-            value.type === "tool-output-error" ||
-            value.type === "tool-output-denied"
-          ) {
-            rate.resume();
-          }
-          if (value.type === "abort") terminal = "cancelled";
-          if (value.type === "error") {
-            // Dropped, not forwarded: the same failure is about to go out as a
-            // `zoc-error` part with a taxonomy code and a retryable flag (R14).
-            // Passing both on would render one failure twice, once as the surface's
-            // error row and once as a bare `errorText` the surface cannot classify.
-            //
-            // The error object itself is whatever `onError` was handed immediately before
-            // this chunk — the SDK calls it and emits in one step.
-            streamFailed = true;
-            streamError = caught.error;
-            continue;
-          }
-          writer.write(codedToolError(value, rejectedInputs));
-        }
-      } catch (error) {
-        if (isAbort(error) || ctx.signal?.aborted === true) {
-          terminal = "cancelled";
-        } else {
-          terminal = "failed";
-          failure = classify(error);
-        }
-      }
-
-      // A cancel that lands mid-stream can surface as both an `abort` chunk and an
-      // error; the abort wins, because a Run the user stopped is not a Run that
-      // failed.
-      if (streamFailed && terminal !== "cancelled") {
-        if (isAbort(streamError) || ctx.signal?.aborted === true) {
-          terminal = "cancelled";
-        } else {
-          terminal = "failed";
-          failure = classify(streamError);
-        }
+        terminal = "completed";
+        failure = null;
       }
 
       if (failure !== null) {
@@ -755,6 +877,8 @@ export function streamRun(ctx: RunContext): ReadableStream<ZocUIChunk> {
       runWriter.lifecycle({
         state: terminal,
         ...(failure === null ? {} : { code: failure.code, message: failure.message }),
+        provider: active.provider,
+        model: active.model,
       });
     },
   });
@@ -779,28 +903,77 @@ export function streamRun(ctx: RunContext): ReadableStream<ZocUIChunk> {
  * permission gate and the driver's abandonment both set their own, and overwriting a
  * `permission_denied` with a generic code would lose the only field that says why.
  */
-function codedToolError(chunk: ZocUIChunk, rejectedInputs: ReadonlySet<string>): ZocUIChunk {
+function codedToolError(
+  chunk: ZocUIChunk,
+  rejectedInputs: ReadonlySet<string>,
+  searchToolCalls: ReadonlySet<string>,
+): ZocUIChunk {
   if (chunk.type !== "tool-input-error" && chunk.type !== "tool-output-error") return chunk;
 
   const existing = (chunk as { providerMetadata?: Record<string, unknown> }).providerMetadata;
-  if (existing?.zoc !== undefined) return chunk;
+  const existingZoc =
+    typeof existing?.zoc === "object" && existing.zoc !== null
+      ? (existing.zoc as Record<string, unknown>)
+      : {};
+  if (typeof existingZoc.code === "string") return chunk;
 
   const toolCallId = (chunk as { toolCallId?: unknown }).toolCallId;
   const schemaRejected =
     chunk.type === "tool-input-error" ||
     (typeof toolCallId === "string" && rejectedInputs.has(toolCallId));
+  const searchFailed = typeof toolCallId === "string" && searchToolCalls.has(toolCallId);
 
-  const coded = schemaRejected
-    ? { code: ErrorCode.TOOL_SCHEMA_INVALID, retryable: false }
-    : // A tool whose `execute` threw for some other reason. The workspace tools return
-      // outcomes rather than throwing by construction, so reaching here is a defect in a
-      // tool rather than something the model can fix — hence `internal` and no retry.
-      { code: ErrorCode.INTERNAL, retryable: false };
+  const coded = searchFailed
+    ? { code: ErrorCode.WEB_SEARCH_FAILED, retryable: true }
+    : schemaRejected
+      ? { code: ErrorCode.TOOL_SCHEMA_INVALID, retryable: false }
+      : // A tool whose `execute` threw for some other reason. The workspace tools return
+        // outcomes rather than throwing by construction, so reaching here is a defect in a
+        // tool rather than something the model can fix — hence `internal` and no retry.
+        { code: ErrorCode.INTERNAL, retryable: false };
 
   return {
     ...chunk,
-    providerMetadata: { ...(existing ?? {}), zoc: { ...coded, details: null } },
+    providerMetadata: {
+      ...(existing ?? {}),
+      zoc: { ...existingZoc, ...coded, details: existingZoc.details ?? null },
+    },
   } as unknown as ZocUIChunk;
+}
+
+/** Add the text part id and authoritative network kind to native SDK chunks. */
+function annotateSearchChunk(
+  chunk: ZocUIChunk,
+  searchToolName: string | null,
+  searchToolCalls: Set<string>,
+): ZocUIChunk {
+  const raw = chunk as unknown as Record<string, unknown>;
+  const additions: Record<string, unknown> = {};
+
+  if (chunk.type === "text-start" || chunk.type === "text-delta" || chunk.type === "text-end") {
+    additions.partId = chunk.id;
+  }
+
+  const toolName = typeof raw.toolName === "string" ? raw.toolName : null;
+  const toolCallId = typeof raw.toolCallId === "string" ? raw.toolCallId : null;
+  if (searchToolName !== null && toolName === searchToolName && toolCallId !== null) {
+    searchToolCalls.add(toolCallId);
+  }
+  if (toolCallId !== null && searchToolCalls.has(toolCallId)) additions.kind = "network";
+
+  if (Object.keys(additions).length === 0) return chunk;
+  const providerMetadata =
+    typeof raw.providerMetadata === "object" && raw.providerMetadata !== null
+      ? (raw.providerMetadata as Record<string, unknown>)
+      : {};
+  const existingZoc =
+    typeof providerMetadata.zoc === "object" && providerMetadata.zoc !== null
+      ? (providerMetadata.zoc as Record<string, unknown>)
+      : {};
+  return {
+    ...chunk,
+    providerMetadata: { ...providerMetadata, zoc: { ...existingZoc, ...additions } },
+  } as ZocUIChunk;
 }
 
 /**

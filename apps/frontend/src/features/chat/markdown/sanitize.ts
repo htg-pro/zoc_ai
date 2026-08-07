@@ -1,6 +1,8 @@
 /**
  * The one sanitiser pass for rendered model output — zoc-agent-chat-rebuild R8.6.
  *
+ * Feature: zoc-agent-chat-rebuild, R8.6.
+ *
  * Two layers stand between a model's text and the DOM, and this is the second:
  *
  *   1. `react-markdown` runs with `skipHtml` (its default — no `rehype-raw`), so raw HTML in

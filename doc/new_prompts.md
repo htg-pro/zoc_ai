@@ -1,9 +1,10 @@
 # Zoc Studio — Advanced Development Prompt Bible
+
 ## 100% Real-World Working IDE + AI Agent · Level-Up Guide
 
 > **How to use this file**
 > Every numbered block is a self-contained, copy-paste prompt for an AI coding
-> agent. Prompts are written for *this exact codebase* — file paths, type names,
+> agent. Prompts are written for _this exact codebase_ — file paths, type names,
 > and module names are real. Work through them in order; later prompts build on
 > earlier ones. Each section opens with the current state so you know what
 > already exists before you build.
@@ -902,7 +903,7 @@ In apps/frontend/src/lib/auto-update.ts:
 **Current state:** Ask mode sends a plain chat message to the LLM.
 It has no context about the current file or selection.
 
-```
+````
 Prompt: "Upgrade Ask mode to be context-aware in
 services/gateway/src/zocai_gateway/mode_router.py.
 
@@ -921,7 +922,7 @@ When mode == 'ask':
 5. Ask mode responses must be streamed token by token to the UI
    (already works via SSE). Make sure the message renders markdown:
    headers, bold, code blocks, and inline code."
-```
+````
 
 ---
 
@@ -1311,6 +1312,6 @@ Week 6 — Ship
 
 ---
 
-*Zoc Studio new_prompts.md — Advanced Level-Up Guide*
-*Every prompt is grounded in the real codebase: Rust/Tauri · FastAPI/Python · React/TypeScript*
-*Build these features in order and you will have a world-class local AI coding IDE.*
+_Zoc Studio new_prompts.md — Advanced Level-Up Guide_
+_Every prompt is grounded in the real codebase: Rust/Tauri · FastAPI/Python · React/TypeScript_
+_Build these features in order and you will have a world-class local AI coding IDE._

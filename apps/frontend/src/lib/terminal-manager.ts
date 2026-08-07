@@ -19,7 +19,15 @@ interface Instance {
   id: string;
   container: HTMLDivElement;
   // Loosely typed to avoid a hard dependency on xterm types in the lib layer.
-  term: { write: (d: string) => void; dispose: () => void; onData: (cb: (d: string) => void) => void; cols: number; rows: number; focus: () => void; clear: () => void } & Record<string, unknown>;
+  term: {
+    write: (d: string) => void;
+    dispose: () => void;
+    onData: (cb: (d: string) => void) => void;
+    cols: number;
+    rows: number;
+    focus: () => void;
+    clear: () => void;
+  } & Record<string, unknown>;
   fit: { fit: () => void };
   abort: AbortController | null;
   backendId: string | null;
@@ -52,7 +60,10 @@ export function hasTerminal(id: string): boolean {
 }
 
 function appendCapturedOutput(instance: Instance, data: string): void {
-  const plain = data.replace(ANSI_OSC_RE, "").replace(ANSI_CSI_RE, "").replace(/\u0000/g, "");
+  const plain = data
+    .replace(ANSI_OSC_RE, "")
+    .replace(ANSI_CSI_RE, "")
+    .replace(/\u0000/g, "");
   if (!plain) return;
   instance.output = (instance.output + plain).slice(-MAX_CAPTURED_OUTPUT);
   for (const listener of terminalOutputListeners.get(instance.id) ?? []) listener();
@@ -208,7 +219,10 @@ async function streamInto(
   signal: AbortSignal,
 ): Promise<void> {
   try {
-    for await (const ev of client.terminalStream(backendId, signal) as AsyncIterable<TerminalStreamEvent>) {
+    for await (const ev of client.terminalStream(
+      backendId,
+      signal,
+    ) as AsyncIterable<TerminalStreamEvent>) {
       if (ev.type === "data") {
         inst.term.write(ev.chunk);
         appendCapturedOutput(inst, ev.chunk);
@@ -261,7 +275,9 @@ const FILE_LINK_RE = /([\w./\\-]+\.[A-Za-z]{1,6}):(\d+)(?::(\d+))?/;
 function registerLinks(term: unknown): void {
   const t = term as {
     registerLinkProvider?: (p: unknown) => void;
-    buffer?: { active?: { getLine?: (i: number) => { translateToString?: () => string } | undefined } };
+    buffer?: {
+      active?: { getLine?: (i: number) => { translateToString?: () => string } | undefined };
+    };
   };
   if (typeof t.registerLinkProvider !== "function") return;
   try {
@@ -276,7 +292,10 @@ function registerLinks(term: unknown): void {
         const start = m.index + 1;
         callback([
           {
-            range: { start: { x: start, y: lineNumber }, end: { x: start + m[0].length, y: lineNumber } },
+            range: {
+              start: { x: start, y: lineNumber },
+              end: { x: start + m[0].length, y: lineNumber },
+            },
             text: m[0],
             activate: () => onOpenLink(m[1], Number(m[2])),
           },
@@ -321,7 +340,12 @@ export function findInTerminal(id: string, query: string, dir: "next" | "prev" =
   if (!inst || !query) return false;
   // Dependency-free find: scan the buffer for the query and scroll to it.
   const term = inst.term as unknown as {
-    buffer?: { active?: { length: number; getLine?: (i: number) => { translateToString?: () => string } | undefined } };
+    buffer?: {
+      active?: {
+        length: number;
+        getLine?: (i: number) => { translateToString?: () => string } | undefined;
+      };
+    };
     scrollToLine?: (n: number) => void;
   };
   const len = term.buffer?.active?.length ?? 0;

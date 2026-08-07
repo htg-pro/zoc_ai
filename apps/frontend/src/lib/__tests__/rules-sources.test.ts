@@ -1,9 +1,5 @@
 import { describe, expect, it } from "vitest";
-import {
-  classifyRuleSource,
-  classifyRuleSources,
-  summarizeRuleSources,
-} from "@/lib/rules-sources";
+import { classifyRuleSource, classifyRuleSources, summarizeRuleSources } from "@/lib/rules-sources";
 
 describe("classifyRuleSource", () => {
   it("recognizes .zoc/rules", () => {

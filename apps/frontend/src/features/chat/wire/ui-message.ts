@@ -2,6 +2,8 @@
  * Chat_Surface UI-message typing — zoc-agent-chat-rebuild R7.1, R7.2, R7.9,
  * R7.11, R12.8, R30.4, R32.16.
  *
+ * Feature: zoc-agent-chat-rebuild, R7.1, R7.2, R7.9, R7.11, R12.8, R30.4.
+ *
  * Type safety is established once, here, at the top of the Chat_Surface. Every
  * row component and the transport take their part types from this module rather
  * than re-deriving them, so a wire change is a single compile error rather than

@@ -49,18 +49,27 @@ describe("evaluatePermission — trust gate", () => {
 
   it("still allows read-only actions when restricted", () => {
     const c = cfg({ trust: "restricted" });
-    expect(evaluatePermission(c, { kind: "fs", name: "read", readOnly: true }).effect).toBe("allow");
+    expect(evaluatePermission(c, { kind: "fs", name: "read", readOnly: true }).effect).toBe(
+      "allow",
+    );
   });
 });
 
 describe("evaluatePermission — protections", () => {
   it("prompts on protected deletion", () => {
-    const d = evaluatePermission(cfg(), { kind: "fs", name: "rm", target: "a.ts", destructive: true });
+    const d = evaluatePermission(cfg(), {
+      kind: "fs",
+      name: "rm",
+      target: "a.ts",
+      destructive: true,
+    });
     expect(d.effect).toBe("prompt");
   });
 
   it("prompts on dotfile edits", () => {
-    expect(evaluatePermission(cfg(), { kind: "fs", name: "write", target: ".env" }).effect).toBe("prompt");
+    expect(evaluatePermission(cfg(), { kind: "fs", name: "write", target: ".env" }).effect).toBe(
+      "prompt",
+    );
   });
 
   it("prompts on external paths", () => {
@@ -89,33 +98,46 @@ describe("evaluatePermission — destructive needs confirm or allowlist", () => 
   });
 
   it("allows a destructive command that is allowlisted", () => {
-    const d = evaluatePermission(
-      cfg({ runMode: "all", commandAllowlist: ["rm -rf build"] }),
-      { kind: "terminal", name: "rm -rf build", destructive: true },
-    );
+    const d = evaluatePermission(cfg({ runMode: "all", commandAllowlist: ["rm -rf build"] }), {
+      kind: "terminal",
+      name: "rm -rf build",
+      destructive: true,
+    });
     expect(d.effect).toBe("allow");
   });
 });
 
 describe("evaluatePermission — network", () => {
   it("prompts when host is not allowlisted", () => {
-    const d = evaluatePermission(cfg(), { kind: "agent_tool", name: "fetch", network: true, host: "evil.com" });
+    const d = evaluatePermission(cfg(), {
+      kind: "agent_tool",
+      name: "fetch",
+      network: true,
+      host: "evil.com",
+    });
     expect(d.effect).toBe("prompt");
   });
   it("allows an allowlisted host (and proceeds to run mode)", () => {
-    const d = evaluatePermission(
-      cfg({ runMode: "all", networkAllowlist: ["api.github.com"] }),
-      { kind: "agent_tool", name: "fetch", network: true, host: "api.github.com" },
-    );
+    const d = evaluatePermission(cfg({ runMode: "all", networkAllowlist: ["api.github.com"] }), {
+      kind: "agent_tool",
+      name: "fetch",
+      network: true,
+      host: "api.github.com",
+    });
     expect(d.effect).toBe("allow");
   });
 });
 
 describe("evaluatePermission — run modes", () => {
   it("ask prompts unless allowlisted", () => {
-    expect(evaluatePermission(cfg({ runMode: "ask" }), { kind: "terminal", name: "ls" }).effect).toBe("prompt");
     expect(
-      evaluatePermission(cfg({ runMode: "ask", commandAllowlist: ["ls"] }), { kind: "terminal", name: "ls" }).effect,
+      evaluatePermission(cfg({ runMode: "ask" }), { kind: "terminal", name: "ls" }).effect,
+    ).toBe("prompt");
+    expect(
+      evaluatePermission(cfg({ runMode: "ask", commandAllowlist: ["ls"] }), {
+        kind: "terminal",
+        name: "ls",
+      }).effect,
     ).toBe("allow");
   });
 
@@ -127,11 +149,15 @@ describe("evaluatePermission — run modes", () => {
 
   it("sandboxed mode allows sandboxable actions, prompts otherwise", () => {
     const c = cfg({ runMode: "sandboxed" });
-    expect(evaluatePermission(c, { kind: "agent_tool", name: "edit", sandboxable: true }).effect).toBe("allow");
+    expect(
+      evaluatePermission(c, { kind: "agent_tool", name: "edit", sandboxable: true }).effect,
+    ).toBe("allow");
     expect(evaluatePermission(c, { kind: "terminal", name: "make" }).effect).toBe("prompt");
   });
 
   it("all mode allows non-destructive actions", () => {
-    expect(evaluatePermission(cfg({ runMode: "all" }), { kind: "terminal", name: "ls" }).effect).toBe("allow");
+    expect(
+      evaluatePermission(cfg({ runMode: "all" }), { kind: "terminal", name: "ls" }).effect,
+    ).toBe("allow");
   });
 });

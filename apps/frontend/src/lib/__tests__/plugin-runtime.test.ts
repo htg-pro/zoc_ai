@@ -5,12 +5,7 @@ import {
   reconcilePlugins,
   runPluginTerminalCommand,
 } from "../plugin-runtime";
-import type {
-  HostMessage,
-  PluginSandbox,
-  SandboxWorker,
-  WorkerMessage,
-} from "../plugins-sandbox";
+import type { HostMessage, PluginSandbox, SandboxWorker, WorkerMessage } from "../plugins-sandbox";
 import {
   __resetPluginHostForTests,
   getPlugin,
@@ -157,7 +152,6 @@ test("dispose detaches the invoker and stops all workers", () => {
   expect(sandbox.invoked).toEqual([]);
 });
 
-
 test("plugin terminal execution uses shell argv, bounds output, and cleans up", async () => {
   const spawnTerminal = vi.fn(async () => ({ id: "term-1" }));
   const stopTerminal = vi.fn(async () => ({ id: "term-1" }));
@@ -203,7 +197,6 @@ test("plugin terminal timeout aborts the stream and stops the backend", async ()
   ).rejects.toThrow("timed out");
   expect(stopTerminal).toHaveBeenCalledWith("term-timeout");
 });
-
 
 test("default plugin storage namespaces values by the owning worker", async () => {
   class BridgeWorker implements SandboxWorker {

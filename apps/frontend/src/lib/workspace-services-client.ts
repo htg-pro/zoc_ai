@@ -221,9 +221,8 @@ export function makeWorkspaceServicesClient(port: number): WorkspaceServicesClie
     deleteSession: (id) => jsonFetch<void>(`${v1}/sessions/${id}`, { method: "DELETE" }),
 
     listMessages: async (sessionId) =>
-      (
-        await jsonFetch<{ messages?: unknown[] }>(`${v1}/sessions/${sessionId}/messages`)
-      ).messages ?? [],
+      (await jsonFetch<{ messages?: unknown[] }>(`${v1}/sessions/${sessionId}/messages`))
+        .messages ?? [],
     postMessage: async (sessionId, message) =>
       (
         await jsonFetch<{ messages?: unknown[] }>(
@@ -270,7 +269,8 @@ export function makeWorkspaceServicesClient(port: number): WorkspaceServicesClie
         `${v1}/sessions/${sessionId}/index/fs-changed`,
         post({ paths }),
       ),
-    getIndexConfig: (sessionId) => jsonFetch<IndexConfig>(`${v1}/sessions/${sessionId}/index/config`),
+    getIndexConfig: (sessionId) =>
+      jsonFetch<IndexConfig>(`${v1}/sessions/${sessionId}/index/config`),
     updateIndexConfig: (sessionId, req) =>
       jsonFetch<IndexConfig>(`${v1}/sessions/${sessionId}/index/config`, {
         method: "PUT",

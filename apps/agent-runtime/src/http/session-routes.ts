@@ -1,6 +1,8 @@
 /**
  * The Session title route — zoc-agent-chat-rebuild R6.2, R15.3, R15.12, 9.7.
  *
+ * Feature: zoc-agent-chat-rebuild, task 9.7 (R6.2, R15.3, R15.12).
+ *
  * ```
  * POST /v1/sessions/:id/title
  *   { }                        the Session's own messages and model are the

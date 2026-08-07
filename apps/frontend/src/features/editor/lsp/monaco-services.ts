@@ -41,15 +41,11 @@ export function getCapturedMonaco(): MonacoNamespace | null {
  * Language servers return `file://` locations, so using the same URI scheme for
  * editor models is required for definition/reference navigation to find them.
  */
-export function toMonacoModelUri(
-  path: string,
-  workspaceRoot: string | null = null,
-): string {
+export function toMonacoModelUri(path: string, workspaceRoot: string | null = null): string {
   const windowsAbsolute = /^[A-Za-z]:[\\/]/.test(path);
   if (!windowsAbsolute && /^[A-Za-z][A-Za-z\d+.-]*:/.test(path)) return path;
 
-  const isAbsolute =
-    path.startsWith("/") || windowsAbsolute || path.startsWith("\\\\");
+  const isAbsolute = path.startsWith("/") || windowsAbsolute || path.startsWith("\\\\");
   let resolved = path;
   if (!isAbsolute && workspaceRoot) {
     resolved = `${workspaceRoot.replace(/[\\/]+$/, "")}/${path.replace(/^[\\/]+/, "")}`;
@@ -62,14 +58,10 @@ export function toMonacoModelUri(
 
   if (normalized.startsWith("//")) {
     const [authority, ...segments] = normalized.slice(2).split("/");
-    return `file://${encodeURIComponent(authority)}/${segments
-      .map(encodeURIComponent)
-      .join("/")}`;
+    return `file://${encodeURIComponent(authority)}/${segments.map(encodeURIComponent).join("/")}`;
   }
 
-  const withLeadingSlash = /^[A-Za-z]:\//.test(normalized)
-    ? `/${normalized}`
-    : normalized;
+  const withLeadingSlash = /^[A-Za-z]:\//.test(normalized) ? `/${normalized}` : normalized;
   const encodedPath = withLeadingSlash
     .split("/")
     .map((segment) => (/^[A-Za-z]:$/.test(segment) ? segment : encodeURIComponent(segment)))
@@ -108,12 +100,8 @@ async function initServices(): Promise<void> {
     // The ESM-compatible editor API is intentionally minimal; load the Monaco
     // contributions that expose the requested built-in actions and keybindings.
     await Promise.all([
-      import(
-        "@codingame/monaco-vscode-api/vscode/vs/editor/contrib/gotoSymbol/browser/goToCommands"
-      ),
-      import(
-        "@codingame/monaco-vscode-api/vscode/vs/editor/contrib/rename/browser/rename"
-      ),
+      import("@codingame/monaco-vscode-api/vscode/vs/editor/contrib/gotoSymbol/browser/goToCommands"),
+      import("@codingame/monaco-vscode-api/vscode/vs/editor/contrib/rename/browser/rename"),
       // @ts-expect-error Pinned package ships this side-effect module with an empty .d.ts.
       import("@codingame/monaco-vscode-api/vscode/vs/editor/contrib/hover/browser/hoverContribution"),
     ]);

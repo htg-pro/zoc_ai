@@ -17,8 +17,9 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { useApp } from "@/lib/store";
+import { useChatSurface } from "@/features/chat/store";
 import { getAgentClient } from "@/lib/agent-client";
-import { resolveAgentPort } from "@/lib/agent-port";
+import { resolveWorkspaceServicesEndpoint } from "@/lib/workspace-services-endpoint";
 import { loadLocalModels, readinessDeadlineSecs, saveLocalModels } from "@/lib/local-models";
 import { secureStore } from "@/lib/secure-store";
 import {
@@ -66,8 +67,8 @@ interface Props {
  */
 async function fetchAgentRuntime(): Promise<void> {
   try {
-    const port = await resolveAgentPort();
-    await fetch(`http://127.0.0.1:${port}/v1/agent/runtime`, {
+    const { baseUrl } = await resolveWorkspaceServicesEndpoint();
+    await fetch(`${baseUrl}/v1/agent/runtime`, {
       headers: { accept: "application/json" },
     });
   } catch {
@@ -101,7 +102,7 @@ export function OnboardingWizard({ onComplete }: Props) {
     | { kind: "loading"; modelId: string; sinceMs: number; deadlineMs: number }
     | { kind: "failed"; reason: string }
   >({ kind: "idle" });
-  const setInput = useApp((s) => s.setInput);
+  const setDraft = useChatSurface((s) => s.setDraft);
   const setSelectedModel = useApp((s) => s.setSelectedModel);
   const llamaCppStatus = useApp((s) => s.llamaCppStatus);
   // The store action is the single writer for the workspace root: it updates
@@ -245,8 +246,10 @@ export function OnboardingWizard({ onComplete }: Props) {
   };
 
   const startExploring = () => {
-    // §13.1: hand the user a concrete first task instead of an empty composer.
-    setInput(FIRST_TASK_PROMPT);
+    // §13.1: hand the user a concrete first task instead of an empty composer. Written to the
+    // Chat_Surface's draft rather than the app store's `input`, which no mounted composer reads since
+    // 25.6 — the prompt used to land nowhere.
+    setDraft(FIRST_TASK_PROMPT);
     onComplete?.();
   };
 
@@ -398,9 +401,7 @@ export function OnboardingWizard({ onComplete }: Props) {
         {/* Sidecar readiness wait (R2.4/R2.6): labelled spinner + progress bar
             while restarting, and a Retry that re-restarts + resets the deadline
             on failure. Visible across the steps the wait gates. */}
-        {sidecar.kind === "waiting" && (
-          <WaitBanner label={sidecar.reason} spinning error={false} />
-        )}
+        {sidecar.kind === "waiting" && <WaitBanner label={sidecar.reason} spinning error={false} />}
         {sidecar.kind === "failed" && (
           <WaitBanner
             label={sidecar.reason}
@@ -417,13 +418,13 @@ export function OnboardingWizard({ onComplete }: Props) {
               <h2 className="text-lg font-semibold">Welcome to Zoc AI</h2>
             </div>
             <p className="text-sm text-muted-foreground">
-              A local-first agentic coding workspace. Plans, edits and verifies
-              changes in your project — on your machine.
+              A local-first agentic coding workspace. Plans, edits and verifies changes in your
+              project — on your machine.
             </p>
             {!isTauri() && (
               <p className="rounded border border-amber-500/40 bg-amber-500/10 p-2 text-[11px] text-amber-200">
-                Running in the browser preview — keychain, filesystem and model
-                loading are unavailable here.
+                Running in the browser preview — keychain, filesystem and model loading are
+                unavailable here.
               </p>
             )}
             <Footer onNext={advance} nextLabel="Get started" />
@@ -437,8 +438,8 @@ export function OnboardingWizard({ onComplete }: Props) {
               <h2 className="text-lg font-semibold">Open workspace</h2>
             </div>
             <p className="text-sm text-muted-foreground">
-              Choose a project folder to work in. Zoc indexes it and runs agents
-              inside it. You can change this later in Settings.
+              Choose a project folder to work in. Zoc indexes it and runs agents inside it. You can
+              change this later in Settings.
             </p>
             <div className="space-y-1">
               <Label htmlFor="ws">Workspace path</Label>
@@ -468,8 +469,7 @@ export function OnboardingWizard({ onComplete }: Props) {
             {legacy?.present && (
               <div className="rounded border border-border bg-card/60 p-2 text-[12px]">
                 <p className="text-muted-foreground">
-                  Found a previous install at{" "}
-                  <code className="font-mono">{legacy.path}</code> with{" "}
+                  Found a previous install at <code className="font-mono">{legacy.path}</code> with{" "}
                   {legacy.session_count} session(s).
                 </p>
                 {importedCount === null ? (
@@ -490,9 +490,7 @@ export function OnboardingWizard({ onComplete }: Props) {
                     Import sessions
                   </Button>
                 ) : (
-                  <p className="mt-1 text-emerald-300">
-                    Imported {importedCount} session(s).
-                  </p>
+                  <p className="mt-1 text-emerald-300">Imported {importedCount} session(s).</p>
                 )}
               </div>
             )}
@@ -573,9 +571,7 @@ export function OnboardingWizard({ onComplete }: Props) {
                           {entry.name}
                           <ExternalLink className="h-3 w-3" />
                         </a>
-                        <span className="text-[10.5px] text-muted-foreground">
-                          {entry.detail}
-                        </span>
+                        <span className="text-[10.5px] text-muted-foreground">{entry.detail}</span>
                       </li>
                     ))}
                   </ul>
@@ -634,9 +630,7 @@ export function OnboardingWizard({ onComplete }: Props) {
                   </Button>
                 </div>
                 {keyStatus === "ok" && (
-                  <p className="text-[11.5px] text-emerald-300">
-                    Key works — models discovered.
-                  </p>
+                  <p className="text-[11.5px] text-emerald-300">Key works — models discovered.</p>
                 )}
                 {keyStatus === "bad" && (
                   <p className="text-[11.5px] text-destructive">
@@ -686,8 +680,7 @@ export function OnboardingWizard({ onComplete }: Props) {
             </div>
             {hardwareLoading ? (
               <p className="flex items-center gap-2 text-sm text-muted-foreground">
-                <Loader2 className="h-3.5 w-3.5 animate-spin" /> Probing your
-                machine…
+                <Loader2 className="h-3.5 w-3.5 animate-spin" /> Probing your machine…
               </p>
             ) : (
               <>
@@ -700,8 +693,8 @@ export function OnboardingWizard({ onComplete }: Props) {
                       Recommended: {describeRecommendation(hardware)}
                     </div>
                     <p className="mt-0.5 text-[11px] text-muted-foreground">
-                      {hardware.recommendation.reason} ≈
-                      {hardware.recommendation.approx_size_gb} GB download.
+                      {hardware.recommendation.reason} ≈{hardware.recommendation.approx_size_gb} GB
+                      download.
                     </p>
                     {state.modelChoice === "local" && !state.modelPath && (
                       <Button
@@ -721,8 +714,8 @@ export function OnboardingWizard({ onComplete }: Props) {
                 )}
                 {!hardware && (
                   <p className="text-[11.5px] text-muted-foreground">
-                    That&apos;s fine — you can pick a model manually and change it
-                    later in Settings → Models.
+                    That&apos;s fine — you can pick a model manually and change it later in Settings
+                    → Models.
                   </p>
                 )}
               </>
@@ -732,9 +725,7 @@ export function OnboardingWizard({ onComplete }: Props) {
               onNext={advance}
               nextDisabled={!canAdvance(state, sidecar)}
               nextHint={
-                sidecar.kind === "waiting" || sidecar.kind === "failed"
-                  ? sidecar.reason
-                  : undefined
+                sidecar.kind === "waiting" || sidecar.kind === "failed" ? sidecar.reason : undefined
               }
             />
           </section>
@@ -747,19 +738,16 @@ export function OnboardingWizard({ onComplete }: Props) {
               <h2 className="text-lg font-semibold">Help improve Zoc?</h2>
             </div>
             <p className="text-sm text-muted-foreground">
-              Help improve Zoc by sharing anonymous usage stats? (No code, no file
-              names, no personal data.)
+              Help improve Zoc by sharing anonymous usage stats? (No code, no file names, no
+              personal data.)
             </p>
             <p className="text-[11px] text-muted-foreground">
-              Only counters — which mode you used, how long a run took, whether it
-              succeeded. Change it anytime in Settings → Privacy.
+              Only counters — which mode you used, how long a run took, whether it succeeded. Change
+              it anytime in Settings → Privacy.
             </p>
             <label className="flex items-center justify-between rounded border border-border bg-card/60 p-3 text-sm">
               <span>Share anonymous usage stats</span>
-              <Switch
-                checked={state.telemetry}
-                onCheckedChange={(v) => patch({ telemetry: v })}
-              />
+              <Switch checked={state.telemetry} onCheckedChange={(v) => patch({ telemetry: v })} />
             </label>
             <Footer
               onBack={back}
@@ -767,9 +755,7 @@ export function OnboardingWizard({ onComplete }: Props) {
               nextLabel="Finish"
               nextDisabled={busy || !canAdvance(state, sidecar)}
               nextHint={
-                sidecar.kind === "waiting" || sidecar.kind === "failed"
-                  ? sidecar.reason
-                  : undefined
+                sidecar.kind === "waiting" || sidecar.kind === "failed" ? sidecar.reason : undefined
               }
             />
           </section>
@@ -779,9 +765,7 @@ export function OnboardingWizard({ onComplete }: Props) {
           <section className="space-y-3 text-center">
             <CheckCircle2 className="mx-auto h-10 w-10 text-emerald-400" />
             <h2 className="text-lg font-semibold">Zoc is ready</h2>
-            <p className="text-sm text-muted-foreground">
-              Here&apos;s your first task:
-            </p>
+            <p className="text-sm text-muted-foreground">Here&apos;s your first task:</p>
             <p className="rounded border border-border bg-card/60 p-2 font-mono text-[12px]">
               {FIRST_TASK_PROMPT}
             </p>
@@ -882,9 +866,7 @@ function Footer({
           </Button>
         </div>
       </div>
-      {nextHint && (
-        <p className="text-right text-[10.5px] text-muted-foreground">{nextHint}</p>
-      )}
+      {nextHint && <p className="text-right text-[10.5px] text-muted-foreground">{nextHint}</p>}
     </div>
   );
 }

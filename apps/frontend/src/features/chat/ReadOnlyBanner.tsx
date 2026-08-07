@@ -1,6 +1,8 @@
 /**
  * The read-only viewer banner — zoc-agent-chat-rebuild R1.4, task 22.8.
  *
+ * Feature: zoc-agent-chat-rebuild, task 22.8 (R1.4).
+ *
  * A viewer watching someone else's Session over the LAN share sees this and no mutating control anywhere
  * in the panel. The banner is the *explanation* for that absence: a surface with the run controls simply
  * missing and nothing saying why reads as a broken build.

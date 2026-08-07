@@ -1,6 +1,8 @@
 /**
  * The three catalogue routes — zoc-agent-chat-rebuild R13.1, R13.4, 9.7.
  *
+ * Feature: zoc-agent-chat-rebuild, task 9.7 (R13.1, R13.4).
+ *
  * ```
  * GET /v1/providers            → 200 { providers: [...] }
  * GET /v1/models?provider=<id> → 200 { models: [...], defaultContextWindow }

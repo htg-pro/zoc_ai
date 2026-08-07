@@ -1,6 +1,8 @@
 /**
  * Historical legacy events, reduced to rows — zoc-agent-chat-rebuild R23.2, task 16.3.
  *
+ * Feature: zoc-agent-chat-rebuild, task 16.3 (R23.2).
+ *
  * A pre-upgrade conversation is a `Message` plus a set of rows from the legacy 43-type
  * `AgentEvent` contract. Most of those map onto a Message_Part; the ones that were user-facing and
  * have no counterpart become a *historical* row instead of failing, which is R23.2's whole point.

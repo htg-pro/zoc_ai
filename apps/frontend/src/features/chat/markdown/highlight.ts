@@ -1,6 +1,8 @@
 /**
  * Syntax highlighting for a settled fence — zoc-agent-chat-rebuild R5.6, R8.5.
  *
+ * Feature: zoc-agent-chat-rebuild, R5.6, R8.5.
+ *
  * `monaco.editor.colorize(code, languageId, options)` returns highlighted HTML without an
  * editor instance, using the tokenizer and theme already shipped for the editor pane. Shiki
  * was rejected for exactly this reason: it would ship a second TextMate grammar set beside

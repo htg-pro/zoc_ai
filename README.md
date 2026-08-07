@@ -127,11 +127,11 @@ On Linux, `scripts/release.sh` additionally produces a portable `.tar.gz`
 on top of Tauri's `.deb` and `.rpm` outputs. What you actually get depends
 on the host you build from:
 
-| Host                | Produced                                  | Missing → build on       |
-|---------------------|-------------------------------------------|--------------------------|
-| Linux (x86_64)      | `.deb`, `.rpm`, `.tar.gz`                 | macOS, Windows           |
-| macOS               | `.dmg`, `.app`                            | Linux, Windows           |
-| Windows             | `.msi`, `.exe` (NSIS)                     | Linux, macOS             |
+| Host           | Produced                  | Missing → build on |
+| -------------- | ------------------------- | ------------------ |
+| Linux (x86_64) | `.deb`, `.rpm`, `.tar.gz` | macOS, Windows     |
+| macOS          | `.dmg`, `.app`            | Linux, Windows     |
+| Windows        | `.msi`, `.exe` (NSIS)     | Linux, macOS       |
 
 To produce all installers you must run `make release` on each host (or a CI
 matrix). Cross-compiling Tauri bundles between OSes is not supported.

@@ -74,7 +74,12 @@ describe("Feature: zoc-agent-chat-rebuild, task 22.12: the SSE contract, carried
   it("resolves with the fence-stripped done text even when it differs from the tokens", async () => {
     const tokens: string[] = [];
     const replacement = await consumeInlineEditStream(
-      sseBody([tokenFrame("```ts\n"), tokenFrame("foo()"), tokenFrame("\n```"), doneFrame("foo()")]),
+      sseBody([
+        tokenFrame("```ts\n"),
+        tokenFrame("foo()"),
+        tokenFrame("\n```"),
+        doneFrame("foo()"),
+      ]),
       { onToken: (c) => tokens.push(c) },
     );
     // Tokens stream verbatim, fences included, for the live preview…

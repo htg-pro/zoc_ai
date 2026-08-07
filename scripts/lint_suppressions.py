@@ -149,9 +149,7 @@ def audit(root: Path) -> list[Addition]:
             if path.suffix not in {".ts", ".tsx"} or not path.is_file():
                 continue
             rel = path.relative_to(root).as_posix()
-            for number, text in enumerate(
-                path.read_text(encoding="utf-8").splitlines(), start=1
-            ):
+            for number, text in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
                 if SUPPRESSION.search(text):
                     found.append(Addition(rel, number, text))
     return found
@@ -191,9 +189,7 @@ def main() -> int:
         return report(audit(root), "lint suppressions")
 
     diff = (
-        args.diff_file.read_text(encoding="utf-8")
-        if args.diff_file
-        else git_diff(args.base, root)
+        args.diff_file.read_text(encoding="utf-8") if args.diff_file else git_diff(args.base, root)
     )
     return report(parse_diff(diff), "added lint suppressions")
 

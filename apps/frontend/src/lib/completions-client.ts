@@ -56,7 +56,8 @@ function parseFrame(raw: string): SseFrame | null {
   for (const line of raw.split(/\r?\n/)) {
     if (line.startsWith(":")) continue; // comment / heartbeat
     if (line.startsWith("event:")) event = line.slice("event:".length).trim();
-    else if (line.startsWith("data:")) dataLines.push(line.slice("data:".length).replace(/^\s/, ""));
+    else if (line.startsWith("data:"))
+      dataLines.push(line.slice("data:".length).replace(/^\s/, ""));
   }
   if (dataLines.length === 0) return { event, data: "" };
   return { event, data: dataLines.join("\n") };

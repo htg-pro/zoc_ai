@@ -1,6 +1,8 @@
 /**
  * A dependency-free Chrome DevTools Protocol client — zoc-agent-chat-rebuild task 17.6.
  *
+ * Feature: zoc-agent-chat-rebuild, task 17.6.
+ *
  * Budgets 19.4 and 20.5 need two things no other test in this repo needs: a real compositor, so
  * animation-frame intervals mean something, and `Runtime.getHeapUsage` after a forced collection, so
  * a heap figure is a measurement rather than a guess. jsdom has neither, and the Tauri WebView exposes

@@ -2,6 +2,8 @@
  * Compaction unit tests — zoc-agent-chat-rebuild R34.1, R34.2, R34.4, R34.5, R34.8, R34.9.
  * Task 9.5's four guards, plus the surrounding contract:
  *
+ * Feature: zoc-agent-chat-rebuild, task 9.5 (R34.1, R34.2, R34.4, R34.5, R34.8, R34.9).
+ *
  * - the trigger fires at 85 percent and not at 84;
  * - the newest `RETAINED_TURN_FLOOR` turns survive every fold, including the case
  *   where those turns alone are over the threshold and the module must decline

@@ -66,9 +66,7 @@ def test_decision_route_responds_and_is_not_unknown_route(tmp_path) -> None:
     """POST /v1/agent/decision is registered; unknown run is a handled 404."""
     # Agent mode requires a bound workspace (R1.4) and a ready model (R5.2).
     client = TestClient(create_app(workspace_root=tmp_path, brain=DefaultAgentBrain()))
-    run_id = client.post(
-        "/v1/agent/run", json={"prompt": "build", "mode": "agent"}
-    ).json()["runId"]
+    run_id = client.post("/v1/agent/run", json={"prompt": "build", "mode": "agent"}).json()["runId"]
     resp = client.post(
         "/v1/agent/decision",
         json={"runId": run_id, "kind": "approval", "decision": "approve"},

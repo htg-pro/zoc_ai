@@ -1,6 +1,8 @@
 /**
  * Provider registry and key-custody properties — zoc-agent-chat-rebuild.
  *
+ * Feature: zoc-agent-chat-rebuild, Property 14 (R13.5, R13.7, R14.10).
+ *
  * Property 14: Local model Runs make no external request       (validates R13.5)
  * Property 31: A provider auth failure does not touch the key  (validates R13.7)
  * Property 35: No key value reaches a log, error, or telemetry (validates R14.10)
@@ -32,13 +34,22 @@ import { HttpError } from "../../http/errors.ts";
 
 const RUNS = { numRuns: 200 } as const;
 
-/** A key that looks like a real one, so shape matching is exercised too. */
+/**
+ * A key that looks like a real one, so shape matching is exercised too.
+ *
+ * Every fake credential in this repo carries `CANARY`, which is what
+ * `scripts/scan_secrets.py` allowlists — the alternative was a scanner exception per
+ * test file, and a real key pasted into a fixture would then be one more exception
+ * nobody read. The marker sits inside the key rather than in a comment beside it
+ * because the scanner matches the line, and it replaces characters rather than
+ * lengthening the string so the shapes these tests assert on are unchanged.
+ */
 const REALISTIC_KEYS = [
-  "sk-proj-1234567890abcdefghijklmnopqrstuvwxyzABCD",
-  "sk-ant-api03-abcdefghijklmnopqrstuvwxyz0123456789",
-  "gsk_abcdefghijklmnopqrstuvwxyz0123456789ABCD",
-  "xai-abcdefghijklmnopqrstuvwxyz0123456789",
-  "AIzaSyABCDEFGHIJKLMNOPQRSTUVWXYZ0123456",
+  "sk-proj-CANARY7890abcdefghijklmnopqrstuvwxyzABCD",
+  "sk-ant-api03-CANARYghijklmnopqrstuvwxyz0123456789",
+  "gsk_CANARYghijklmnopqrstuvwxyz0123456789ABCD",
+  "xai-CANARYghijklmnopqrstuvwxyz0123456789",
+  "AIzaSyCANARYGHIJKLMNOPQRSTUVWXYZ0123456",
 ] as const;
 
 afterEach(() => {
@@ -153,7 +164,7 @@ describe("Property 31: a provider auth failure does not touch the stored key (R1
     const source: SecretSource = {
       async get(name) {
         calls.push({ op: "get", name });
-        return "sk-proj-abcdefghijklmnopqrstuvwxyz012345";
+        return "sk-proj-CANARYghijklmnopqrstuvwxyz012345";
       },
     };
 
@@ -243,7 +254,7 @@ describe("Property 35: no key value reaches a log, error, or telemetry record (R
         const lines: string[] = [];
         const logger = createRunLogger({
           runId: "run_1",
-          key: "sk-proj-thisrunsownkey0123456789abcdef",
+          key: "sk-proj-CANARYrunsownkey0123456789abcd",
           sink: (l) => lines.push(l),
         });
         logger.log("warn", "upstream error body", { body: `{"error":"${foreignKey}"}` });
@@ -254,13 +265,13 @@ describe("Property 35: no key value reaches a log, error, or telemetry record (R
   });
 
   it("redacts object keys, not only values", () => {
-    const key = "sk-proj-abcdefghijklmnopqrstuvwxyz012345";
+    const key = "sk-proj-CANARYghijklmnopqrstuvwxyz012345";
     const redacted = redactValue({ [key]: "used" }, [key]) as Record<string, unknown>;
     expect(Object.keys(redacted)).toEqual([REDACTION]);
   });
 
   it("drops the stack from a logged Error rather than redacting it", () => {
-    const key = "sk-proj-abcdefghijklmnopqrstuvwxyz012345";
+    const key = "sk-proj-CANARYghijklmnopqrstuvwxyz012345";
     const error = new Error(`failed with ${key}`);
     const redacted = redactValue(error, [key]) as Record<string, unknown>;
     expect(redacted.message).toContain(REDACTION);
@@ -270,7 +281,7 @@ describe("Property 35: no key value reaches a log, error, or telemetry record (R
   it("covers a key registered after the logger was constructed", () => {
     const lines: string[] = [];
     const logger = createRunLogger({ runId: "run_1", key: null, sink: (l) => lines.push(l) });
-    const subAgentKey = "sk-ant-api03-zzzzzzzzzzzzzzzzzzzzzzzzzz";
+    const subAgentKey = "sk-ant-api03-CANARYzzzzzzzzzzzzzzzzzzzz";
     logger.protect(subAgentKey);
     logger.log("info", "sub-agent started", { key: subAgentKey });
     expect(lines.join("\n")).not.toContain(subAgentKey);
@@ -313,7 +324,7 @@ describe("secret source construction", () => {
       "fetch",
       vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
         calls.push({ url: String(url), init });
-        return new Response(JSON.stringify({ value: "sk-proj-value012345678901234567" }), {
+        return new Response(JSON.stringify({ value: "sk-proj-CANARYue012345678901234" }), {
           status: 200,
         });
       }),
@@ -324,7 +335,7 @@ describe("secret source construction", () => {
       ZOC_RUNTIME_TOKEN: "launch-token-0123456789",
     });
     await expect(source.get("provider.openai.api_key")).resolves.toBe(
-      "sk-proj-value012345678901234567",
+      "sk-proj-CANARYue012345678901234",
     );
 
     expect(calls).toHaveLength(1);
@@ -348,7 +359,7 @@ describe("secret source construction", () => {
   it("does not echo a key-store error body", async () => {
     vi.stubGlobal(
       "fetch",
-      vi.fn(async () => new Response("sk-proj-leaked0123456789abcdef", { status: 500 })),
+      vi.fn(async () => new Response("sk-proj-CANARYked0123456789abc", { status: 500 })),
     );
     const source = secretSourceFromEnv({
       ZOC_DESKTOP_KEY_URL: "http://127.0.0.1:5555/secret",

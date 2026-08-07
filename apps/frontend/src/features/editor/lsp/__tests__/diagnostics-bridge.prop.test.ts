@@ -35,7 +35,10 @@ const lspDiagnosticArb: fc.Arbitrary<LspDiagnostic> = fc.record(
         character: fc.nat({ max: 100000 }),
       }),
     }),
-    severity: fc.oneof(fc.constant(undefined), fc.constantFrom(1, 2, 3, 4) as fc.Arbitrary<1 | 2 | 3 | 4>),
+    severity: fc.oneof(
+      fc.constant(undefined),
+      fc.constantFrom(1, 2, 3, 4) as fc.Arbitrary<1 | 2 | 3 | 4>,
+    ),
     message: fc.string(),
     source: fc.oneof(fc.constant(undefined), fc.string({ minLength: 1 })),
     code: codeArb,
@@ -97,25 +100,20 @@ describe("diagnostics-bridge mapping (Property 1, Property 2)", () => {
     expect(mapSeverity(3)).toBe("info");
     expect(mapSeverity(4)).toBe("hint");
     fc.assert(
-      fc.property(
-        fc.constantFrom(...SERVERS),
-        uriArb,
-        lspDiagnosticArb,
-        (server, uri, d) => {
-          const m = mapLspDiagnostic(server, uri, d);
-          const expected =
-            d.severity === 1
-              ? "error"
-              : d.severity === 2
-                ? "warning"
-                : d.severity === 3
-                  ? "info"
-                  : d.severity === 4
-                    ? "hint"
-                    : "error"; // absent → error
-          expect(m.severity).toBe(expected);
-        },
-      ),
+      fc.property(fc.constantFrom(...SERVERS), uriArb, lspDiagnosticArb, (server, uri, d) => {
+        const m = mapLspDiagnostic(server, uri, d);
+        const expected =
+          d.severity === 1
+            ? "error"
+            : d.severity === 2
+              ? "warning"
+              : d.severity === 3
+                ? "info"
+                : d.severity === 4
+                  ? "hint"
+                  : "error"; // absent → error
+        expect(m.severity).toBe(expected);
+      }),
       { numRuns: 200 },
     );
   });

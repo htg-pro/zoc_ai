@@ -67,24 +67,16 @@ def test_agent_context_loads_workspace_instructions(tmp_path: Path) -> None:
 
 def test_project_instructions_precede_built_in_prompts() -> None:
     instructions = "Follow SOLID."
-    ask_context = AskContext(
-        steering=SteeringPayload(), project_instructions=instructions
-    )
+    ask_context = AskContext(steering=SteeringPayload(), project_instructions=instructions)
     agent_context = RunContext(
         allocation=Allocation(ModelTier.LOCAL_SLM, 4000),
         fragments=(),
         steering=SteeringPayload(),
-        token_gate=TokenGateResult(
-            fragments=(), dropped=(), token_count=0, window=4000
-        ),
+        token_gate=TokenGateResult(fragments=(), dropped=(), token_count=0, window=4000),
         mcp_tools=(),
         project_instructions=instructions,
     )
 
-    assert _ask_system_prompt(ask_context).startswith(
-        "Follow SOLID.\n\nYou are Zoc Ask"
-    )
-    assert _agent_system_prompt(agent_context).startswith(
-        "Follow SOLID.\n\nYou are Zoc Agent"
-    )
+    assert _ask_system_prompt(ask_context).startswith("Follow SOLID.\n\nYou are Zoc Ask")
+    assert _agent_system_prompt(agent_context).startswith("Follow SOLID.\n\nYou are Zoc Agent")
     assert prepend_project_instructions("base", "  ") == "base"

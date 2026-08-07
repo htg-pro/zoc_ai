@@ -180,9 +180,7 @@ def test_incremental_failure_retains_prior_index(tmp_path: Path) -> None:
         target.write_text("after\n", encoding="utf-8")
         embedder.fail = True
         with pytest.raises(RuntimeError, match="incremental"):
-            await indexer._update_changed_files(
-                "session", (str(target),)
-            )
+            await indexer._update_changed_files("session", (str(target),))
 
         assert indexer._indexes["session"] is prior
         events = [queue.get_nowait() for _ in range(queue.qsize())]
@@ -212,10 +210,7 @@ def test_persisted_index_reopens_without_rescan_and_preserves_order(
             self.document_calls += 1
             if self.reject_documents:
                 raise AssertionError("persisted reopen attempted to re-embed")
-            return [
-                [1.0, 0.0] if "alpha" in document else [0.0, 1.0]
-                for document in documents
-            ]
+            return [[1.0, 0.0] if "alpha" in document else [0.0, 1.0] for document in documents]
 
         def embed_query(self, query):
             return [1.0, 0.0] if "alpha" in query else [0.0, 1.0]

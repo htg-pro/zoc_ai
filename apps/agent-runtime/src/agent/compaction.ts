@@ -1,6 +1,8 @@
 /**
  * Context compaction — zoc-agent-chat-rebuild R34.1, R34.2, R34.4, R34.5, R34.8, R34.9.
  *
+ * Feature: zoc-agent-chat-rebuild, R34.1, R34.2, R34.4, R34.5, R34.8, R34.9.
+ *
  * One module owns the whole mechanism, because its four parts — deciding to fold,
  * choosing what to fold, producing the summary, and keeping the summary alive —
  * are one decision each and share all their state.
@@ -152,6 +154,17 @@ export interface CompactionPin {
   readonly foldedMessageIds: readonly string[];
 }
 
+/** A renderer-admitted attachment carried into the provider request (R29.2/R29.4). */
+export interface AssembledAttachment {
+  readonly kind: "image" | "document";
+  readonly name: string;
+  readonly mediaType: string;
+  readonly size: number;
+  readonly dataUrl?: string;
+  readonly text?: string;
+  readonly estimatedTokens: number;
+}
+
 /**
  * Everything the provider call will count against the window.
  *
@@ -168,6 +181,8 @@ export interface AssembledRequest {
   readonly pin: CompactionPin | null;
   /** Resolved `@`-mention payloads. */
   readonly mentions: readonly string[];
+  /** Attachments on the newest user turn. Document text is included in compaction measurement. */
+  readonly attachments?: readonly AssembledAttachment[];
   /** Tool schemas the registry contributes to the request. */
   readonly toolSchemas: readonly string[];
   /**
@@ -240,8 +255,14 @@ export function measure(
   const sum = (parts: readonly string[]): number =>
     parts.reduce((running, part) => running + count(part), 0);
 
+  const attachmentText = (assembled.attachments ?? []).map((attachment) =>
+    attachment.kind === "document" ? (attachment.text ?? "") : attachment.name,
+  );
   const fixed =
-    count(assembled.instructions) + sum(assembled.mentions) + sum(assembled.toolSchemas);
+    count(assembled.instructions) +
+    sum(assembled.mentions) +
+    sum(assembled.toolSchemas) +
+    sum(attachmentText);
   const pin = assembled.pin === null ? 0 : count(assembled.pin.summary);
   const messages = assembled.messages.map((message) => count(message.text));
   const limit = Math.max(0, assembled.contextLimit);

@@ -1,6 +1,8 @@
 /**
  * The Run driver — zoc-agent-chat-rebuild R7.7, R16.1, R16.3, 9.7.
  *
+ * Feature: zoc-agent-chat-rebuild, task 9.7 (R7.7, R16.1, R16.3).
+ *
  * One object per Run, sitting between `streamRun`'s chunk stream and the
  * `RunRecord` that buffers and fans it out. It owns three things no other module
  * can own correctly:
@@ -485,14 +487,37 @@ export class RunManager {
   }
 
   /**
-   * Cancel a Run, whichever side of admission it is on.
+   * Cancel a Run and every sub-agent beneath it (R16.1, R25.6).
    *
-   * `false` means there was nothing to cancel — no such Run, or one that had
-   * already settled. The route turns that into `202` all the same: cancel is
-   * idempotent by design, and a surface whose stop button 404s because the Run
-   * finished a moment earlier is a surface reporting an error for a race it won.
+   * `false` means there was nothing to cancel anywhere in the subtree — no such
+   * Run, or one whose every member had already settled. The route turns that into
+   * `202` all the same: cancel is idempotent by design, and a surface whose stop
+   * button 404s because the Run finished a moment earlier is a surface reporting an
+   * error for a race it won.
+   *
+   * **The cascade is synchronous, and the order within it does not matter.** Both
+   * halves are worth stating, because the obvious worry here is a doomed promotion:
+   * cancelling the parent frees its Slot, the queue drains into it, and a queued
+   * *descendant* starts — emitting `running` for a sub-agent that dies a tick later,
+   * so the surface shows a sub-agent starting *because* its parent was stopped. That
+   * cannot happen, and not for the reason it first appears: a Slot is released from
+   * `driver.settled`, which is a microtask at the earliest and R16.1's 1500 ms grace
+   * in the usual case, by which point every `cancelQueued` below has run. Ordering
+   * the walk deepest-first would look like the fix and assert nothing — it was tried,
+   * and no test could tell the two orders apart. What the guarantee actually rests on
+   * is that this loop is not deferred, which is what Property 60's third case pins.
+   * Order becomes load-bearing the moment Slot release turns synchronous.
    */
   cancel(runId: string): boolean {
+    let cancelledAny = false;
+    for (const record of this.store.descendantsOf(runId)) {
+      if (this.cancelOne(record.runId)) cancelledAny = true;
+    }
+    return this.cancelOne(runId) || cancelledAny;
+  }
+
+  /** Cancel exactly one Run, whichever side of admission it is on. */
+  private cancelOne(runId: string): boolean {
     const driver = this.drivers.get(runId);
     if (driver === undefined) return false;
     if (driver.isSettled) return false;

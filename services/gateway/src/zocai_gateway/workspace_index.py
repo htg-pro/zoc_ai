@@ -121,9 +121,7 @@ class WorkspaceEmbedder(Protocol):
     @property
     def info(self) -> EmbedderInfo: ...
 
-    def embed_documents(
-        self, documents: Sequence[str]
-    ) -> Sequence[Sequence[float]]: ...
+    def embed_documents(self, documents: Sequence[str]) -> Sequence[Sequence[float]]: ...
 
     def embed_query(self, query: str) -> Sequence[float]: ...
 
@@ -137,9 +135,7 @@ class _HashEmbedder:
     def info(self) -> EmbedderInfo:
         return _fallback_embedder()
 
-    def embed_documents(
-        self, documents: Sequence[str]
-    ) -> Sequence[Sequence[float]]:
+    def embed_documents(self, documents: Sequence[str]) -> Sequence[Sequence[float]]:
         return [_hash_embedding(document, self.DIMENSION) for document in documents]
 
     def embed_query(self, query: str) -> Sequence[float]:
@@ -177,9 +173,7 @@ class FastEmbedEmbedder:
             is_fallback=False,
         )
 
-    def embed_documents(
-        self, documents: Sequence[str]
-    ) -> Sequence[Sequence[float]]:
+    def embed_documents(self, documents: Sequence[str]) -> Sequence[Sequence[float]]:
         if not documents:
             return ()
         embed = self._model.embed
@@ -209,9 +203,7 @@ class IndexProgressBroker:
         self._latest_active: WorkspaceIndexProgress | None = None
 
     def subscribe(self) -> asyncio.Queue[WorkspaceIndexProgress]:
-        queue: asyncio.Queue[WorkspaceIndexProgress] = asyncio.Queue(
-            maxsize=PROGRESS_QUEUE_SIZE
-        )
+        queue: asyncio.Queue[WorkspaceIndexProgress] = asyncio.Queue(maxsize=PROGRESS_QUEUE_SIZE)
         self._subscribers.add(queue)
         if self._latest_active is not None:
             queue.put_nowait(self._latest_active)
@@ -221,11 +213,7 @@ class IndexProgressBroker:
         self._subscribers.discard(queue)
 
     def publish(self, event: WorkspaceIndexProgress) -> None:
-        self._latest_active = (
-            event
-            if event.type in {"index.started", "index.progress"}
-            else None
-        )
+        self._latest_active = event if event.type in {"index.started", "index.progress"} else None
         for queue in tuple(self._subscribers):
             if queue.full():
                 with contextlib.suppress(asyncio.QueueEmpty):
@@ -261,18 +249,14 @@ class WorkspaceIndexer:
         self._debounce_tasks: dict[str, asyncio.Task[None]] = {}
         self._background_builds: dict[str, asyncio.Task[None]] = {}
 
-    def register_workspace(
-        self, session_id: str, workspace_root: Path | str
-    ) -> IndexStatus:
+    def register_workspace(self, session_id: str, workspace_root: Path | str) -> IndexStatus:
         """Register the root needed by lazy retrieval without loading or scanning."""
         root = Path(workspace_root).expanduser().resolve()
         self._workspace_roots[session_id] = root
         self._build_states.setdefault(session_id, "idle")
         return self.status(session_id, root)
 
-    async def open_workspace(
-        self, session_id: str, workspace_root: Path | str
-    ) -> IndexStatus:
+    async def open_workspace(self, session_id: str, workspace_root: Path | str) -> IndexStatus:
         """Open a workspace lazily or make its index eagerly available."""
         status = self.register_workspace(session_id, workspace_root)
         if self.lazy:
@@ -334,9 +318,7 @@ class WorkspaceIndexer:
 
     async def close(self) -> None:
         """Cancel pending incremental and lazy-build work during shutdown."""
-        tasks = tuple(self._debounce_tasks.values()) + tuple(
-            self._background_builds.values()
-        )
+        tasks = tuple(self._debounce_tasks.values()) + tuple(self._background_builds.values())
         for task in tasks:
             task.cancel()
         if tasks:
@@ -359,9 +341,7 @@ class WorkspaceIndexer:
             return []
         return await asyncio.to_thread(self.query, session_id, query, top_k)
 
-    def query(
-        self, session_id: str, query: str, top_k: int = 20
-    ) -> list[IndexQueryResult]:
+    def query(self, session_id: str, query: str, top_k: int = 20) -> list[IndexQueryResult]:
         indexed = self._indexes.get(session_id)
         if indexed is None:
             self._start_background_build(session_id)
@@ -379,8 +359,7 @@ class WorkspaceIndexer:
             limit=min(top_k, 50),
         )
         return [
-            IndexQueryResult(chunk=indexed.chunks[index], score=score)
-            for index, score in ranked
+            IndexQueryResult(chunk=indexed.chunks[index], score=score) for index, score in ranked
         ]
 
     def _start_background_build(self, session_id: str) -> None:
@@ -473,9 +452,7 @@ class WorkspaceIndexer:
                     indexed_files += 1
                     chunks.extend(file_chunks)
                     token_count += file_tokens
-                    file_token_counts[path.relative_to(resolved_root).as_posix()] = (
-                        file_tokens
-                    )
+                    file_token_counts[path.relative_to(resolved_root).as_posix()] = file_tokens
                 self.broker.publish(
                     WorkspaceIndexProgress(
                         type="index.progress",
@@ -504,9 +481,7 @@ class WorkspaceIndexer:
 
         documents = [chunk.text for chunk in chunks]
         try:
-            raw_embeddings = await asyncio.to_thread(
-                self._embedder.embed_documents, documents
-            )
+            raw_embeddings = await asyncio.to_thread(self._embedder.embed_documents, documents)
             embeddings = _validate_embeddings(
                 raw_embeddings,
                 expected_count=len(documents),
@@ -572,9 +547,7 @@ class WorkspaceIndexer:
         )
         return status
 
-    async def _persist_snapshot(
-        self, root: Path, indexed: IndexedWorkspace
-    ) -> None:
+    async def _persist_snapshot(self, root: Path, indexed: IndexedWorkspace) -> None:
         if self._persistence is None:
             return
         manifest = IndexManifest.create(indexed.embedder.info, len(indexed.chunks))
@@ -605,9 +578,7 @@ class WorkspaceIndexer:
             if self._debounce_tasks.get(session_id) is task:
                 self._debounce_tasks.pop(session_id, None)
 
-    async def _update_changed_files(
-        self, session_id: str, changed_paths: Sequence[str]
-    ) -> None:
+    async def _update_changed_files(self, session_id: str, changed_paths: Sequence[str]) -> None:
         lock = self._locks.setdefault(session_id, asyncio.Lock())
         async with lock:
             indexed = self._indexes.get(session_id)
@@ -629,9 +600,7 @@ class WorkspaceIndexer:
                 )
             )
             try:
-                await self._replace_changed_file_chunks(
-                    session_id, indexed, root, resolved_changes
-                )
+                await self._replace_changed_file_chunks(session_id, indexed, root, resolved_changes)
             except Exception as exc:
                 self.broker.publish(
                     WorkspaceIndexProgress(
@@ -656,9 +625,7 @@ class WorkspaceIndexer:
         affected = set(resolved_changes)
         retained = [
             (chunk, embedding)
-            for chunk, embedding in zip(
-                indexed.chunks, indexed.embeddings, strict=True
-            )
+            for chunk, embedding in zip(indexed.chunks, indexed.embeddings, strict=True)
             if chunk.file not in affected
         ]
 
@@ -681,9 +648,7 @@ class WorkspaceIndexer:
             expected_count=len(replacement_chunks),
             expected_dimension=indexed.embedder.info.dim,
         )
-        combined = retained + list(
-            zip(replacement_chunks, replacement_embeddings, strict=True)
-        )
+        combined = retained + list(zip(replacement_chunks, replacement_embeddings, strict=True))
         combined.sort(key=lambda item: (item[0].file, item[0].start_line, item[0].id))
         chunks = tuple(chunk for chunk, _embedding in combined)
         embeddings = tuple(embedding for _chunk, embedding in combined)
@@ -743,9 +708,7 @@ async def _discover_files(root: Path) -> list[Path]:
     return paths
 
 
-def _resolve_changed_files(
-    root: Path, changed_paths: Sequence[str]
-) -> dict[str, Path]:
+def _resolve_changed_files(root: Path, changed_paths: Sequence[str]) -> dict[str, Path]:
     """Confine changed paths to ``root`` and return workspace-relative keys."""
     resolved_root = root.resolve()
     resolved: dict[str, Path] = {}
@@ -794,9 +757,7 @@ def _index_file(root: Path, path: Path) -> tuple[list[IndexChunk], int]:
         if not selected:
             break
         chunk_text = "\n".join(selected)
-        digest = hashlib.sha1(
-            f"{relative}:{start}:{chunk_text}".encode()
-        ).hexdigest()[:20]
+        digest = hashlib.sha1(f"{relative}:{start}:{chunk_text}".encode()).hexdigest()[:20]
         chunks.append(
             IndexChunk(
                 id=digest,
@@ -867,9 +828,7 @@ def _validate_embeddings(
 ) -> tuple[tuple[float, ...], ...]:
     rows = tuple(tuple(float(value) for value in row) for row in embeddings)
     if len(rows) != expected_count:
-        raise ValueError(
-            f"embedder returned {len(rows)} vectors for {expected_count} documents"
-        )
+        raise ValueError(f"embedder returned {len(rows)} vectors for {expected_count} documents")
     for row in rows:
         if len(row) != expected_dimension:
             raise ValueError(
@@ -889,9 +848,7 @@ def _hash_embedding(text: str, dimension: int) -> tuple[float, ...]:
     if not tokens:
         return (0.0,) * dimension
 
-    features = tokens + [
-        f"{left}\0{right}" for left, right in itertools.pairwise(tokens)
-    ]
+    features = tokens + [f"{left}\0{right}" for left, right in itertools.pairwise(tokens)]
     vector = [0.0] * dimension
     for feature, frequency in Counter(features).items():
         digest = hashlib.blake2b(feature.encode("utf-8"), digest_size=8).digest()

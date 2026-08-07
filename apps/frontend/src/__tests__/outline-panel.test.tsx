@@ -19,7 +19,9 @@ describe("OutlinePanel", () => {
 
   it("lists symbols of the active file and filters them", () => {
     useApp.setState({
-      openFiles: [{ path: "/ws/a.ts", name: "a.ts", language: "typescript", content: SRC, dirty: false }],
+      openFiles: [
+        { path: "/ws/a.ts", name: "a.ts", language: "typescript", content: SRC, dirty: false },
+      ],
       activeFile: "/ws/a.ts",
     });
     render(<OutlinePanel />);

@@ -35,8 +35,11 @@ def _collect(request: InlineEditRequest, tokens: list[str]) -> list[dict[str, st
 def test_prompt_is_replacement_only_and_includes_selection_and_instruction() -> None:
     prompt = build_inline_edit_prompt(
         InlineEditRequest(
-            instruction="make it async", code="def f():\n    pass", language="python",
-            prefix="import os", suffix="f()",
+            instruction="make it async",
+            code="def f():\n    pass",
+            language="python",
+            prefix="import os",
+            suffix="f()",
         )
     )
     assert "Return ONLY the replacement code" in prompt
@@ -52,7 +55,9 @@ def test_strip_code_fences() -> None:
 
 
 def test_stream_emits_ordered_tokens_then_one_done() -> None:
-    frames = _collect(InlineEditRequest(instruction="x", code="y"), ["def f():\n", "    return 1\n"])
+    frames = _collect(
+        InlineEditRequest(instruction="x", code="y"), ["def f():\n", "    return 1\n"]
+    )
     tokens = [json.loads(f["data"])["text"] for f in frames if f["event"] == "token"]
     assert tokens == ["def f():\n", "    return 1\n"]
     assert frames[-1]["event"] == "done"
@@ -120,8 +125,7 @@ def test_inline_edit_passes_instruction_as_system_prompt() -> None:
     async def collect() -> list[dict[str, str]]:
         request = InlineEditRequest(instruction="simplify", code="x = x + 0")
         return [
-            frame
-            async for frame in stream_inline_edit_events(request, generate_stream=fake_model)
+            frame async for frame in stream_inline_edit_events(request, generate_stream=fake_model)
         ]
 
     frames = asyncio.run(collect())

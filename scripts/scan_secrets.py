@@ -47,12 +47,25 @@ ALLOWLIST = (
     "xxxx",
     "XXXX",
     "placeholder",
+    # A canary: a key-shaped string a test feeds in specifically to assert it never
+    # comes back out. One convention rather than an allowlist entry per test — every
+    # such string in this repo carries this marker, so a new leak-assertion needs no
+    # change here, and a real key still has to be spelled `CANARY` to pass.
+    "CANARY",
 )
 
 # Files/dirs that never contain real secrets and produce noise.
 SKIP_DIRS = {
-    ".git", "node_modules", ".venv", "target", "dist", ".mypy_cache",
-    ".ruff_cache", ".pytest_cache", "__pycache__", ".uv-cache",
+    ".git",
+    "node_modules",
+    ".venv",
+    "target",
+    "dist",
+    ".mypy_cache",
+    ".ruff_cache",
+    ".pytest_cache",
+    "__pycache__",
+    ".uv-cache",
 }
 # This scanner defines the patterns themselves, so skip it.
 SKIP_FILES = {"scripts/scan_secrets.py"}
@@ -75,9 +88,7 @@ def _scan_text(label: str, text: str) -> list[str]:
 
 
 def _tracked_files() -> list[str]:
-    out = subprocess.run(
-        ["git", "ls-files"], capture_output=True, text=True, check=True
-    ).stdout
+    out = subprocess.run(["git", "ls-files"], capture_output=True, text=True, check=True).stdout
     return [f for f in out.splitlines() if f]
 
 

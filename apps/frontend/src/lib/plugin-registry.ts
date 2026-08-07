@@ -75,11 +75,7 @@ export interface ExtractedPluginArtifact {
 
 export type ExtractPluginArtifact = (
   artifact: PluginArtifact,
-) =>
-  | Promise<ExtractedPluginArtifact | string | null>
-  | ExtractedPluginArtifact
-  | string
-  | null;
+) => Promise<ExtractedPluginArtifact | string | null> | ExtractedPluginArtifact | string | null;
 
 export interface PluginArtifactParseResult extends ManifestParseResult {
   code?: string;
@@ -221,8 +217,7 @@ export async function manifestFromArtifact(
       errors: [error instanceof Error ? error.message : String(error)],
     };
   }
-  const manifestText =
-    typeof extracted === "string" ? extracted : extracted?.manifestText;
+  const manifestText = typeof extracted === "string" ? extracted : extracted?.manifestText;
   if (manifestText == null || manifestText.trim() === "") {
     return { manifest: null, errors: ["No manifest.json found in the plugin artifact."] };
   }

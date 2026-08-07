@@ -39,14 +39,14 @@ async def run_test():
             await page.wait_for_load_state("domcontentloaded", timeout=5000)
         except Exception:
             pass
-        
+
         # -> Click the workspace path labeled '/tmp' in the top bar to confirm or choose the workspace folder as part of onboarding.
         # /tmp
         elem = page.get_by_text('/tmp', exact=True)
         await elem.click(timeout=10000)
-        
+
         # --> Assertions to verify final state
-        
+
         # --> Verify the main application shell is displayed
         await page.locator("xpath=/html/body/div[1]/div/header/div[1]/div[3]/span").nth(0).scroll_into_view_if_needed()
         # Assert: The workspace path '/tmp' is visible in the header, indicating the shell is loaded.
@@ -71,4 +71,3 @@ async def run_test():
             await pw.stop()
 
 asyncio.run(run_test())
-    

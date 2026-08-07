@@ -205,7 +205,9 @@ describe("Feature: zoc-agent-chat-rebuild, Property 83: no context figure is dis
     const harness = recorder({ model: opus, census: censusFor(opus, 100_000) });
     await harness.select(qwen, censusFor(opus, 100_000));
 
-    const seen = harness.observations.map((observation) => `${observation.modelId}:${String(observation.limit)}`);
+    const seen = harness.observations.map(
+      (observation) => `${observation.modelId}:${String(observation.limit)}`,
+    );
     expect(seen).not.toContain(`${qwen.modelId}:${String(opus.contextLimit)}`);
     expect(seen).not.toContain(`${opus.modelId}:${String(qwen.contextLimit)}`);
     harness.stop();

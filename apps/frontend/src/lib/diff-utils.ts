@@ -18,7 +18,12 @@ export function parseUnifiedDiff(diff: string): { hunks: DiffHunk[]; adds: numbe
   let oldNum = 0;
   let newNum = 0;
   for (const raw of diff.split("\n")) {
-    if (raw.startsWith("---") || raw.startsWith("+++") || raw.startsWith("diff ") || raw.startsWith("index ")) {
+    if (
+      raw.startsWith("---") ||
+      raw.startsWith("+++") ||
+      raw.startsWith("diff ") ||
+      raw.startsWith("index ")
+    ) {
       // skip file headers; the diff card shows file path separately
       continue;
     }
@@ -45,7 +50,12 @@ export function parseUnifiedDiff(diff: string): { hunks: DiffHunk[]; adds: numbe
       oldNum += 1;
       dels += 1;
     } else {
-      current.lines.push({ kind: "ctx", text: raw.startsWith(" ") ? raw.slice(1) : raw, oldNum, newNum });
+      current.lines.push({
+        kind: "ctx",
+        text: raw.startsWith(" ") ? raw.slice(1) : raw,
+        oldNum,
+        newNum,
+      });
       oldNum += 1;
       newNum += 1;
     }
@@ -111,10 +121,7 @@ export function prevIndex(index: number, count: number): number {
 }
 
 /** 1-based display position "N of M" for the Review_Toolbar (R5.4). */
-export function changePosition(
-  index: number,
-  count: number,
-): { n: number; m: number } {
+export function changePosition(index: number, count: number): { n: number; m: number } {
   if (count <= 0) return { n: 0, m: 0 };
   return { n: clampIndex(index, count) + 1, m: count };
 }
@@ -137,19 +144,14 @@ export function deserializeAppliedIds(raw: string | null): Set<string> {
   if (!raw) return new Set();
   try {
     const arr = JSON.parse(raw);
-    return Array.isArray(arr)
-      ? new Set(arr.filter((x) => typeof x === "string"))
-      : new Set();
+    return Array.isArray(arr) ? new Set(arr.filter((x) => typeof x === "string")) : new Set();
   } catch {
     return new Set();
   }
 }
 
 /** Mark a patch id as applied (R10.6). */
-export function markApplied(
-  ids: ReadonlySet<string>,
-  id: string,
-): Set<string> {
+export function markApplied(ids: ReadonlySet<string>, id: string): Set<string> {
   const next = new Set(ids);
   next.add(id);
   return next;

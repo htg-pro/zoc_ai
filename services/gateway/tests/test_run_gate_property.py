@@ -178,9 +178,7 @@ def test_session_creation_over_http_refused_without_workspace() -> None:
 def test_session_creation_over_http_binds_resolved_root(tmp_path: Path) -> None:
     """R15.1: with a workspace bound, the session's root is the resolved root."""
     client = TestClient(create_app(drive=False, workspace_root=tmp_path))
-    resp = client.post(
-        "/v1/sessions", json={"title": "s", "workspace_root": "/somewhere/else"}
-    )
+    resp = client.post("/v1/sessions", json={"title": "s", "workspace_root": "/somewhere/else"})
     assert resp.status_code == 201
     assert resp.json()["workspace_root"] == str(tmp_path.resolve())
 

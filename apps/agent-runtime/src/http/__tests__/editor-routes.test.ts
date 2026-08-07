@@ -1,6 +1,8 @@
 /**
  * The two editor inference routes over real HTTP — R6.2, 9.7.
  *
+ * Feature: zoc-agent-chat-rebuild, task 9.7 (R6.2).
+ *
  * The assertions are all about frame shape and about failing quiet, because those
  * two are the whole contract: Monaco's inline-completions provider reads `event:
  * token` and `event: done` and treats anything else as no completion, and it has
@@ -169,7 +171,7 @@ describe("POST /v1/completions", () => {
   it("refuses an apiKey field rather than ignoring it (R7.8)", async () => {
     const { status, raw } = await sse("/v1/completions", {
       ...completion,
-      apiKey: "sk-must-not-travel-here",
+      apiKey: "sk-must-not-travel-CANARY",
     });
     expect(status).toBe(422);
     expect(raw).not.toContain("sk-must-not-travel");

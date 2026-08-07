@@ -19,6 +19,9 @@
  * KeyboardEvent so it can be unit-tested without a DOM.
  */
 import { useApp, type AppState } from "./store";
+// The Conversation_Mode the two Agent commands set lives in the Chat_Surface's store since 25.6 — the
+// app store's `agentMode` is read by no mounted composer, so setting it changed nothing on screen.
+import { useChatSurface } from "@/features/chat/store";
 import { recordRecentCommand } from "./recents";
 import { formatDocument, goToLine, goToSymbolInFile } from "./editor-actions";
 import { effectiveKeybinding, loadOverrides } from "./keybinding-overrides";
@@ -127,9 +130,7 @@ export function matchKeybinding(e: KeyboardEvent, s: AppState): Command | undefi
   if (!kb) return undefined;
   const overrides = loadOverrides();
   const cmd = registry.find(
-    (c) =>
-      effectiveKeybinding(c, overrides) === kb ||
-      (c.extraKeybindings?.includes(kb) ?? false),
+    (c) => effectiveKeybinding(c, overrides) === kb || (c.extraKeybindings?.includes(kb) ?? false),
   );
   if (!cmd) return undefined;
   return isCommandEnabled(cmd, s) ? cmd : undefined;
@@ -404,8 +405,7 @@ registry = [
     aliases: ["save all"],
     icon: "Save",
     enabled: (s) => s.openFiles.some((f) => f.dirty),
-    disabledReason: (s) =>
-      s.openFiles.some((f) => f.dirty) ? null : "No unsaved changes.",
+    disabledReason: (s) => (s.openFiles.some((f) => f.dirty) ? null : "No unsaved changes."),
     run: () => void app().saveAllFiles(),
   },
   {
@@ -526,7 +526,7 @@ registry = [
     aliases: ["ask", "read only"],
     icon: "MessageCircleQuestion",
     run: () => {
-      app().setAgentMode("ask");
+      useChatSurface.getState().setConversationMode("ask");
       if (!app().layout.rightPanelOpen) app().toggleRight();
     },
   },
@@ -537,7 +537,7 @@ registry = [
     aliases: ["agent", "build", "autonomy"],
     icon: "Zap",
     run: () => {
-      app().setAgentMode("agent");
+      useChatSurface.getState().setConversationMode("agent");
       if (!app().layout.rightPanelOpen) app().toggleRight();
     },
   },
@@ -576,8 +576,7 @@ registry = [
     aliases: ["undo agent", "rollback", "restore"],
     icon: "History",
     enabled: (s) => s.restorableRunId !== null,
-    disabledReason: (s) =>
-      s.restorableRunId ? null : "No applied run to roll back.",
+    disabledReason: (s) => (s.restorableRunId ? null : "No applied run to roll back."),
     run: () => void app().restoreCurrentRun(),
   },
 ];

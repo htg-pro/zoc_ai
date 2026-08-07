@@ -1,6 +1,8 @@
 /**
  * The Effort control — zoc-agent-chat-rebuild R32.1's neighbour, task 20.2.
  *
+ * Feature: zoc-agent-chat-rebuild, task 20.2 (R32.1).
+ *
  * `fast` / `balanced` / `thorough`, immediately right of Mode, labelled **Effort**, on a Radix `Popover`.
  * Extracted from the legacy panel's inline control into its own file for the reason Amendment 1 gives:
  * the composer now carries two mode axes, and a third inline control in the same row is what makes three
@@ -49,7 +51,9 @@ export interface EffortControlProps {
 
 export function EffortControl({ value, onChange, className }: EffortControlProps) {
   return (
-    <Popover>
+    // Trapped for the same reason the model picker is (R21.6, task 23.1): a Radix Popover at its
+    // default restores focus but does not trap it, so Tab escapes the option list into the page.
+    <Popover modal>
       <PopoverTrigger asChild>
         <button
           type="button"

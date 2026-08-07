@@ -2,6 +2,8 @@
  * The model catalogue and the context-window resolver — zoc-agent-chat-rebuild
  * R12.10, R13.1, R13.12.
  *
+ * Feature: zoc-agent-chat-rebuild, R12.10, R13.1, R13.12.
+ *
  * `providers/registry.ts` answers "how do I reach this provider". This module
  * answers "what is this model". They are separate because the second question has
  * a fallback chain and the first does not: a model id the catalogue has never

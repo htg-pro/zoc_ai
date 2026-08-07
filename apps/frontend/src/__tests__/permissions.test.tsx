@@ -20,9 +20,7 @@ describe("PermissionsSection", () => {
 
     render(<PermissionsSection />);
 
-    expect(
-      await screen.findByText(/No per-tool grants yet/i),
-    ).toBeInTheDocument();
+    expect(await screen.findByText(/No per-tool grants yet/i)).toBeInTheDocument();
   });
 
   it("lists an active per-tool grant and revokes it via the button", async () => {

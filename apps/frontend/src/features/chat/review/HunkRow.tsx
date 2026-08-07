@@ -1,6 +1,8 @@
 /**
  * One reviewable hunk — zoc-agent-chat-rebuild R10.2, R10.3, R10.12, R10.13, R21.5, R21.7, task 18.2.
  *
+ * Feature: zoc-agent-chat-rebuild, task 18.2 (R10.2, R10.3, R10.12, R10.13, R21.5, R21.7).
+ *
  * A header line, the accept/reject pair, and the diff body under both. Focusable, with the accessible
  * name R21.5 asks for — the file path and the hunk's line range — and operable entirely from the
  * keyboard: `A` accepts, `R` rejects, `Space` toggles, `J`/`K` and the arrows move between hunks, and
@@ -154,7 +156,14 @@ export function HunkRow({
 
   return (
     <li
-      className={cn("flex flex-col rounded-[var(--zoc-radius-chip)]", className)}
+      className={cn(
+        "flex flex-col rounded-[var(--zoc-radius-chip)]",
+        // The row is a tab stop (below), so it owes a focus indicator like any other control. Without
+        // one, a keyboard user arrowing through a diff has no idea which hunk `A` would accept —
+        // which is R21.5's operability sitting on top of an invisible cursor (R21.1).
+        "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--zoc-agent-strong)]",
+        className,
+      )}
       data-zoc-hunk-row={hunk.hunkId}
       data-decision={decision}
       {...(locked ? { "data-locked": "" } : {})}
@@ -278,9 +287,7 @@ export function HunkRow({
           className="self-start rounded-[var(--zoc-radius-chip)] px-1 py-0.5 hover:bg-[var(--zoc-row-bg)]"
           style={{ color: "var(--zoc-text-muted)", fontSize: "var(--zoc-text-label)" }}
         >
-          {expanded
-            ? "Show fewer lines"
-            : `Show all ${String(lines.length)} lines`}
+          {expanded ? "Show fewer lines" : `Show all ${String(lines.length)} lines`}
         </button>
       ) : null}
     </li>

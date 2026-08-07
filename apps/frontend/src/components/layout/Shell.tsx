@@ -6,7 +6,7 @@ import { SidePanel } from "./SidePanel";
 import { BottomDock } from "./BottomDock";
 import { StatusBar } from "./StatusBar";
 import { EditorArea } from "@/features/editor/EditorArea";
-import { AgentPanel } from "@/features/agent/AgentPanel";
+import { ChatPanelHost } from "@/features/chat/ChatPanelHost";
 import { SessionsView } from "@/features/sessions/SessionsView";
 import { SettingsView } from "@/features/settings/SettingsView";
 import { UpdateBanner } from "@/features/settings/UpdateBanner";
@@ -97,7 +97,11 @@ export function Shell() {
             </>
           )}
           <Panel id="center" minSize="480px" className="min-h-0 min-w-0">
-            <Group orientation="vertical" className="h-full min-h-0 min-w-0" onLayoutChanged={handleVertical}>
+            <Group
+              orientation="vertical"
+              className="h-full min-h-0 min-w-0"
+              onLayoutChanged={handleVertical}
+            >
               <Panel id="main" minSize="320px" className="min-h-0 min-w-0">
                 <MainViewRenderer view={mainView} />
               </Panel>
@@ -127,7 +131,7 @@ export function Shell() {
                 maxSize={PANEL_MAX}
                 className="min-h-0 min-w-0 border-l border-border"
               >
-                <AgentPanel />
+                <ChatPanelHost />
               </Panel>
             </>
           )}

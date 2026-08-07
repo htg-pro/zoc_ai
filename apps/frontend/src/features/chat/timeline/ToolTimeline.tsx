@@ -1,6 +1,8 @@
 /**
  * The tool-call timeline — zoc-agent-chat-rebuild R9.5, R9.7, R21.4, 16.1.
  *
+ * Feature: zoc-agent-chat-rebuild, task 16.1 (R9.5, R9.7, R21.4).
+ *
  * A semantic `<ol>` on the rail, one item per call or per cluster. It owns exactly two things:
  * the list semantics R21.4 needs, and the expansion state of its rows.
  *
@@ -51,6 +53,12 @@ export function ToolTimeline({ entries, onRetry, className }: ToolTimelineProps)
   return (
     <ol
       className={cn("flex flex-col border-l", className)}
+      // `role="list"` on an `<ol>` reads as redundant and is not: a list container styled
+      // `display: flex` loses its implicit list role in several browsers, and this one is flex so
+      // the rail can thread its items. Restating the role is what keeps R21.4's "the timeline is a
+      // list" true of the accessibility tree rather than only of the markup — the same reason
+      // `DiffReview`, `ContextMeter`, and `MentionChips` each restate it.
+      role="list"
       style={{
         borderColor: "var(--zoc-border)",
         borderLeftWidth: "var(--zoc-rail-width)",

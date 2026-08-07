@@ -1,6 +1,8 @@
 /**
  * `propose_plan` — zoc-agent-chat-rebuild R10.1, R10.9, R11.5, R32.8, R32.9.
  *
+ * Feature: zoc-agent-chat-rebuild, R10.1, R10.9, R11.5, R32.8, R32.9.
+ *
  * The plan tool the registry declares and does not implement. It lives here
  * rather than in `registry.ts` because it is the one tool whose `execute` writes
  * a Message_Part and can *pause*: in `Plan` mode it hands control to 8.4's plan

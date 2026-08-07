@@ -71,9 +71,7 @@ describe("SearchPanel", () => {
 
     typeQuery("nothinghere");
 
-    expect(
-      await screen.findByText("No matches in the indexed workspace."),
-    ).toBeInTheDocument();
+    expect(await screen.findByText("No matches in the indexed workspace.")).toBeInTheDocument();
   });
 
   it("shows the error state when indexQuery rejects", async () => {
@@ -82,9 +80,7 @@ describe("SearchPanel", () => {
 
     typeQuery("boom");
 
-    expect(
-      await screen.findByText(/Couldn't reach the workspace index/i),
-    ).toBeInTheDocument();
+    expect(await screen.findByText(/Couldn't reach the workspace index/i)).toBeInTheDocument();
   });
 
   it("shows the amber hash-fallback note only when embedder.is_fallback is true", async () => {
@@ -94,9 +90,7 @@ describe("SearchPanel", () => {
     indexQuery.mockResolvedValue([]);
     render(<SearchPanel />);
 
-    expect(
-      await screen.findByText(/offline hash fallback/i),
-    ).toBeInTheDocument();
+    expect(await screen.findByText(/offline hash fallback/i)).toBeInTheDocument();
   });
 
   it("hides the hash-fallback note when embedder.is_fallback is false", async () => {

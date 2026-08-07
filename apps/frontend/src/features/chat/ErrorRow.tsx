@@ -1,6 +1,8 @@
 /**
  * The error row — zoc-agent-chat-rebuild R16.6, task 16.3.
  *
+ * Feature: zoc-agent-chat-rebuild, task 16.3 (R16.6).
+ *
  * Decision tier, and the only tier with a card: an error is a thing the user has to decide about
  * (retry, rephrase, or give up), so it is boxed, bordered, and carries an `--zoc-error` left bar.
  * R16.6 names the three things it must show — the `code`, the human `message`, and a retry control

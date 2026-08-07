@@ -23,15 +23,23 @@ const checkpoint = (over: Partial<CheckpointInfo>): CheckpointInfo => ({
 
 describe("buildTimeline", () => {
   it("merges commits and checkpoints, newest first", () => {
-    const commits = [commit({ hash: "old", timestamp: 1000 }), commit({ hash: "new", timestamp: 3000 })];
-    const checkpoints = [checkpoint({ run_id: "r", created_at: new Date(2_000_000).toISOString() })];
+    const commits = [
+      commit({ hash: "old", timestamp: 1000 }),
+      commit({ hash: "new", timestamp: 3000 }),
+    ];
+    const checkpoints = [
+      checkpoint({ run_id: "r", created_at: new Date(2_000_000).toISOString() }),
+    ];
     const entries = buildTimeline(commits, checkpoints);
     // commit "new" = 3000s = 3_000_000ms (latest), then checkpoint 2_000_000ms, then commit "old" 1_000_000ms
     expect(entries.map((e) => e.id)).toEqual(["commit:new", "checkpoint:r", "commit:old"]);
   });
 
   it("maps commit fields (seconds → ms) and subtitles", () => {
-    const [e] = buildTimeline([commit({ hash: "h", short: "hsh", author: "Ada", timestamp: 5 })], []);
+    const [e] = buildTimeline(
+      [commit({ hash: "h", short: "hsh", author: "Ada", timestamp: 5 })],
+      [],
+    );
     expect(e).toMatchObject({ kind: "commit", title: "do a thing", ts: 5000 });
     expect(e.subtitle).toContain("Ada");
     expect(e.subtitle).toContain("hsh");

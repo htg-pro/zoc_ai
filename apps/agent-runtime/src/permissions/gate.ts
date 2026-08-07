@@ -2,6 +2,8 @@
  * The server-held permission gate — zoc-agent-chat-rebuild R11.2–R11.7, R11.9,
  * R11.11, R32.5, R32.7–R32.9, R32.12.
  *
+ * Feature: zoc-agent-chat-rebuild, R11.2, R11.7, R11.9, R11.11, R32.5, R32.7.
+ *
  * ## Two gates, composed in one direction only
  *
  * `gated()` consults the **Capability_Policy first** and its refusals are
@@ -58,6 +60,8 @@ export interface GateWriter {
   modeRefusal(toolName: string, code: string, message: string): void;
   /** A Table B refusal. Does not end the Run (R11.4). */
   toolRefusal(toolName: string, reason: string): void;
+  /** A provider-defined tool omitted before dispatch, represented as a tool error. */
+  providerToolRefusal?(toolName: string, reason: string): void;
   /** An approval request the surface renders in the dock. */
   approvalRequest(request: {
     requestId: string;
@@ -251,9 +255,85 @@ export function forcedApprovalReasonFor(
 }
 
 export function offeredScopesFor(kind: ToolKind): readonly GrantScope[] {
+  if (kind === "network") return ["run"];
   // A workspace-wide grant for a destructive command is a footgun, so the
   // broadest scope is withheld for `execute` rather than offered and regretted.
   return kind === "execute" ? ["call", "run"] : ["call", "run", "workspace"];
+}
+
+/**
+ * Authorise a provider-executed tool before it is inserted into the registry.
+ * Such a tool has no local `execute`, so the ordinary wrapper cannot intercept it.
+ */
+export async function authorizeProviderExecutedTool(
+  ctx: GateContext,
+  input: { readonly toolName: string; readonly kind: "network" },
+): Promise<boolean> {
+  const capability = capabilityOf(input.kind, { providerExecuted: true });
+  const request = {
+    ...describeAction(input.kind, input.toolName, {}),
+    readOnly: capability === "read",
+  };
+  const verdict = checkCapability(ctx.mode, ctx.planApproval.approved, capability);
+  if (!verdict.permitted) {
+    const code = verdict.code as string;
+    const message = verdict.message as string;
+    ctx.writer.modeRefusal(input.toolName, code, message);
+    ctx.audit.record(request, { effect: "deny", reason: code }, ctx.runId);
+    return false;
+  }
+
+  if (ctx.permissionMode === "deny") {
+    const reason = "Web search is blocked because permission mode is set to deny.";
+    (ctx.writer.providerToolRefusal ?? ctx.writer.toolRefusal)(input.toolName, reason);
+    ctx.audit.record(request, { effect: "deny", reason }, ctx.runId);
+    return false;
+  }
+
+  if (ctx.permissionMode === "auto" || ctx.grants.covers(request)) {
+    ctx.audit.record(
+      request,
+      { effect: "allow", reason: "Provider web search is allowed." },
+      ctx.runId,
+    );
+    return true;
+  }
+
+  const timeoutMs = ctx.approvalTimeoutMs ?? APPROVAL_TIMEOUT_MS;
+  const requestId = ctx.newRequestId?.() ?? `req_${ctx.runId}_web_search`;
+  const offeredScopes = offeredScopesFor(input.kind);
+  const expiresAt = new Date((ctx.now ?? (() => new Date()))().getTime() + timeoutMs).toISOString();
+  ctx.writer.approvalRequest({
+    requestId,
+    toolName: input.toolName,
+    kind: input.kind,
+    reason: "mode-ask",
+    paths: [],
+    offeredScopes,
+    expiresAt,
+  });
+  const outcome = await ctx.broker.request({
+    requestId,
+    toolName: input.toolName,
+    kind: input.kind,
+    reason: "mode-ask",
+    paths: [],
+    offeredScopes,
+    timeoutMs,
+  });
+  if (outcome.decision === "timeout") {
+    ctx.writer.approvalTimeout(input.toolName);
+    ctx.audit.record(request, { effect: "deny", reason: "approval timed out" }, ctx.runId);
+    return false;
+  }
+  if (outcome.decision === "reject") {
+    ctx.audit.record(request, { effect: "deny", reason: "rejected by the user" }, ctx.runId);
+    return false;
+  }
+
+  ctx.grants.record(request, "run");
+  ctx.audit.record(request, { effect: "allow", reason: "approved for this run" }, ctx.runId);
+  return true;
 }
 
 /**
@@ -275,10 +355,13 @@ export function createGate(ctx: GateContext) {
     declared?: { userDeclaredCapability?: Capability; providerExecuted?: boolean },
   ): (args: A) => Promise<R> {
     return async function gatedExecute(args: A): Promise<R> {
-      const request = describeAction(kind, toolName, args);
-
       // ── Gate 1: Capability_Policy (R11.11, R32.12) ────────────────────
       const capability = capabilityOf(kind, declared);
+      // `mcp` is a transport kind, not an effect. A user-declared read-only MCP
+      // tool must therefore reach Permission_Mode as read-only; otherwise `deny`
+      // and `ask` would treat the declaration as execute even though the
+      // Capability_Policy correctly narrowed it (R26.3/R26.5).
+      const request = { ...describeAction(kind, toolName, args), readOnly: capability === "read" };
       const verdict: CapabilityDecision = checkCapability(
         ctx.mode,
         ctx.planApproval.approved,

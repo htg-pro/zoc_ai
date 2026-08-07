@@ -12,11 +12,7 @@
  * worker has registered a matching handler.
  */
 import { setContributedCommands, type Command } from "./commands";
-import {
-  parsePluginManifest,
-  type ContributedView,
-  type PluginManifest,
-} from "./plugin-manifest";
+import { parsePluginManifest, type ContributedView, type PluginManifest } from "./plugin-manifest";
 import { checkAction } from "./trust";
 
 export type PluginSource = "folder" | "zip" | "builtin";
@@ -228,7 +224,9 @@ export function setPluginCommandInvoker(
 export function registerPluginCommand(pluginId: string, commandId: string): boolean {
   hydrate();
   const plugin = plugins.find((candidate) => candidate.manifest.id === pluginId);
-  const declared = plugin?.manifest.contributes.commands.some((command) => command.id === commandId);
+  const declared = plugin?.manifest.contributes.commands.some(
+    (command) => command.id === commandId,
+  );
   if (!plugin?.enabled || plugin.errored || !plugin.code || !declared) {
     log("error", pluginId, `Rejected undeclared or inactive command registration: ${commandId}`);
     emit();
@@ -258,35 +256,39 @@ export function activeContributedCommands(): Command[] {
     p.manifest.contributes.commands
       .filter((command) => registeredCommands.get(p.manifest.id)?.has(command.id))
       .map<Command>((c) => ({
-      id: c.id,
-      title: c.title,
-      category: "Plugin",
-      icon: "Puzzle",
-      aliases: [p.manifest.name],
-      run: () => {
-        if (!registeredCommands.get(p.manifest.id)?.has(c.id) || !commandInvoker) {
-          log("error", p.manifest.id, `Command unavailable because its worker is not running: ${c.id}`);
-          syncContributions();
-          return;
-        }
-        // Workspace Trust gate (Phase 13): a restricted workspace blocks
-        // plugin actions. The decision is recorded in the audit log.
-        const decision = checkAction({ kind: "plugin", name: c.id });
-        if (decision.effect !== "allow") {
-          log(
-            "error",
-            p.manifest.id,
-            `Command blocked (${decision.effect}): ${c.id} — ${decision.reason}`,
-          );
+        id: c.id,
+        title: c.title,
+        category: "Plugin",
+        icon: "Puzzle",
+        aliases: [p.manifest.name],
+        run: () => {
+          if (!registeredCommands.get(p.manifest.id)?.has(c.id) || !commandInvoker) {
+            log(
+              "error",
+              p.manifest.id,
+              `Command unavailable because its worker is not running: ${c.id}`,
+            );
+            syncContributions();
+            return;
+          }
+          // Workspace Trust gate (Phase 13): a restricted workspace blocks
+          // plugin actions. The decision is recorded in the audit log.
+          const decision = checkAction({ kind: "plugin", name: c.id });
+          if (decision.effect !== "allow") {
+            log(
+              "error",
+              p.manifest.id,
+              `Command blocked (${decision.effect}): ${c.id} — ${decision.reason}`,
+            );
+            emit();
+            return;
+          }
+          // Route only to the live worker that registered this declared handler.
+          commandInvoker(p.manifest.id, c.id);
+          log("info", p.manifest.id, `Command invoked: ${c.id}`);
           emit();
-          return;
-        }
-        // Route only to the live worker that registered this declared handler.
-        commandInvoker(p.manifest.id, c.id);
-        log("info", p.manifest.id, `Command invoked: ${c.id}`);
-        emit();
-      },
-    })),
+        },
+      })),
   );
 }
 

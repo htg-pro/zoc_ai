@@ -1,6 +1,8 @@
 /**
  * The compact-now route — zoc-agent-chat-rebuild R34.4, R34.5, design.md:2496.
  *
+ * Feature: zoc-agent-chat-rebuild, R34.4, R34.5.
+ *
  * ```
  * POST /v1/sessions/:id/compact
  *   { }                            no body fields: the Session's own model and

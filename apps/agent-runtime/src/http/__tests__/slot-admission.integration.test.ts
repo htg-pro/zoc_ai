@@ -1,6 +1,8 @@
 /**
  * Slot admission end to end — zoc-agent-chat-rebuild R25.1, R25.2, task 9.12.
  *
+ * Feature: zoc-agent-chat-rebuild, task 9.12 (R25.1, R25.2).
+ *
  * Four concurrent submissions against a three-Slot runtime, over real HTTP: three start,
  * the fourth queues at position 1, and it starts when the first finishes. Property 59 in
  * `run-store.property.test.ts` already proves the `SlotManager`'s arithmetic over
@@ -116,6 +118,10 @@ afterEach(async () => {
       /* already closed */
     }
   }
+  // Node's fetch pool keeps the POST/SSE sockets alive after their bodies are
+  // consumed. They are test-owned connections, and leaving them to the normal
+  // keep-alive timeout makes `server.close()` exceed Vitest's hook deadline.
+  server.closeAllConnections();
   await new Promise<void>((resolve) => server.close(() => resolve()));
 });
 

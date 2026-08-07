@@ -1,6 +1,8 @@
 /**
  * A fenced code block — zoc-agent-chat-rebuild R8.5, R8.6, R17.1.
  *
+ * Feature: zoc-agent-chat-rebuild, R8.5, R8.6, R17.1.
+ *
  * Three things R8.5 asks for: a language label, a copy control per fence, and a highlighted
  * body. The order they happen in is the design:
  *

@@ -8,12 +8,18 @@
  * preference into React state for components that swap animated nodes for
  * static ones.
  *
- * Two systems live here, and that is deliberate for the length of the cutover.
- * The class-based half (`motionClass`, `transitionClass`, `ANIMATED_CLASS`,
- * `STATIC_CLASS`, `TRANSITIONS`) serves the Legacy_Panel and is removed by task
- * 26.2, not before: `features/agent/rows.tsx` and `RunCardView.tsx` import from
- * it by name. The `MOTION_VARIANTS` half at the bottom of the file serves the
- * Chat_Surface, whose animations run through `motion` rather than keyframes.
+ * Two systems live here, and after task 26.5 that is the end state rather than a
+ * cutover artifact. The class-based half (`motionClass`, `transitionClass`,
+ * `ANIMATED_CLASS`, `STATIC_CLASS`, `TRANSITIONS`) was slated for removal at
+ * 26.2 on the grounds that `features/agent/rows.tsx` and `RunCardView.tsx` were
+ * its only importers. They were, and 26.1 deleted both — but removing the
+ * exports would delete **Property 12.5**, the motion-registry property test the
+ * spec itself mandates, so 26.5 struck that bullet and kept them. They are pure
+ * functions over a token table with no Legacy_Panel coupling, and the eight
+ * `.motion-*` classes they name are what `globals.css` still defines keyframes
+ * for; `MonacoView.tsx` applies `motion-caret-blink` directly. The
+ * `MOTION_VARIANTS` half at the bottom of the file serves the Chat_Surface,
+ * whose animations run through `motion` rather than keyframes.
  * `useReducedMotion()` keeps its exact signature and is shared by both, which
  * is what keeps the Monaco decoration callers untouched.
  */
@@ -82,9 +88,7 @@ export function isAnimatedClass(cls: string): boolean {
 
 export type TransitionToken = "row-enter" | "row-expand" | "state-change";
 
-export const TRANSITIONS: Readonly<
-  Record<TransitionToken, { ms: number; easing: string }>
-> = {
+export const TRANSITIONS: Readonly<Record<TransitionToken, { ms: number; easing: string }>> = {
   "row-enter": { ms: 160, easing: "cubic-bezier(0.2, 0, 0, 1)" },
   "row-expand": { ms: 200, easing: "cubic-bezier(0.2, 0, 0, 1)" },
   "state-change": { ms: 120, easing: "cubic-bezier(0.4, 0, 0.2, 1)" },
@@ -173,12 +177,12 @@ export function useReducedMotion(): boolean {
  *
  * Feature: zoc-agent-chat-rebuild, task 12.3.
  *
- * **Additive.** Everything above stays exactly as it is until task 26.2:
- * `features/agent/rows.tsx` and `RunCardView.tsx` import `motionClass`,
- * `transitionClass`, and `useReducedMotion` by name, and the twelve legacy
- * keyframes those classes resolve to are still in `globals.css`. The
- * Chat_Surface uses the registry below and none of the class helpers; the two
- * systems coexist for the length of the cutover.
+ * **Additive.** Everything above stays, and task 26.5 settled that it stays for
+ * good rather than until 26.2 — see the file header. The nine keyframes the
+ * class helpers resolve to are still in `globals.css`, which is now exactly the
+ * set something live resolves to; the five that were only ever reachable from
+ * the deleted tree went with 26.5. The Chat_Surface uses the registry below and
+ * none of the class helpers; the two systems coexist by design.
  *
  * The registry is the Chat_Surface's whole animation inventory — one entry per
  * row of the Design_Document's motion table — which is what makes R19.1 and

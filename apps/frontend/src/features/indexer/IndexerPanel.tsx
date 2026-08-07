@@ -79,9 +79,7 @@ export function IndexerPanel() {
       ) : (
         <IndexStatusDetail status={status} />
       )}
-      {error && (
-        <p className="mt-2 text-[10px] text-amber-400">{error}</p>
-      )}
+      {error && <p className="mt-2 text-[10px] text-amber-400">{error}</p>}
     </div>
   );
 }
@@ -135,8 +133,8 @@ function IndexStatusDetail({ status }: { status: IndexStatus }) {
               <p className="mt-1 text-muted-foreground">
                 No real embedding model is configured — semantic search is running on the
                 deterministic hash fallback, which gives weaker results. Run llama-server with an
-                embedding model like <code className="font-mono">nomic-embed-text.gguf</code>, or set an OpenAI
-                key, then pick a provider in Settings → Indexer.
+                embedding model like <code className="font-mono">nomic-embed-text.gguf</code>, or
+                set an OpenAI key, then pick a provider in Settings → Indexer.
               </p>
             )}
           </div>

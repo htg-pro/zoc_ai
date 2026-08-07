@@ -16,7 +16,6 @@ import type {
   ContextStatus,
   DiffPatch,
   IndexStatus,
-  MemoryStats,
   Message,
   PermissionGrant,
   PermissionScope,
@@ -72,12 +71,7 @@ import { toast } from "@/components/ui/toast";
 // these `import type`s add no runtime edge back into the LSP modules.
 import type { ServerName } from "@/features/editor/lsp/lsp-registry";
 import type { LanguageServerState } from "@/features/editor/lsp/lsp-connection";
-import {
-  parseByKind,
-  sourceForKind,
-  type CheckKind,
-  type Diagnostic,
-} from "./problem-matchers";
+import { parseByKind, sourceForKind, type CheckKind, type Diagnostic } from "./problem-matchers";
 import { runCheck, runTaskCommand } from "./tauri-bridge";
 import {
   dedupeTasks,
@@ -142,7 +136,14 @@ import {
   readinessDeadlineSecs,
 } from "./local-models";
 import { track, trackEvent } from "./telemetry";
-import { ErrorCodes, formatUserError, gitErrorToAppError, isAbort, isAuthError, normalizeError } from "./errors";
+import {
+  ErrorCodes,
+  formatUserError,
+  gitErrorToAppError,
+  isAbort,
+  isAuthError,
+  normalizeError,
+} from "./errors";
 import { currentEditorContext } from "./editor-context";
 import {
   activeRuns,
@@ -152,34 +153,44 @@ import {
   upsertRun,
   type RunPhase,
   type TrackedRun,
-} from "@/features/agent/agent-runs";
+} from "@/lib/agent-runs";
 import { buildInlineEditPatch, spliceText, stripCodeFence } from "./inline-edit";
-import type { AutonomyLevel } from "./run-machine";
-// The single agent transport (gateway-client) + the pure Composer run-decision
-// helper (prepare-agent-run). The Composer submit path posts runs to the
-// Gateway through these and lets `useAgentStream` drive the feed — no legacy
-// run/event transport is touched (task 4.1; R2.1, R4.x, R6.5).
-import {
-  postAgentCancel,
-  postAgentRun,
-  type ContextFileRef,
-} from "@/features/agent/gateway-client";
-import { prepareAgentRun } from "@/features/agent/prepare-agent-run";
-import {
-  evaluateRunGate,
-  selectionAvailabilityMap,
-} from "@/features/agent/model-availability";
-import type { SurfaceError } from "@/features/agent/surface-state";
-import { sessionOrigin } from "@/features/agent/session-origin";
-import {
-  buildReasoningEffortField,
-  modelSupportsReasoningEffort,
-} from "@/features/agent/composer-controls";
+// The single agent transport (gateway-client) + the submit-boundary gate. The Composer submit path posts
+// runs to the Gateway through these and lets `useAgentStream` drive the feed — no legacy run/event
+// transport is touched (task 4.1; R2.1, R4.x, R6.5). All of these moved out of `features/agent` in task
+// 25.5: this file imports nothing from the tree 26.1 deletes.
+import { postAgentCancel, postAgentRun, type ContextFileRef } from "@/lib/gateway-client";
+import { validateMessage } from "@/lib/composer-validate";
+import { evaluateRunGate, selectionAvailabilityMap } from "@/lib/model-availability";
+import { sessionOrigin } from "@/lib/session-origin";
+import { buildReasoningEffortField, modelSupportsReasoningEffort } from "@/lib/composer-controls";
 import { resolveSessionIntent } from "./session-lifecycle";
 import { effectiveSettings, getReasoningEffort, setSetting } from "./settings";
 import { checkAction } from "./trust";
 
 export type AgentMode = "ask" | "plan" | "agent";
+
+/**
+ * Agent autonomy level for the active run config (R9.4).
+ *
+ * Declared here rather than imported from `lib/run-machine`, which 26.4 deletes:
+ * that module's reducer had no importer, and this one type alias was the only
+ * edge keeping it alive. It sits next to `AgentMode` because the two are read
+ * together — both describe how much latitude the active run has.
+ */
+export type AutonomyLevel = "Low" | "Medium" | "High";
+
+/**
+ * The shape of `agentSurfaceError`. Declared here rather than imported from `features/agent/surface-state`
+ * because the store owns the field and 26.1 deletes that module (task 25.5). Structural, so the legacy
+ * panel's `surfaceState({ lastError })` still accepts it unchanged until then.
+ */
+export interface AgentSurfaceError {
+  operation: string;
+  code: string;
+  message: string;
+  retryable: boolean;
+}
 
 type AttachmentKind = "file" | "selection" | "folder" | "symbol";
 
@@ -234,7 +245,17 @@ export interface TerminalSession {
   exitCode: number | null;
 }
 
-export type ActivityView = "files" | "search" | "scm" | "debug" | "indexer" | "outline" | "timeline" | "sessions" | "settings";export type MainView = "editor" | "diff" | "sessions" | "settings" | "showcase";
+export type ActivityView =
+  | "files"
+  | "search"
+  | "scm"
+  | "debug"
+  | "indexer"
+  | "outline"
+  | "timeline"
+  | "sessions"
+  | "settings";
+export type MainView = "editor" | "diff" | "sessions" | "settings" | "showcase";
 export type BottomTab = "terminal" | "problems" | "output" | "tasks" | "logs" | "checkpoints";
 
 /** Selection captured at Cmd-K time, used to build the inline-edit request. */
@@ -292,7 +313,19 @@ export interface LayoutState {
   bottomDockSize: number;
 }
 
-export interface ChatEntry {
+/**
+ * The session-transcript intermediate, not a store field (task 26.6).
+ *
+ * The `chat: ChatEntry[]` field this described is gone — it had no reader
+ * outside this file — but the shape survived the prune because
+ * `entriesFromSession` still produces it and `entriesToWorkflowItems` still
+ * consumes it. That pair is where a Session's messages and tool calls get
+ * interleaved by timestamp and where `isDuplicateUserMessage` collapses an echo,
+ * and `agentItems` is built out the far end of it. Folding the two into one
+ * function would delete this type; it would also move the dedup, which is the
+ * part worth being careful with.
+ */
+interface ChatEntry {
   kind: "message" | "tool_call" | "diff" | "plan_update";
   id: string;
   message?: Message;
@@ -374,7 +407,6 @@ export interface AppState {
    *  Drives the badge in `FileTree`. Live mode populates from real VCS;
    *  in mock mode it's pre-seeded from `MOCK_FILE_STATUS`. */
   fileStatus: Record<string, "A" | "M" | "D">;
-  chat: ChatEntry[];
   agentItems: AgentWorkflowItem[];
   plan: Plan | null;
   /** Draft text in the single Agent Panel composer. */
@@ -557,8 +589,8 @@ export interface AppState {
   /** The most recent typed error to surface on the agent panel (git/model/
    *  workspace), or `null`. Drives `surfaceState`'s error precedence (R14.3,
    *  R19.6). Cleared on a fresh workspace or a recovered git status. */
-  agentSurfaceError: SurfaceError | null;
-  setAgentSurfaceError: (error: SurfaceError | null) => void;
+  agentSurfaceError: AgentSurfaceError | null;
+  setAgentSurfaceError: (error: AgentSurfaceError | null) => void;
   /** Providers whose credentials the Gateway/provider rejected (HTTP 401/403 or
    *  an auth error code) on a run/request/stream (R4.5). Only the named provider
    *  is marked; cleared when that provider's key changes or is re-entered. */
@@ -659,10 +691,7 @@ export interface AppState {
    *  calling `sendUserMessage` directly (R21.3). `requestComposerSubmit` first
    *  writes the prompt into the Composer input, then bumps this. */
   composerSubmitSignal: number;
-  requestComposerSubmit: (
-    prompt: string,
-    options?: { reuseMessageId?: string | null },
-  ) => void;
+  requestComposerSubmit: (prompt: string, options?: { reuseMessageId?: string | null }) => void;
   runSlashCommand: (name: SlashCommandName, args?: Record<string, unknown>) => Promise<void>;
   approvePermission: (requestId: string) => Promise<void>;
   rejectPermission: (requestId: string) => Promise<void>;
@@ -778,13 +807,16 @@ export interface AppState {
   /** Send the instruction, splice the rewritten selection back into the file,
    *  and queue it as a pending patch for review/apply. */
   submitInlineEdit: (instruction: string) => Promise<boolean>;
-  /** Latest memory snapshot from the agent sidecar. `null` until the
-   *  first `loadMemoryStats` call resolves, or in browser preview where
-   *  the sidecar is unreachable. */
-  memoryStats: MemoryStats | null;
   /** Extended context status with model recommendations and action flags. */
   contextStatus: ContextStatus | null;
-  loadMemoryStats: () => Promise<void>;
+  /**
+   * Ask the sidecar to compact / forget session memory (task 26.6).
+   *
+   * Both are server-side mutations, which is why they survived the
+   * `memoryStats` prune: the field that displayed their result had no reader
+   * outside this file, but the request they issue still does something. Neither
+   * writes to the store any more.
+   */
   compactMemory: () => Promise<void>;
   forgetMemory: (keepLast?: number) => Promise<void>;
   loadContextStatus: () => Promise<void>;
@@ -845,7 +877,9 @@ function loadAppliedPatchIds(): Set<string> {
     const raw = localStorage.getItem(APPLIED_PATCHES_KEY);
     if (!raw) return new Set<string>();
     const parsed = JSON.parse(raw);
-    return new Set<string>(Array.isArray(parsed) ? parsed.filter((x) => typeof x === "string") : []);
+    return new Set<string>(
+      Array.isArray(parsed) ? parsed.filter((x) => typeof x === "string") : [],
+    );
   } catch {
     return new Set<string>();
   }
@@ -921,7 +955,8 @@ function persistLastActiveSession(id: string | null): void {
 
 function defaultTerminalProfiles(): TerminalProfile[] {
   const isWin =
-    typeof navigator !== "undefined" && /Win/i.test(navigator.userAgent || navigator.platform || "");
+    typeof navigator !== "undefined" &&
+    /Win/i.test(navigator.userAgent || navigator.platform || "");
   if (isWin) {
     return [
       { id: "pwsh", name: "PowerShell", command: "powershell.exe" },
@@ -954,10 +989,6 @@ function persistLayout(layout: LayoutState) {
     /* ignore */
   }
 }
-
-// The Agent Panel starts empty — chat, plan, tools and diffs only appear from
-// a real agent run. No seeded placeholder content.
-const initialChat: ChatEntry[] = [];
 
 function languageFor(path: string): string {
   const ext = path.split(".").pop()?.toLowerCase() ?? "";
@@ -1117,15 +1148,11 @@ function upsertWorkflowMessage(
   streaming = false,
 ): AgentWorkflowItem[] {
   const item = messageToWorkflowItem(message);
-  const next =
-    item.type === "agent_message" ? { ...item, streaming } : item;
+  const next = item.type === "agent_message" ? { ...item, streaming } : item;
   return upsertWorkflowItem(items, next);
 }
 
-function upsertWorkflowTool(
-  items: AgentWorkflowItem[],
-  toolCall: ToolCall,
-): AgentWorkflowItem[] {
+function upsertWorkflowTool(items: AgentWorkflowItem[], toolCall: ToolCall): AgentWorkflowItem[] {
   let next = upsertWorkflowItem(items, {
     type: "tool",
     id: toolCall.id,
@@ -1146,10 +1173,7 @@ function upsertWorkflowTool(
   return next;
 }
 
-function upsertWorkflowPlan(
-  items: AgentWorkflowItem[],
-  plan: Plan,
-): AgentWorkflowItem[] {
+function upsertWorkflowPlan(items: AgentWorkflowItem[], plan: Plan): AgentWorkflowItem[] {
   return upsertWorkflowItem(items, {
     type: "plan",
     id: `plan-${plan.id}`,
@@ -1171,10 +1195,7 @@ function upsertWorkflowReview(
   });
 }
 
-function upsertWorkflowTest(
-  items: AgentWorkflowItem[],
-  result: AgentTestRun,
-): AgentWorkflowItem[] {
+function upsertWorkflowTest(items: AgentWorkflowItem[], result: AgentTestRun): AgentWorkflowItem[] {
   return upsertWorkflowItem(items, {
     type: "test",
     id: result.id,
@@ -1199,9 +1220,7 @@ function isPlaceholderPlan(plan: Plan): boolean {
   const detail = (step.detail ?? "").trim();
   return (
     !detail &&
-    (title === "complete the goal" ||
-      title === "complete goal" ||
-      title === "respond to the user")
+    (title === "complete the goal" || title === "complete goal" || title === "respond to the user")
   );
 }
 
@@ -1266,8 +1285,9 @@ export const useApp = create<AppState>((set, get) => ({
   activeSessionId: MOCK_SESSIONS[0].id,
   pinnedSessions: loadPinnedSessions(),
   fileStatus: { ...MOCK_FILE_STATUS },
-  chat: initialChat,
-  agentItems: entriesToWorkflowItems(initialChat),
+  // Starts empty — items, plan, tools and diffs only appear from a real
+  // agent run. No seeded placeholder content.
+  agentItems: [],
   plan: null,
   input: "",
   lastSentPrompt: "",
@@ -1315,7 +1335,6 @@ export const useApp = create<AppState>((set, get) => ({
   reviewError: null,
   testGenError: null,
   workspaceRoot: null,
-  memoryStats: null,
   contextStatus: null,
   indexStatus: null,
   projectRules: null,
@@ -1419,16 +1438,14 @@ export const useApp = create<AppState>((set, get) => ({
   closeFile: (path) => {
     set((s) => {
       const next = s.openFiles.filter((f) => f.path !== path);
-      const active = s.activeFile === path ? next[next.length - 1]?.path ?? null : s.activeFile;
+      const active = s.activeFile === path ? (next[next.length - 1]?.path ?? null) : s.activeFile;
       return { openFiles: next, activeFile: active };
     });
   },
   setActiveFile: (path) => set({ activeFile: path, mainView: "editor" }),
   updateFile: (path, content) =>
     set((s) => ({
-      openFiles: s.openFiles.map((f) =>
-        f.path === path ? { ...f, content, dirty: true } : f,
-      ),
+      openFiles: s.openFiles.map((f) => (f.path === path ? { ...f, content, dirty: true } : f)),
     })),
   saveFile: async (path) => {
     const file = get().openFiles.find((f) => f.path === path);
@@ -1441,9 +1458,7 @@ export const useApp = create<AppState>((set, get) => ({
     const ok = previewOnly || (await fsWriteText(file.path, file.content));
     if (ok) {
       set((s) => ({
-        openFiles: s.openFiles.map((f) =>
-          f.path === path ? { ...f, dirty: false } : f,
-        ),
+        openFiles: s.openFiles.map((f) => (f.path === path ? { ...f, dirty: false } : f)),
       }));
       toast.success("Saved", { description: file.name });
     } else {
@@ -1476,7 +1491,8 @@ export const useApp = create<AppState>((set, get) => ({
     if (!file) return false;
     // Reload the on-disk (or mock) content and drop unsaved edits.
     // fsReadText has HTTP fallback for web (non-Tauri) mode.
-    const content: string = (await fsReadText(path)) ?? MOCK_FILE_CONTENT[path]?.content ?? file.content;
+    const content: string =
+      (await fsReadText(path)) ?? MOCK_FILE_CONTENT[path]?.content ?? file.content;
     set((s) => ({
       openFiles: s.openFiles.map((f) =>
         f.path === path ? { ...f, content: content!, dirty: false } : f,
@@ -1537,7 +1553,7 @@ export const useApp = create<AppState>((set, get) => ({
       const kept = s.openFiles.filter((f) => f.dirty);
       const active = kept.some((f) => f.path === s.activeFile)
         ? s.activeFile
-        : kept[kept.length - 1]?.path ?? null;
+        : (kept[kept.length - 1]?.path ?? null);
       const right = kept.some((f) => f.path === s.rightActiveFile) ? s.rightActiveFile : null;
       return {
         openFiles: kept,
@@ -1742,7 +1758,9 @@ export const useApp = create<AppState>((set, get) => ({
     set((s) => ({
       openFiles: s.openFiles.map((f) => {
         const orig = undo.find((u) => u.file === f.path);
-        return orig && restoredPaths.has(f.path) ? { ...f, content: orig.original, dirty: false } : f;
+        return orig && restoredPaths.has(f.path)
+          ? { ...f, content: orig.original, dirty: false }
+          : f;
       }),
       lastReplaceUndo: null,
       fsRefreshNonce: s.fsRefreshNonce + 1,
@@ -1785,7 +1803,9 @@ export const useApp = create<AppState>((set, get) => ({
   markProviderInvalid: (provider) => {
     const id = provider.trim();
     if (!id) return;
-    set((s) => (s.invalidProviders[id] ? {} : { invalidProviders: { ...s.invalidProviders, [id]: true } }));
+    set((s) =>
+      s.invalidProviders[id] ? {} : { invalidProviders: { ...s.invalidProviders, [id]: true } },
+    );
   },
   clearProviderInvalid: (provider) => {
     const id = provider.trim();
@@ -2079,7 +2099,10 @@ export const useApp = create<AppState>((set, get) => ({
       }
       const ok = result.code === 0;
       set((s) => ({ taskRuns: { ...s.taskRuns, [id]: ok ? "passed" : "failed" } }));
-      get().appendLog(ok ? "info" : "error", `Task ${ok ? "succeeded" : "failed"}: ${task.label} (exit ${result.code})`);
+      get().appendLog(
+        ok ? "info" : "error",
+        `Task ${ok ? "succeeded" : "failed"}: ${task.label} (exit ${result.code})`,
+      );
       toast[ok ? "success" : "error"](`${task.label} ${ok ? "passed" : "failed"}`);
     } catch (err) {
       set((s) => ({ taskRuns: { ...s.taskRuns, [id]: "failed" } }));
@@ -2091,7 +2114,9 @@ export const useApp = create<AppState>((set, get) => ({
     if (get().tasks.length === 0) await get().discoverTasks();
     const task = defaultBuildTask(get().tasks);
     if (!task) {
-      toast.message("No build task found", { description: "Add one in tasks.json or package.json." });
+      toast.message("No build task found", {
+        description: "Add one in tasks.json or package.json.",
+      });
       return;
     }
     await get().runTask(task.id);
@@ -2100,7 +2125,9 @@ export const useApp = create<AppState>((set, get) => ({
     if (get().tasks.length === 0) await get().discoverTasks();
     const task = defaultTestTask(get().tasks);
     if (!task) {
-      toast.message("No test task found", { description: "Add one in tasks.json or package.json." });
+      toast.message("No test task found", {
+        description: "Add one in tasks.json or package.json.",
+      });
       return;
     }
     await get().runTask(task.id);
@@ -2146,7 +2173,7 @@ export const useApp = create<AppState>((set, get) => ({
       selectedDebugConfig:
         s.selectedDebugConfig && configs.some((c) => c.name === s.selectedDebugConfig)
           ? s.selectedDebugConfig
-          : configs[0]?.name ?? null,
+          : (configs[0]?.name ?? null),
     }));
   },
 
@@ -2182,7 +2209,7 @@ export const useApp = create<AppState>((set, get) => ({
       const active =
         focusedSession ??
         (s.activeTerminalId === id
-          ? nextTerminals[nextTerminals.length - 1]?.id ?? null
+          ? (nextTerminals[nextTerminals.length - 1]?.id ?? null)
           : s.activeTerminalId);
       return {
         terminals: nextTerminals,
@@ -2199,7 +2226,9 @@ export const useApp = create<AppState>((set, get) => ({
     })),
   renameTerminal: (id, title) =>
     set((s) => ({
-      terminals: s.terminals.map((t) => (t.id === id ? { ...t, title: title.trim() || t.title } : t)),
+      terminals: s.terminals.map((t) =>
+        t.id === id ? { ...t, title: title.trim() || t.title } : t,
+      ),
     })),
   setTerminalExited: (id, code) =>
     set((s) => ({
@@ -2329,13 +2358,11 @@ export const useApp = create<AppState>((set, get) => ({
         sessions,
         liveMode: true,
         activeSessionId: target.id,
-        chat: entriesFromSession(target),
         agentItems: workflowItemsFromSession(target),
         plan: target.plan ?? null,
         workspaceRoot: target.workspace_root ?? get().workspaceRoot,
       });
       persistLastActiveSession(target.id);
-      void get().loadMemoryStats();
       return;
     }
 
@@ -2365,13 +2392,11 @@ export const useApp = create<AppState>((set, get) => ({
           sessions: [session],
           liveMode: true,
           activeSessionId: session.id,
-          chat: entriesFromSession(session),
           agentItems: workflowItemsFromSession(session),
           plan: session.plan ?? null,
           workspaceRoot: session.workspace_root ?? get().workspaceRoot,
         });
         persistLastActiveSession(session.id);
-        void get().loadMemoryStats();
       } catch {
         // No server-side session store — nothing to hydrate.
       }
@@ -2385,11 +2410,9 @@ export const useApp = create<AppState>((set, get) => ({
       sessions,
       liveMode: true,
       activeSessionId: "",
-      chat: [],
       agentItems: [],
       plan: null,
     });
-    void get().loadMemoryStats();
   },
 
   selectSession: async (id) => {
@@ -2403,7 +2426,7 @@ export const useApp = create<AppState>((set, get) => ({
       selectedId: id,
     });
     if (intent.kind !== "select") {
-      set({ activeSessionId: "", chat: [], agentItems: [], plan: null });
+      set({ activeSessionId: "", agentItems: [], plan: null });
       persistLastActiveSession(null);
       return;
     }
@@ -2431,7 +2454,6 @@ export const useApp = create<AppState>((set, get) => ({
     }
     set({
       activeSessionId: intent.sessionId,
-      chat: cached ? entriesFromSession(cached) : [],
       agentItems: cached ? workflowItemsFromSession(cached) : [],
       plan: cached?.plan ?? null,
     });
@@ -2442,7 +2464,6 @@ export const useApp = create<AppState>((set, get) => ({
         const session = await client.getSession(intent.sessionId);
         set((s) => ({
           sessions: s.sessions.map((x) => (x.id === intent.sessionId ? session : x)),
-          chat: entriesFromSession(session),
           agentItems: workflowItemsFromSession(session),
           plan: session.plan ?? null,
         }));
@@ -2450,7 +2471,6 @@ export const useApp = create<AppState>((set, get) => ({
         /* keep cached */
       }
     }
-    void get().loadMemoryStats();
     void get().loadProjectRules();
     void get().loadCheckpoints();
   },
@@ -2477,7 +2497,6 @@ export const useApp = create<AppState>((set, get) => ({
       set((s) => ({
         sessions: [session, ...s.sessions],
         activeSessionId: session.id,
-        chat: entriesFromSession(session),
         agentItems: workflowItemsFromSession(session),
         plan: session.plan ?? null,
         liveMode: true,
@@ -2510,7 +2529,6 @@ export const useApp = create<AppState>((set, get) => ({
       set((s) => ({
         sessions: [session, ...s.sessions],
         activeSessionId: session.id,
-        chat: [],
         agentItems: [],
         plan: null,
       }));
@@ -2531,9 +2549,8 @@ export const useApp = create<AppState>((set, get) => ({
     const optimistic: Session = { ...existing, title, updated_at: updatedAt };
     set((s) => ({
       sessions: s.sessions.map((session) => (session.id === id ? optimistic : session)),
-      chat: s.activeSessionId === id ? entriesFromSession(optimistic) : s.chat,
       agentItems: s.activeSessionId === id ? workflowItemsFromSession(optimistic) : s.agentItems,
-      plan: s.activeSessionId === id ? optimistic.plan ?? null : s.plan,
+      plan: s.activeSessionId === id ? (optimistic.plan ?? null) : s.plan,
     }));
 
     if (get().liveMode) {
@@ -2542,9 +2559,8 @@ export const useApp = create<AppState>((set, get) => ({
         const session = await client.updateSession(id, { title });
         set((s) => ({
           sessions: s.sessions.map((item) => (item.id === id ? session : item)),
-          chat: s.activeSessionId === id ? entriesFromSession(session) : s.chat,
           agentItems: s.activeSessionId === id ? workflowItemsFromSession(session) : s.agentItems,
-          plan: s.activeSessionId === id ? session.plan ?? null : s.plan,
+          plan: s.activeSessionId === id ? (session.plan ?? null) : s.plan,
         }));
       } catch (err) {
         await track("error", {
@@ -2592,7 +2608,6 @@ export const useApp = create<AppState>((set, get) => ({
       set({
         sessions: nextSessions,
         activeSessionId: "",
-        chat: [],
         agentItems: [],
         plan: null,
       });
@@ -2630,9 +2645,7 @@ export const useApp = create<AppState>((set, get) => ({
     const sessionId = get().activeSessionId;
     const state = get();
     const contextFiles = collectMentionContextFiles(content, state);
-    const outgoing = content.trim().startsWith("/")
-      ? expandFileMentions(content, state)
-      : content;
+    const outgoing = content.trim().startsWith("/") ? expandFileMentions(content, state) : content;
     // Ask mode is pure read-only Q&A. Explicit slash commands are honored
     // below; everything else is submitted to the Gateway as a run.
 
@@ -2646,19 +2659,22 @@ export const useApp = create<AppState>((set, get) => ({
         created_at: new Date().toISOString(),
       };
       set((s) => ({
-        chat: [...s.chat, { kind: "message", id: userMsg.id, message: userMsg }],
         agentItems: upsertWorkflowMessage(s.agentItems, userMsg),
       }));
       await get().runSlashCommand(slash.name as SlashCommandName, slash.args);
       return;
     }
 
-    // Single run-decision + validation point (task 4.1). `prepareAgentRun`
-    // trims the input, maps the Composer's Ask/Agent toggle to the Gateway
-    // `mode` (R4.1, R4.2), and rejects empty/whitespace-only input by
-    // producing NO request (R4.5). It is the only validation gate on this
-    // path — no legacy `buildRunAgentRequest` payload is built here.
-    const request = prepareAgentRun(outgoing, get().agentMode);
+    // Single run-decision + validation point (task 4.1, rewritten in 25.5). The
+    // input is trimmed and empty/whitespace-only input produces NO request
+    // (R4.5), and the mode sent is the mode the user selected — the old
+    // `prepareAgentRun` ran the prompt through `routeModeForPrompt`, which
+    // silently rewrote an Agent submit to Ask when the text read like a
+    // question. Amendment 1 / R7.11 forbids that downgrade, so it is gone
+    // rather than moved. No legacy `buildRunAgentRequest` payload is built here.
+    const request = validateMessage(outgoing).valid
+      ? { input: outgoing.trim(), mode: get().agentMode }
+      : null;
     if (!request) {
       // Empty / whitespace-only (or otherwise invalid) input — send nothing.
       return;
@@ -2693,22 +2709,34 @@ export const useApp = create<AppState>((set, get) => ({
     }
 
     const startedAt = Date.now();
-    const reusableEntry = state.pendingRunMessageId
-      ? state.chat.find(
-          (entry) =>
-            entry.id === state.pendingRunMessageId &&
-            entry.kind === "message" &&
-            entry.message?.role === "user" &&
-            entry.message.content === request.input,
+    // Retry re-binds the existing user bubble instead of echoing a second one.
+    // Read off `agentItems` since task 26.6 deleted the parallel `chat` array;
+    // `messageToWorkflowItem` keeps the message's own id, so the lookup is the
+    // same one, and a `user_message` carries everything rebuilding the `Message`
+    // needs.
+    const reusableItem = state.pendingRunMessageId
+      ? state.agentItems.find(
+          (item) =>
+            item.id === state.pendingRunMessageId &&
+            item.type === "user_message" &&
+            item.text === request.input,
         )
       : undefined;
-    const userMsg: Message = reusableEntry?.message ?? {
-      id: `local-${Date.now()}`,
-      role: "user",
-      content: request.input,
-      created_at: new Date().toISOString(),
-    };
-    const reuseUserMessage = reusableEntry?.message != null;
+    const reuseUserMessage = reusableItem !== undefined;
+    const userMsg: Message =
+      reusableItem !== undefined && reusableItem.type === "user_message"
+        ? {
+            id: reusableItem.id,
+            role: "user",
+            content: reusableItem.text,
+            created_at: reusableItem.createdAt,
+          }
+        : {
+            id: `local-${Date.now()}`,
+            role: "user",
+            content: request.input,
+            created_at: new Date().toISOString(),
+          };
 
     // Gateway runs own independent SSE streams; starting another must not
     // abort or detach an already-running peer.
@@ -2716,12 +2744,7 @@ export const useApp = create<AppState>((set, get) => ({
     // Echo a new user message, or re-bind the existing bubble for an explicit
     // Retry. The Gateway issues the authoritative `runId` below.
     set((s) => ({
-      chat: reuseUserMessage
-        ? s.chat
-        : [...s.chat, { kind: "message", id: userMsg.id, message: userMsg }],
-      agentItems: reuseUserMessage
-        ? s.agentItems
-        : upsertWorkflowMessage(s.agentItems, userMsg),
+      agentItems: reuseUserMessage ? s.agentItems : upsertWorkflowMessage(s.agentItems, userMsg),
       streaming: true,
       isRunning: true,
       runBudget: null,
@@ -2781,7 +2804,8 @@ export const useApp = create<AppState>((set, get) => ({
         ...(contextFiles.length > 0 ? { contextFiles } : {}),
         model: modelContext.model,
         provider: modelContext.provider,
-        apiKey: modelContext.apiKey,
+        // No `apiKey` (task 26.3, R14.2 / Property 34): the service resolves its
+        // own credential, and the renderer no longer holds one to send.
         baseUrl: modelContext.baseUrl,
         workspaceRoot: modelContext.workspaceRoot,
         reviewChanges: request.mode === "agent",
@@ -2873,9 +2897,6 @@ export const useApp = create<AppState>((set, get) => ({
         void get().sendUserMessage(next.content);
       }
     } finally {
-      // Refresh the memory snapshot so the indicator reflects the new turn.
-      // Best-effort — failure leaves the stale snapshot alone.
-      void get().loadMemoryStats();
     }
   },
 
@@ -2897,7 +2918,6 @@ export const useApp = create<AppState>((set, get) => ({
             created_at: new Date().toISOString(),
           };
           set((s) => ({
-            chat: [...s.chat, { kind: "message", id: reply.id, message: reply }],
             agentItems: upsertWorkflowMessage(s.agentItems, reply),
             streaming: false,
             isRunning: false,
@@ -2951,7 +2971,6 @@ export const useApp = create<AppState>((set, get) => ({
           created_at: new Date().toISOString(),
         };
         set((s) => ({
-          chat: [...s.chat, { kind: "message", id: reply.id, message: reply }],
           agentItems: upsertWorkflowMessage(s.agentItems, reply),
           streaming: false,
           isRunning: false,
@@ -2981,7 +3000,6 @@ export const useApp = create<AppState>((set, get) => ({
         currentAbort = null;
         set({ streaming: false, isRunning: false, runId: null });
       }
-      void get().loadMemoryStats();
     }
   },
 
@@ -3032,12 +3050,12 @@ export const useApp = create<AppState>((set, get) => ({
     const state = get();
     const focused = state.trackedRuns.find((run) => run.runId === state.focusedRunId);
     const current = state.trackedRuns.find((run) => run.runId === state.runId);
-    const target = focused && !isTerminal(focused)
-      ? focused.runId
-      : current && !isTerminal(current)
-        ? current.runId
-        : activeRuns(state.trackedRuns).at(-1)?.runId
-          ?? (current ? undefined : state.runId);
+    const target =
+      focused && !isTerminal(focused)
+        ? focused.runId
+        : current && !isTerminal(current)
+          ? current.runId
+          : (activeRuns(state.trackedRuns).at(-1)?.runId ?? (current ? undefined : state.runId));
     if (target) await get().cancelRunById(target);
     else get().cancelStream();
   },
@@ -3067,9 +3085,10 @@ export const useApp = create<AppState>((set, get) => ({
     }));
     try {
       const client = await getAgentClient();
-      const payload: CodeReviewRequest = req?.diff || req?.excerpts
-        ? req
-        : { diff: null, excerpts: collectExcerptsForReview(get()) };
+      const payload: CodeReviewRequest =
+        req?.diff || req?.excerpts
+          ? req
+          : { diff: null, excerpts: collectExcerptsForReview(get()) };
       const report = await client.codeReview(sessionId, payload);
       set((s) => ({
         lastReview: report,
@@ -3465,11 +3484,11 @@ export const useApp = create<AppState>((set, get) => ({
         trackedRuns: nextRuns,
         streaming: remaining.length > 0,
         isRunning: remaining.length > 0,
-        runId: currentWasCancelled ? fallback?.runId ?? null : s.runId,
+        runId: currentWasCancelled ? (fallback?.runId ?? null) : s.runId,
         runBudget: currentWasCancelled ? null : s.runBudget,
-        activeRunMode: currentWasCancelled ? fallback?.mode ?? null : s.activeRunMode,
-        runStartedAt: currentWasCancelled ? fallback?.startedAt ?? null : s.runStartedAt,
-        focusedRunId: s.focusedRunId === runId ? fallback?.runId ?? null : s.focusedRunId,
+        activeRunMode: currentWasCancelled ? (fallback?.mode ?? null) : s.activeRunMode,
+        runStartedAt: currentWasCancelled ? (fallback?.startedAt ?? null) : s.runStartedAt,
+        focusedRunId: s.focusedRunId === runId ? (fallback?.runId ?? null) : s.focusedRunId,
         agentPaused: false,
       };
     });
@@ -3486,12 +3505,12 @@ export const useApp = create<AppState>((set, get) => ({
     const state = get();
     const focused = state.trackedRuns.find((run) => run.runId === state.focusedRunId);
     const current = state.trackedRuns.find((run) => run.runId === state.runId);
-    const target = focused && !isTerminal(focused)
-      ? focused.runId
-      : current && !isTerminal(current)
-        ? current.runId
-        : activeRuns(state.trackedRuns).at(-1)?.runId
-          ?? (current ? undefined : state.runId);
+    const target =
+      focused && !isTerminal(focused)
+        ? focused.runId
+        : current && !isTerminal(current)
+          ? current.runId
+          : (activeRuns(state.trackedRuns).at(-1)?.runId ?? (current ? undefined : state.runId));
     if (target) {
       // Preserve the historical "stop clears queued work" behavior before the
       // per-run action can release a newly available slot.
@@ -3532,8 +3551,7 @@ export const useApp = create<AppState>((set, get) => ({
     }
   },
 
-  dequeueMessage: (id) =>
-    set((s) => ({ messageQueue: s.messageQueue.filter((m) => m.id !== id) })),
+  dequeueMessage: (id) => set((s) => ({ messageQueue: s.messageQueue.filter((m) => m.id !== id) })),
 
   clearQueue: () => set({ messageQueue: [] }),
 
@@ -3569,12 +3587,16 @@ export const useApp = create<AppState>((set, get) => ({
 
     // Counters only — mode, stage, totals. No prompt, no paths (§11.2).
     void trackEvent("run_completed", {
-      mode: (run?.mode ?? get().activeRunMode ?? get().agentMode) as
-        | "ask"
-        | "plan"
-        | "agent",
+      mode: (run?.mode ?? get().activeRunMode ?? get().agentMode) as "ask" | "plan" | "agent",
       stage_reached: run?.stage ?? get().runStage ?? "done",
       token_count: run?.tokensUsed ?? 0,
+      // The legacy gateway run record exposes only a combined count. Keep the
+      // split honest instead of inventing an input/output ratio; the rebuilt
+      // Chat_Surface reports both from UsagePart.
+      input_tokens: run?.tokensUsed ?? 0,
+      output_tokens: 0,
+      estimated_cost_cents: 0,
+      context_window_proportion: 0,
       duration_ms: run ? Date.now() - run.startedAt : 0,
       succeeded: phase === "done",
       recovery_count: 0,
@@ -3597,12 +3619,12 @@ export const useApp = create<AppState>((set, get) => ({
         trackedRuns: nextRuns,
         streaming: remaining.length > 0,
         isRunning: remaining.length > 0,
-        runId: currentFinished ? fallback?.runId ?? null : s.runId,
+        runId: currentFinished ? (fallback?.runId ?? null) : s.runId,
         runBudget: currentFinished ? null : s.runBudget,
-        activeRunMode: currentFinished ? fallback?.mode ?? null : s.activeRunMode,
+        activeRunMode: currentFinished ? (fallback?.mode ?? null) : s.activeRunMode,
         agentPaused: false,
-        runStartedAt: currentFinished ? fallback?.startedAt ?? null : s.runStartedAt,
-        focusedRunId: s.focusedRunId === runId ? fallback?.runId ?? null : s.focusedRunId,
+        runStartedAt: currentFinished ? (fallback?.startedAt ?? null) : s.runStartedAt,
+        focusedRunId: s.focusedRunId === runId ? (fallback?.runId ?? null) : s.focusedRunId,
       };
     });
 
@@ -3617,11 +3639,12 @@ export const useApp = create<AppState>((set, get) => ({
     set((s) => {
       const tracked = s.trackedRuns.find((run) => run.runId === budget.runId);
       const currentBudget = budget.runId === s.runId ? s.runBudget : null;
-      const unchanged = tracked?.tokensUsed === budget.tokensUsed
-        && tracked?.tokenLimit === budget.tokenLimit
-        && (budget.runId !== s.runId
-          || (currentBudget?.tokensUsed === budget.tokensUsed
-            && currentBudget?.tokenLimit === budget.tokenLimit));
+      const unchanged =
+        tracked?.tokensUsed === budget.tokensUsed &&
+        tracked?.tokenLimit === budget.tokenLimit &&
+        (budget.runId !== s.runId ||
+          (currentBudget?.tokensUsed === budget.tokensUsed &&
+            currentBudget?.tokenLimit === budget.tokenLimit));
       if (unchanged) return {};
       return {
         runBudget: budget.runId === s.runId ? budget : s.runBudget,
@@ -3637,17 +3660,13 @@ export const useApp = create<AppState>((set, get) => ({
   setRunStage: (stage, runId) => {
     const target = runId ?? get().runId;
     set((s) => {
-      const tracked = target
-        ? s.trackedRuns.find((run) => run.runId === target)
-        : undefined;
+      const tracked = target ? s.trackedRuns.find((run) => run.runId === target) : undefined;
       const activeUnchanged = target !== s.runId || s.runStage === stage;
       if (activeUnchanged && (!tracked || tracked.stage === stage)) return {};
       return {
         runStage: target === s.runId ? stage : s.runStage,
         trackedRuns: target
-          ? s.trackedRuns.map((run) =>
-              run.runId === target ? { ...run, stage } : run,
-            )
+          ? s.trackedRuns.map((run) => (run.runId === target ? { ...run, stage } : run))
           : s.trackedRuns,
       };
     });
@@ -3665,9 +3684,7 @@ export const useApp = create<AppState>((set, get) => ({
       // terminalization goes through finishGatewayRun/finishRun.
       if (!tracked || isTerminal(tracked) || tracked.phase === phase) return {};
       return {
-        trackedRuns: s.trackedRuns.map((run) =>
-          run.runId === target ? { ...run, phase } : run,
-        ),
+        trackedRuns: s.trackedRuns.map((run) => (run.runId === target ? { ...run, phase } : run)),
       };
     });
   },
@@ -3683,11 +3700,10 @@ export const useApp = create<AppState>((set, get) => ({
       created_at: createdAt ?? new Date().toISOString(),
     };
     set((s) => {
-      if (s.chat.some((entry) => entry.id === id)) {
+      if (s.agentItems.some((item) => item.id === id)) {
         return {};
       }
       return {
-        chat: [...s.chat, { kind: "message", id, message }],
         agentItems: upsertWorkflowMessage(s.agentItems, message),
       };
     });
@@ -3700,12 +3716,7 @@ export const useApp = create<AppState>((set, get) => ({
     // Re-selecting a provider's model is a deliberate "use this again" — clear
     // any prior credential-invalid flag so the picker stops naming it (R4.5).
     if (m.provider) get().clearProviderInvalid(m.provider);
-    // Drop any cached memory snapshot — it was computed against a
-    // different model's context window, so showing it for the new model
-    // would mislead the user. The next agent run / `loadMemoryStats`
-    // call repopulates it; until then the indicator falls back to a
-    // client-side estimate keyed on the new model's window.
-    set({ selectedModel: m, memoryStats: null });
+    set({ selectedModel: m });
     // For local llama.cpp models the desktop shell owns the `llama-server`
     // subprocess. Tell it to (re)load the chosen .gguf so the weights end
     // up in VRAM — without this the picker would be cosmetic. Cloud models
@@ -3793,15 +3804,20 @@ export const useApp = create<AppState>((set, get) => ({
   },
   addAttachment: (a) =>
     set((s) => ({ attachments: [...s.attachments, { id: `att-${Date.now()}`, ...a }] })),
-  removeAttachment: (id) =>
-    set((s) => ({ attachments: s.attachments.filter((a) => a.id !== id) })),
+  removeAttachment: (id) => set((s) => ({ attachments: s.attachments.filter((a) => a.id !== id) })),
   searchContextCandidates: async (query) => {
     const openFileFallback = (): ContextCandidate[] => {
       const q = query.toLowerCase();
       return get()
         .openFiles.filter((f) => f.path.toLowerCase().includes(q))
         .slice(0, 25)
-        .map((f) => ({ kind: "file" as const, label: f.name, path: f.path, detail: f.path, line: null }));
+        .map((f) => ({
+          kind: "file" as const,
+          label: f.name,
+          path: f.path,
+          detail: f.path,
+          line: null,
+        }));
     };
     const workspaceMatches = await searchWorkspaceFileTree(query, get());
     if (workspaceMatches.length > 0) return workspaceMatches;
@@ -3849,7 +3865,9 @@ export const useApp = create<AppState>((set, get) => ({
         await track("patch.rejected", { id: diffId, reason: "no_workspace" });
         return false;
       }
-      const result = await tauriApplyPatch(root, patch.file_path, patch.unified_diff).catch(() => null);
+      const result = await tauriApplyPatch(root, patch.file_path, patch.unified_diff).catch(
+        () => null,
+      );
       ok = result !== null;
     }
     if (ok) {
@@ -4105,7 +4123,7 @@ export const useApp = create<AppState>((set, get) => ({
         suffix: ie.suffix,
         model: get().selectedModel.model || null,
         provider: creds.provider,
-        apiKey: creds.apiKey,
+        // No `apiKey` (task 26.3, R14.2) — see `resolveProviderCreds`.
         baseUrl: creds.baseUrl,
       });
       const edited = stripCodeFence(result.edited ?? "");
@@ -4129,19 +4147,6 @@ export const useApp = create<AppState>((set, get) => ({
       const message = err instanceof Error ? err.message : String(err);
       set((s) => ({ inlineEdit: { ...s.inlineEdit, status: "error", error: message } }));
       return false;
-    }
-  },
-
-
-  loadMemoryStats: async () => {
-    if (!get().liveMode) return;
-    try {
-      const client = await getAgentClient();
-      const stats = await client.memoryStats(get().activeSessionId);
-      set({ memoryStats: stats });
-    } catch {
-      // Sidecar offline / endpoint missing — leave stats untouched so the
-      // indicator just hides itself.
     }
   },
 
@@ -4182,8 +4187,7 @@ export const useApp = create<AppState>((set, get) => ({
     if (!get().liveMode) return;
     try {
       const client = await getAgentClient();
-      const stats = await client.compactMemory(get().activeSessionId);
-      set({ memoryStats: stats });
+      await client.compactMemory(get().activeSessionId);
       await track("memory.compacted", { id: get().activeSessionId });
     } catch (err) {
       await track("error", {
@@ -4196,8 +4200,7 @@ export const useApp = create<AppState>((set, get) => ({
     if (!get().liveMode) return;
     try {
       const client = await getAgentClient();
-      const stats = await client.forgetMemory(get().activeSessionId, keepLast);
-      set({ memoryStats: stats });
+      await client.forgetMemory(get().activeSessionId, keepLast);
       await track("memory.forgotten", { id: get().activeSessionId, keepLast });
     } catch (err) {
       await track("error", {
@@ -4354,9 +4357,7 @@ function applyAgentEvent(ev: AgentEvent, h: AgentEventHandlers): void {
   }
 }
 
-type SetState = (
-  partial: Partial<AppState> | ((s: AppState) => Partial<AppState>),
-) => void;
+type SetState = (partial: Partial<AppState> | ((s: AppState) => Partial<AppState>)) => void;
 
 /**
  * Drain an `AgentEvent` async-iterable into the store. Used by both
@@ -4407,7 +4408,6 @@ async function consumeStream(
       created_at: new Date().toISOString(),
     };
     set((s) => ({
-      chat: [...s.chat, { kind: "message", id: assistantId!, message: msg }],
       agentItems: upsertWorkflowMessage(s.agentItems, msg, true),
     }));
     return assistantId;
@@ -4417,9 +4417,7 @@ async function consumeStream(
     const id = assistantId;
     set((s) => ({
       agentItems: s.agentItems.map((item) =>
-        item.id === id && item.type === "agent_message"
-          ? { ...item, streaming: false }
-          : item,
+        item.id === id && item.type === "agent_message" ? { ...item, streaming: false } : item,
       ),
     }));
   };
@@ -4499,11 +4497,6 @@ async function consumeStream(
           const id = assistantId!;
           assistantText += delta;
           set((s) => ({
-            chat: s.chat.map((e) =>
-              e.id === id && e.message
-                ? { ...e, message: { ...e.message, content: assistantText } }
-                : e,
-            ),
             agentItems: s.agentItems.map((item) =>
               item.id === id && item.type === "agent_message"
                 ? { ...item, text: assistantText, streaming: true }
@@ -4518,84 +4511,57 @@ async function consumeStream(
             assistantText = m.content;
           }
           set((s) => {
+            // Three cases, and after task 26.6 only two of them need a branch.
+            // The old `chat` mirror spelled "replace in place" and "append" as
+            // separate arms; `upsertWorkflowItem` is already both, so the plain
+            // upsert at the bottom covers the same-id and not-present cases
+            // alike. What still needs its own arm is a *rebind*: an id change,
+            // where the stale item has to be removed or the row would double.
             if (
               m.role === "assistant" &&
               previousAssistantId &&
-              previousAssistantId !== m.id
+              previousAssistantId !== m.id &&
+              s.agentItems.some((item) => item.id === previousAssistantId)
             ) {
-              const idx = s.chat.findIndex((e) => e.id === previousAssistantId);
-              if (idx >= 0) {
-                const next = [...s.chat];
-                next[idx] = { kind: "message", id: m.id, message: m };
-                return {
-                  chat: next,
-                  agentItems: upsertWorkflowMessage(
-                    removeWorkflowItem(s.agentItems, previousAssistantId),
-                    m,
-                  ),
-                };
-              }
+              return {
+                agentItems: upsertWorkflowMessage(
+                  removeWorkflowItem(s.agentItems, previousAssistantId),
+                  m,
+                ),
+              };
             }
-            const idx = s.chat.findIndex((e) => e.id === m.id);
-            if (idx >= 0) {
-              const next = [...s.chat];
-              next[idx] = { kind: "message", id: m.id, message: m };
-              return { chat: next, agentItems: upsertWorkflowMessage(s.agentItems, m) };
-            }
-            if (m.role === "user") {
-              for (let i = s.chat.length - 1; i >= 0; i -= 1) {
-                const entry = s.chat[i];
+            // The server's authoritative id landing on a locally-echoed user
+            // bubble: same rebind, matched on trimmed text rather than id.
+            if (m.role === "user" && !s.agentItems.some((item) => item.id === m.id)) {
+              for (let i = s.agentItems.length - 1; i >= 0; i -= 1) {
+                const item = s.agentItems[i];
                 if (
-                  entry.kind === "message" &&
-                  entry.message?.role === "user" &&
-                  entry.message.content.trim() === m.content.trim() &&
-                  entry.id.startsWith("local-")
+                  item.type === "user_message" &&
+                  item.text.trim() === m.content.trim() &&
+                  item.id.startsWith("local-")
                 ) {
-                  const next = [...s.chat];
-                  next[i] = { kind: "message", id: m.id, message: m };
                   return {
-                    chat: next,
-                    agentItems: upsertWorkflowMessage(removeWorkflowItem(s.agentItems, entry.id), m),
+                    agentItems: upsertWorkflowMessage(removeWorkflowItem(s.agentItems, item.id), m),
                   };
                 }
               }
             }
-            return {
-              chat: [...s.chat, { kind: "message", id: m.id, message: m }],
-              agentItems: upsertWorkflowMessage(s.agentItems, m),
-            };
+            return { agentItems: upsertWorkflowMessage(s.agentItems, m) };
           });
         },
         addToolCall: (tc) => {
           if (isAsk) return;
           sawWorkflowArtifact = true;
-          set((s) => {
-            const idx = s.chat.findIndex((e) => e.id === tc.id);
-            if (idx >= 0) {
-              const next = [...s.chat];
-              next[idx] = { kind: "tool_call", id: tc.id, toolCall: tc };
-              return { chat: next, agentItems: upsertWorkflowTool(s.agentItems, tc) };
-            }
-            return {
-              chat: [...s.chat, { kind: "tool_call", id: tc.id, toolCall: tc }],
-              agentItems: upsertWorkflowTool(s.agentItems, tc),
-            };
-          });
+          set((s) => ({ agentItems: upsertWorkflowTool(s.agentItems, tc) }));
         },
         addDiff: (p) => {
           if (isAsk) return;
           sawWorkflowArtifact = true;
           set((s) => {
-            const idx = s.chat.findIndex((e) => e.id === p.id);
-            const nextChat =
-              idx >= 0
-                ? s.chat.map((e, i) => (i === idx ? { kind: "diff" as const, id: p.id, diff: p } : e))
-                : [...s.chat, { kind: "diff" as const, id: p.id, diff: p }];
             const nextPending = s.pendingPatches.some((q) => q.id === p.id)
               ? s.pendingPatches.map((q) => (q.id === p.id ? p : q))
               : [...s.pendingPatches, p];
             return {
-              chat: nextChat,
               pendingPatches: nextPending,
               agentItems: upsertWorkflowItem(s.agentItems, {
                 type: "diff",
@@ -4683,7 +4649,6 @@ async function consumeStream(
   }
 }
 
-
 function appendAssistantSummary(set: SetState, content: string): void {
   const id = `assistant-${Date.now()}`;
   const message: Message = {
@@ -4693,7 +4658,6 @@ function appendAssistantSummary(set: SetState, content: string): void {
     created_at: new Date().toISOString(),
   };
   set((s) => ({
-    chat: [...s.chat, { kind: "message", id, message }],
     agentItems: upsertWorkflowMessage(s.agentItems, message),
   }));
 }
@@ -4719,23 +4683,9 @@ function appendErrorChat(set: SetState, stage: string, err: unknown): void {
   }).catch(() => undefined);
 }
 
-/** Append one system-role line to the chat and the workflow feed. */
+/** Append one system-role line to the workflow feed. */
 function appendSystemChat(set: SetState, message: string): void {
-  const id = `err-${Date.now()}`;
   set((s) => ({
-    chat: [
-      ...s.chat,
-      {
-        kind: "message",
-        id,
-        message: {
-          id,
-          role: "system",
-          content: message,
-          created_at: new Date().toISOString(),
-        },
-      },
-    ],
     agentItems: appendWorkflowError(s.agentItems, message),
   }));
 }
@@ -4934,7 +4884,13 @@ function expandFileMentions(content: string, state: AppState): string {
 
 interface ProviderCreds {
   provider: string | null;
-  apiKey: string | null;
+  /**
+   * Whether a key is configured — never the key itself (task 26.3, R14.2). The
+   * only reader is the pre-send guard below, which needs the boolean to tell
+   * the user to add a key, and the value would only ever have been forwarded to
+   * a service that resolves its own credential.
+   */
+  hasKey: boolean;
   baseUrl: string | null;
 }
 
@@ -4949,20 +4905,23 @@ interface RunModelContext extends ProviderCreds {
 }
 
 /**
- * Resolve the bring-your-own cloud creds for the currently selected model.
- * Local (llamacpp) and mock providers need none; cloud providers supply their
- * OpenAI-compatible base URL (from the provider catalogue) and the saved key
- * (from the secure store) so the run routes to the right endpoint.
+ * Resolve the routing facts for the currently selected model: which provider,
+ * its OpenAI-compatible base URL from the catalogue, and whether a key has been
+ * configured for it. Local (llamacpp) and mock providers need none of it.
+ *
+ * The key *value* is deliberately absent (task 26.3, R14.2) — `secureStore.has`
+ * answers the only question left, and the services this feeds either resolve
+ * their own credential or take none.
  */
 async function resolveProviderCreds(state: AppState): Promise<ProviderCreds> {
   const providerId = state.selectedModel.provider;
   if (!providerId || providerId === "llamacpp" || providerId === "mock") {
-    return { provider: providerId || null, apiKey: null, baseUrl: null };
+    return { provider: providerId || null, hasKey: false, baseUrl: null };
   }
   const cfg = getProvider(providerId);
-  if (!cfg) return { provider: providerId, apiKey: null, baseUrl: null };
-  const apiKey = await secureStore.get(`provider.${providerId}.api_key`);
-  return { provider: providerId, apiKey: apiKey?.trim() || null, baseUrl: cfg.baseUrl };
+  if (!cfg) return { provider: providerId, hasKey: false, baseUrl: null };
+  const hasKey = await secureStore.has(`provider.${providerId}.api_key`);
+  return { provider: providerId, hasKey, baseUrl: cfg.baseUrl };
 }
 
 async function resolveRunModelContext(state: AppState): Promise<RunModelContext> {
@@ -5005,14 +4964,14 @@ async function resolveRunModelContext(state: AppState): Promise<RunModelContext>
     if (!baseUrl) {
       throw new Error(`Provider ${cfg?.name ?? creds.provider} is missing a base URL.`);
     }
-    if (cfg?.requiresKey && !creds.apiKey) {
+    if (cfg?.requiresKey && !creds.hasKey) {
       throw new Error(`Add an API key for ${cfg.name} in Settings before sending.`);
     }
   }
 
   return {
     provider: creds.provider,
-    apiKey: creds.apiKey,
+    hasKey: creds.hasKey,
     baseUrl,
     model,
     workspaceRoot: activeWorkspaceRoot(state),

@@ -1,6 +1,8 @@
 /**
  * The editor routes' generator — zoc-agent-chat-rebuild R6.2, R7.8, R13.5, task 22.11's prerequisite.
  *
+ * Feature: zoc-agent-chat-rebuild, task 22.11 (R6.2, R7.8, R13.5).
+ *
  * `/v1/completions` and `/v1/inline-edit` were ported at 9.7 with their generator left as a throwing
  * stub, and the stub's stated reason was that "a real generator needs a selected model for the editor,
  * which is app state the runtime is not given". That reason does not hold: both body schemas carry

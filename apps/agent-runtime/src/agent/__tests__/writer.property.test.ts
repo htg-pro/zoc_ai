@@ -2,6 +2,8 @@
  * Property 2: The sequence allocator is gapless and strictly increasing.
  * Validates R7.7.
  *
+ * Feature: zoc-agent-chat-rebuild, Property 2 (R7.7).
+ *
  * The transport's exactly-once rendering (11.1) rests on exactly two facts about
  * `seq`: it never repeats, and it never skips. A repeat makes the transport
  * discard a real chunk as already-rendered; a skip makes it read a healthy stream
@@ -437,6 +439,44 @@ describe("Property 2: the sequence allocator is gapless and strictly increasing 
       ),
       RUNS,
     );
+  });
+});
+
+describe("provider-executed tool refusals", () => {
+  it("emits exactly one permission_denied tool error for a denied web search", () => {
+    const h = harness();
+
+    h.writer.providerToolError({
+      toolName: "web_search",
+      kind: "network",
+      code: "permission_denied",
+      message: "Web search is blocked because permission mode is set to deny.",
+      retryable: false,
+    });
+
+    const chunks = h.sink.appended.map((entry) => entry.chunk);
+    expect(chunks).toHaveLength(2);
+    expect(chunks[0]).toMatchObject({
+      type: "tool-input-available",
+      toolName: "web_search",
+      providerExecuted: true,
+      providerMetadata: { zoc: { kind: "network" } },
+    });
+    expect(chunks.filter((chunk) => chunk.type === "tool-output-error")).toEqual([
+      expect.objectContaining({
+        type: "tool-output-error",
+        errorText: "Web search is blocked because permission mode is set to deny.",
+        providerExecuted: true,
+        providerMetadata: {
+          zoc: {
+            kind: "network",
+            code: "permission_denied",
+            retryable: false,
+            details: null,
+          },
+        },
+      }),
+    ]);
   });
 });
 

@@ -69,9 +69,7 @@ def test_chunks_and_embeddings_remain_positionally_aligned(
                 indexed = indexer._indexes["session"]
                 assert len(indexed.chunks) == len(indexed.embeddings)
                 assert len(indexed.chunks) == indexed.bm25_index.document_count
-                for chunk, embedding in zip(
-                    indexed.chunks, indexed.embeddings, strict=True
-                ):
+                for chunk, embedding in zip(indexed.chunks, indexed.embeddings, strict=True):
                     assert embedding == embedder._vector(chunk.text)
                     assert state[chunk.file] is not None
                     assert str(state[chunk.file]).strip()

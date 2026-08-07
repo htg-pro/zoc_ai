@@ -14,14 +14,7 @@ export type TrustState = "trusted" | "restricted";
 /** How privileged actions are gated when the workspace is trusted. */
 export type RunMode = "ask" | "allowlist" | "sandboxed" | "all";
 
-export type ActionKind =
-  | "agent_tool"
-  | "terminal"
-  | "task"
-  | "git"
-  | "mcp"
-  | "plugin"
-  | "fs";
+export type ActionKind = "agent_tool" | "terminal" | "task" | "git" | "mcp" | "plugin" | "fs";
 
 export type Effect = "allow" | "deny" | "prompt";
 
@@ -99,7 +92,11 @@ export function isExternalPath(target: string | undefined, workspaceRoot: string
   if (!target) return false;
   const isAbsolute = target.startsWith("/") || /^[A-Za-z]:[/\\]/.test(target);
   if (!workspaceRoot) return isAbsolute; // no root known → treat absolute paths as external
-  const norm = (p: string) => p.replace(/[/\\]+/g, "/").replace(/\/$/, "").toLowerCase();
+  const norm = (p: string) =>
+    p
+      .replace(/[/\\]+/g, "/")
+      .replace(/\/$/, "")
+      .toLowerCase();
   if (!isAbsolute) return target.split(/[/\\]/).includes("..");
   const candidate = norm(target);
   const root = norm(workspaceRoot);

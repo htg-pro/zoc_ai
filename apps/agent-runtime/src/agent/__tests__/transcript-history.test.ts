@@ -1,6 +1,8 @@
 /**
  * Transcript history — zoc-agent-chat-rebuild R15.6, R23.5, R34.6.
  *
+ * Feature: zoc-agent-chat-rebuild, R15.6, R23.5, R34.6.
+ *
  * The adapter that closed the history gap. Before it, `loadHistory` answered `[]`
  * and `RunContext.persistence` was never supplied, so every Run was single-turn
  * and no Run was written down. Four claims are worth pinning, and three of them
@@ -261,7 +263,10 @@ describe("createTranscriptHistory", () => {
     const history = createTranscriptHistory(clientWith(fetchImpl as unknown as typeof fetch), log);
 
     await expect(history.loadHistory("s1")).resolves.toEqual([]);
-    expect(log).toHaveBeenCalledWith("transcript read failed", expect.stringContaining("workspace"));
+    expect(log).toHaveBeenCalledWith(
+      "transcript read failed",
+      expect.stringContaining("workspace"),
+    );
   });
 
   it("never throws on a failed write — the answer outlives the record", async () => {

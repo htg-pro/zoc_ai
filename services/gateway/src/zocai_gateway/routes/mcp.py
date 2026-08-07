@@ -20,6 +20,8 @@ from zocai_gateway.context.mcp_host.models import (
     TestSuccess,
     TestUnsupported,
     TestValidationFailure,
+    ToolCallError,
+    ToolCallSuccess,
 )
 from zocai_gateway.errors import ErrorCode, error_body
 
@@ -70,6 +72,14 @@ def create_mcp_router(resolve_host: McpHostResolver) -> APIRouter:
             return {"servers": []}
         return {"servers": host.servers()}
 
+    @router.get("/tools")
+    async def list_tools() -> dict[str, object]:
+        """Live tools from every healthy server; failed peers remain isolated (R26.6)."""
+        host = await resolve_host()
+        if host is None:
+            return {"tools": []}
+        return {"tools": host.tools()}
+
     @router.post("/reload")
     async def reload_servers() -> dict[str, object]:
         """Recompute MCP_Config and apply lifecycle diffs (R1.11-R1.14)."""
@@ -91,5 +101,47 @@ def create_mcp_router(resolve_host: McpHostResolver) -> APIRouter:
                 detail=error_body(ErrorCode.NO_WORKSPACE),
             )
         return serialize_test_outcome(await host.test_candidate(candidate))
+
+    @router.post("/call")
+    async def call_tool(body: dict[str, object] = Body(...)) -> dict[str, object]:
+        """Execute after Agent_Runtime's permission gate, on the owning MCP session."""
+        host = await resolve_host()
+        if host is None:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=error_body(ErrorCode.NO_WORKSPACE),
+            )
+        name = body.get("name")
+        arguments = body.get("arguments", {})
+        if not isinstance(name, str) or not name or not isinstance(arguments, dict):
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail={"code": "invalid_request", "message": "Invalid MCP tool call."},
+            )
+        outcome = await host.call_tool_unchecked(name, arguments)
+        if isinstance(outcome, ToolCallSuccess):
+            return {
+                "ok": True,
+                "serverId": outcome.server_id,
+                "tool": outcome.tool,
+                "result": dict(outcome.result),
+            }
+        if isinstance(outcome, ToolCallError):
+            return {
+                "ok": False,
+                "serverId": outcome.server_id,
+                "tool": outcome.tool,
+                "code": outcome.kind.value,
+                "message": outcome.reason,
+                "retryable": outcome.kind.value in {"timeout", "failure", "unavailable"},
+            }
+        return {
+            "ok": False,
+            "serverId": None,
+            "tool": name,
+            "code": "failure",
+            "message": "Unknown MCP tool result.",
+            "retryable": True,
+        }
 
     return router

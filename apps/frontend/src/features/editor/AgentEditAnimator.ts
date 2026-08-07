@@ -120,11 +120,7 @@ export function computeEditPlan(text: string, edits: SearchReplaceEdit[]): Plann
     return {
       range: rangeFromOffsets(text, match.origStart, match.origEnd),
       insertText: match.replace,
-      decorationRange: rangeFromOffsets(
-        assembled,
-        finalStart,
-        finalStart + match.replace.length,
-      ),
+      decorationRange: rangeFromOffsets(assembled, finalStart, finalStart + match.replace.length),
     };
   });
 }
@@ -230,10 +226,7 @@ export class AgentEditAnimator {
   }
 
   /** Resolve against the live model and refuse a partial/stale SearchReplace set. */
-  async applyEdits(
-    edits: SearchReplaceEdit[],
-    meta?: AgentEditMeta,
-  ): Promise<PlannedEdit[]> {
+  async applyEdits(edits: SearchReplaceEdit[], meta?: AgentEditMeta): Promise<PlannedEdit[]> {
     const text = this.editor.getModel()?.getValue() ?? "";
     const plan = computeEditPlan(text, edits);
     if (plan.length !== edits.length) {
@@ -306,14 +299,8 @@ export class AgentEditAnimator {
 
       const range = rangeFromOffsets(current, start, end);
       const next = current.slice(0, start) + item.plan.insertText + current.slice(end);
-      const decorationRange = rangeFromOffsets(
-        next,
-        start,
-        start + item.plan.insertText.length,
-      );
-      this.editor.executeEdits("agent-edit-animator", [
-        { range, text: item.plan.insertText },
-      ]);
+      const decorationRange = rangeFromOffsets(next, start, start + item.plan.insertText.length);
+      this.editor.executeEdits("agent-edit-animator", [{ range, text: item.plan.insertText }]);
       expected = next;
       delta += item.plan.insertText.length - (item.originalEnd - item.originalStart);
       applied.push({ ...item.plan, decorationRange });
@@ -339,7 +326,8 @@ export class AgentEditAnimator {
   ): void {
     if (!this.toast) return;
     const adds = meta?.adds ?? applied.reduce((sum, item) => sum + lineCount(item.insertText), 0);
-    const dels = meta?.dels ?? resolved.reduce((sum, item) => sum + lineCount(item.originalText), 0);
+    const dels =
+      meta?.dels ?? resolved.reduce((sum, item) => sum + lineCount(item.originalText), 0);
     const fileName = basename(meta?.filePath ?? "file");
     this.toast.success(`Edited ${fileName} (+${adds} -${dels} lines)`, {
       ...(meta?.filePath ? { description: meta.filePath } : {}),

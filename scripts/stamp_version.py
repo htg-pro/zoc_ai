@@ -11,6 +11,7 @@ Touched files:
 * ``apps/desktop/tauri.conf.json``
 * ``CHANGELOG.md``                                (only verifies the entry exists)
 """
+
 from __future__ import annotations
 
 import json

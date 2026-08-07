@@ -45,7 +45,12 @@ export function SourceControlPanel() {
     return <Empty title="Loading source control…" />;
   }
   if (!git.is_repo) {
-    return <Empty title="This workspace is not a Git repository" hint="Run git init to start tracking changes." />;
+    return (
+      <Empty
+        title="This workspace is not a Git repository"
+        hint="Run git init to start tracking changes."
+      />
+    );
   }
   return <RepoView />;
 }
@@ -177,10 +182,7 @@ function RepoView() {
               </>
             )}
           />
-          {git.staged.length +
-            git.unstaged.length +
-            git.untracked.length +
-            git.conflicts.length ===
+          {git.staged.length + git.unstaged.length + git.untracked.length + git.conflicts.length ===
             0 && (
             <div className="px-2 py-6 text-center text-[11px] text-muted-foreground">
               No changes — working tree clean.
@@ -243,7 +245,11 @@ function BranchBar({
               onSelect={() => !b.current && void checkoutBranch(b.name)}
               className="flex items-center gap-2"
             >
-              {b.current ? <Check className="h-3.5 w-3.5 text-primary" /> : <span className="w-3.5" />}
+              {b.current ? (
+                <Check className="h-3.5 w-3.5 text-primary" />
+              ) : (
+                <span className="w-3.5" />
+              )}
               <span className="truncate font-mono text-xs">{b.name}</span>
             </DropdownMenuItem>
           ))}
@@ -280,10 +286,24 @@ function BranchBar({
         </DropdownMenuContent>
       </DropdownMenu>
 
-      <Button size="icon" variant="ghost" className="h-6 w-6" title="Pull" aria-label="Pull" onClick={onPull}>
+      <Button
+        size="icon"
+        variant="ghost"
+        className="h-6 w-6"
+        title="Pull"
+        aria-label="Pull"
+        onClick={onPull}
+      >
         <CloudDownload className="h-3.5 w-3.5" />
       </Button>
-      <Button size="icon" variant="ghost" className="h-6 w-6" title="Push" aria-label="Push" onClick={onPush}>
+      <Button
+        size="icon"
+        variant="ghost"
+        className="h-6 w-6"
+        title="Push"
+        aria-label="Push"
+        onClick={onPush}
+      >
         <CloudUpload className="h-3.5 w-3.5" />
       </Button>
       <Button
@@ -347,7 +367,10 @@ function Section({
           </button>
         )}
       </div>
-      {!collapsed && entries.map((e) => <FileRow key={`${title}:${e.path}`} entry={e} staged={!!staged} actions={actions} />)}
+      {!collapsed &&
+        entries.map((e) => (
+          <FileRow key={`${title}:${e.path}`} entry={e} staged={!!staged} actions={actions} />
+        ))}
     </div>
   );
 }
@@ -413,7 +436,9 @@ function FileRow({
           {diff === null ? (
             <span className="text-muted-foreground">Loading diff…</span>
           ) : diff.trim() === "" ? (
-            <span className="text-muted-foreground">No textual diff (new, binary, or untracked file).</span>
+            <span className="text-muted-foreground">
+              No textual diff (new, binary, or untracked file).
+            </span>
           ) : (
             diff.split("\n").map((line, i) => (
               <div
@@ -423,7 +448,8 @@ function FileRow({
                   line.startsWith("+") && !line.startsWith("+++") && "text-success",
                   line.startsWith("-") && !line.startsWith("---") && "text-destructive",
                   line.startsWith("@@") && "text-primary",
-                  (line.startsWith("diff ") || line.startsWith("index ")) && "text-muted-foreground",
+                  (line.startsWith("diff ") || line.startsWith("index ")) &&
+                    "text-muted-foreground",
                 )}
               >
                 {line || " "}

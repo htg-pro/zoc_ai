@@ -84,6 +84,7 @@ def _intent_payload(seq: int = 0, run_id: str = "r1") -> dict[str, object]:
 
 # ── Agent Mode: structured-only (R6.7) ──────────────────────────────────────
 
+
 def test_agent_channel_admits_structured_rows_r6_7() -> None:
     sink = _RecordingSink()
     channel = AgentChannel(EmitGate(sink=sink))
@@ -114,21 +115,15 @@ def test_agent_channel_emits_planning_todo_and_tool_rows() -> None:
 
     assert channel.emit_event(_intent_payload(seq=0)) is True  # planning
     assert (
-        channel.emit_event(
-            ThinkingEvent(seq=1, run_id="r1", ts="t", text="reason").model_dump()
-        )
+        channel.emit_event(ThinkingEvent(seq=1, run_id="r1", ts="t", text="reason").model_dump())
         is True
     )  # planning
     assert (
-        channel.emit_event(
-            {"type": "summary", "seq": 2, "runId": "r1", "ts": "t", "text": "todo"}
-        )
+        channel.emit_event({"type": "summary", "seq": 2, "runId": "r1", "ts": "t", "text": "todo"})
         is True
     )  # to-do
     assert (
-        channel.emit_event(
-            {"type": "command", "seq": 3, "runId": "r1", "ts": "t", "command": "ls"}
-        )
+        channel.emit_event({"type": "command", "seq": 3, "runId": "r1", "ts": "t", "command": "ls"})
         is True
     )  # tool activity
     assert [e["type"] for e in sink.events] == [
@@ -140,6 +135,7 @@ def test_agent_channel_emits_planning_todo_and_tool_rows() -> None:
 
 
 # ── Ask Mode: text-only (R6.6, R2.7) ────────────────────────────────────────
+
 
 def test_ask_channel_admits_raw_text_r6_6() -> None:
     text = _RecordingText()
@@ -182,6 +178,7 @@ def test_ask_channel_records_none_type_for_untyped_payload() -> None:
 
 # ── Suppression iff Ask, no carry-over (R2.7) ───────────────────────────────
 
+
 def test_suppression_predicate_is_iff_ask() -> None:
     assert suppresses_structured_rows(Mode.ASK) is True
     assert suppresses_structured_rows(Mode.AGENT) is False
@@ -189,9 +186,7 @@ def test_suppression_predicate_is_iff_ask() -> None:
 
 def test_suppression_predicate_matches_channel_flag() -> None:
     text = _RecordingText()
-    assert AskChannel(text).suppresses_structured_rows == suppresses_structured_rows(
-        Mode.ASK
-    )
+    assert AskChannel(text).suppresses_structured_rows == suppresses_structured_rows(Mode.ASK)
     assert AgentChannel(
         EmitGate(sink=_RecordingSink())
     ).suppresses_structured_rows == suppresses_structured_rows(Mode.AGENT)
@@ -210,6 +205,7 @@ def test_no_carry_over_between_runs_r2_7() -> None:
 
 
 # ── channel_for factory wiring on the execution paths ───────────────────────
+
 
 def test_channel_for_ask_path_is_text_only() -> None:
     text = _RecordingText()
@@ -243,6 +239,7 @@ def test_channel_for_matches_routed_path_mode() -> None:
 
 
 # ── Property: clean partition + suppression iff Ask, over all row kinds ──────
+
 
 @given(
     row_types=st.lists(st.sampled_from(_ALL_ROW_TYPES), max_size=12),

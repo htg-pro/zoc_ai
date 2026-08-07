@@ -35,10 +35,7 @@ const LANGUAGE_LABELS: Readonly<Record<string, string>> = {
  * while reconnecting), `ok` when `connected`, and `error` on failure. The label
  * is always non-empty.
  */
-export function formatLspStatus(
-  languageId: string,
-  state: LanguageServerState,
-): LspStatusView {
+export function formatLspStatus(languageId: string, state: LanguageServerState): LspStatusView {
   const label = LANGUAGE_LABELS[languageId] ?? languageId;
   const tone: LspStatusView["tone"] =
     state === "connected" ? "ok" : state === "error" ? "error" : "busy";

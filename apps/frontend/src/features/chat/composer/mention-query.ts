@@ -1,6 +1,8 @@
 /**
  * The composer's `@`-mention parser — zoc-agent-chat-rebuild R12.1, R12.3, R12.4, task 20.1.
  *
+ * Feature: zoc-agent-chat-rebuild, task 20.1 (R12.1, R12.3, R12.4).
+ *
  * Re-authored from `lib/context-mentions.ts` with behaviour preserved exactly. It moves because it is
  * composer logic and the composer is a feature: `lib` is for what more than one feature uses, and after
  * 26.2 nothing outside `features/chat` parses a mention. The legacy module stays where it is until that

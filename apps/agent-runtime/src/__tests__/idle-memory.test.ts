@@ -1,6 +1,8 @@
 /**
  * Idle resident memory — zoc-agent-chat-rebuild budget 20.6, task 9.11.
  *
+ * Feature: zoc-agent-chat-rebuild, task 9.11.
+ *
  * The ceiling is the **revised 250 MB**, not R20's original 300: Node 20 with `ai@6`, six
  * provider packages, and `zod@4` loaded measures well under 200 MB at rest, so 300 left no
  * signal at all. 250 keeps generous headroom over the expected ~150–180 MB and is still

@@ -60,9 +60,7 @@ _short_text = st.text(alphabet="abcdef \n", max_size=12)
 _paths = st.sampled_from(["a.py", "b.py", "c.py", "d.py"])
 _commands = st.sampled_from(["pytest", "cargo build", "tsc", "make", "go test"])
 
-_changes = st.builds(
-    PlannedChange, path=_paths, content=_short_text, diff=_short_text
-)
+_changes = st.builds(PlannedChange, path=_paths, content=_short_text, diff=_short_text)
 _plans = st.builds(
     EditPlan,
     reasoning=_short_text,
@@ -78,11 +76,7 @@ def _scenario(draw: st.DrawFn) -> tuple[EditPlan, EditPlan | None, FailureRecord
     failure = FailureRecord(command=command, exit_code=draw(st.integers(min_value=1)), log=log)
     prior = draw(_plans)
 
-    shape = draw(
-        st.sampled_from(
-            ["none", "identical", "differs_refs", "differs_no_refs", "free"]
-        )
-    )
+    shape = draw(st.sampled_from(["none", "identical", "differs_refs", "differs_no_refs", "free"]))
     if shape == "none":
         candidate: EditPlan | None = None
     elif shape == "identical":

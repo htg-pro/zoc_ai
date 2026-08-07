@@ -108,16 +108,12 @@ def test_token_gate_fits_and_truncates_lowest_relevance_first(
     # (1) Fit: the kept payload never exceeds the window and token_count is the
     # exact sum of the kept fragments' deterministic token estimates.
     assert result.token_count <= result.window
-    assert result.token_count == sum(
-        estimate_tokens(f.content) for f in result.fragments
-    )
+    assert result.token_count == sum(estimate_tokens(f.content) for f in result.fragments)
 
     # Kept and dropped partition the input exactly (no loss, no duplication).
     assert len(result.fragments) + len(result.dropped) == len(fragments)
     by_path = lambda items: sorted(f.path for f in items)  # noqa: E731
-    assert by_path(list(result.fragments) + list(result.dropped)) == by_path(
-        fragments
-    )
+    assert by_path(list(result.fragments) + list(result.dropped)) == by_path(fragments)
 
     # (2) Truncation order: every dropped fragment is of lower-or-equal
     # relevance than every kept fragment (lowest relevance truncated first).
@@ -136,9 +132,7 @@ def test_token_gate_fits_and_truncates_lowest_relevance_first(
     chunks=st.lists(st.text(alphabet="abc xyz", max_size=80), max_size=20),
     budget=st.integers(min_value=-10, max_value=300),
 )
-def test_chunk_gate_keeps_exact_ranking_prefix(
-    chunks: list[str], budget: int
-) -> None:
+def test_chunk_gate_keeps_exact_ranking_prefix(chunks: list[str], budget: int) -> None:
     """Feature: advanced-context-engine, Property 10: budget prefix.
 
     **Validates: Requirements 5.2, 5.3, 5.4, 5.5, 5.6, 5.7**

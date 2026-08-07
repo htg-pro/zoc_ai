@@ -47,7 +47,13 @@ function renderAnnotation(a: Annotation, handlers: OutputHandlers, key: number):
   );
 }
 
-function AnnotatedLine({ line, handlers }: { line: ParsedLine; handlers: OutputHandlers }): JSX.Element {
+function AnnotatedLine({
+  line,
+  handlers,
+}: {
+  line: ParsedLine;
+  handlers: OutputHandlers;
+}): JSX.Element {
   const { text, annotations } = line;
 
   if (text.includes("\r")) {
@@ -87,7 +93,10 @@ function AnnotatedLine({ line, handlers }: { line: ParsedLine; handlers: OutputH
     return (
       <div className="flex items-center gap-2">
         <span>{text}</span>
-        <span data-annotation="test-summary" className={`rounded px-1.5 py-0.5 text-[10px] ${tone}`}>
+        <span
+          data-annotation="test-summary"
+          className={`rounded px-1.5 py-0.5 text-[10px] ${tone}`}
+        >
           {summary.passed} passed, {summary.failed} failed, {summary.skipped} skipped
         </span>
       </div>

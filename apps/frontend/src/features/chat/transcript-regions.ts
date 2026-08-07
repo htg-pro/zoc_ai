@@ -1,6 +1,8 @@
 /**
  * The transcript's two regions — zoc-agent-chat-rebuild R8.1, R20.3, R20.4, R20.7, task 17.1.
  *
+ * Feature: zoc-agent-chat-rebuild, task 17.1 (R8.1, R20.3, R20.4, R20.7).
+ *
  * The virtualisation design in one function. `Transcript.tsx` draws two stacked regions in one
  * scroll container: a virtualised region holding every settled row, and an always-mounted tail
  * holding the in-flight Run's rows. {@link transcriptRegions} is the split, kept out of the
@@ -78,10 +80,7 @@ export function tailIndexOf(messages: readonly ZocUIMessage[], inFlight: boolean
 }
 
 /** One message's rows, from the cache when it is there. */
-function cachedRows(
-  message: ZocUIMessage,
-  options: RegionOptions,
-): readonly TranscriptRow[] {
+function cachedRows(message: ZocUIMessage, options: RegionOptions): readonly TranscriptRow[] {
   const hit = options.cache?.get(message);
   if (hit !== undefined) return hit;
   const rows = rowsOfMessage(message, options.factory ?? {});

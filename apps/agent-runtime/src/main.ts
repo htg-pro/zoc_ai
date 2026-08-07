@@ -1,6 +1,8 @@
 /**
  * Agent_Runtime entrypoint — zoc-agent-chat-rebuild R3.1, R3.2, R3.5, R3.6, R4.1.
  *
+ * Feature: zoc-agent-chat-rebuild, R3.1, R3.2, R3.5, R3.6, R4.1.
+ *
  * Binds `127.0.0.1:0` — loopback only, kernel-assigned port — and prints
  * `ZOC_RUNTIME_PORT=<n>` on stdout as its first line. Desktop_Core's supervisor
  * parses that line; nothing else about the handshake is negotiated.

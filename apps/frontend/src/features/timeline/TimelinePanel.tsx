@@ -4,7 +4,7 @@ import { Button } from "@/components/ui/button";
 import { toast } from "@/components/ui/toast";
 import { useApp } from "@/lib/store";
 import { getAgentClient } from "@/lib/agent-client";
-import { useAgentStreamContext } from "@/features/agent/agent-stream-context";
+import { useAgentStreamContext } from "@/lib/agent-stream-context";
 import { buildTimeline, type TimelineEntry } from "@/lib/timeline";
 import type { GitCommit } from "@/lib/tauri-bridge";
 import { cn } from "@/lib/utils";
@@ -44,9 +44,7 @@ export function TimelinePanel() {
           Run trace
         </TabButton>
       </div>
-      <div className="min-h-0 flex-1">
-        {tab === "history" ? <HistoryFeed /> : <RunTraceTab />}
-      </div>
+      <div className="min-h-0 flex-1">{tab === "history" ? <HistoryFeed /> : <RunTraceTab />}</div>
     </div>
   );
 }
@@ -119,9 +117,7 @@ function RunTraceTab() {
     );
   }
 
-  return (
-    <RunTracePanel runId={runId} events={liveEvents.length > 0 ? liveEvents : diary} />
-  );
+  return <RunTracePanel runId={runId} events={liveEvents.length > 0 ? liveEvents : diary} />;
 }
 
 function HistoryFeed() {

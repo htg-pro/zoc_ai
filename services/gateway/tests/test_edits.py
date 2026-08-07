@@ -148,8 +148,6 @@ def test_apply_failure_retains_prior_changes_and_reports_failed_change(
 def test_emitted_events_share_one_monotonic_sequence(tmp_path: Path) -> None:
     coord, recorded = make_coordinator(tmp_path)
     coord.plan_edits(EditPlan(reasoning="r"))
-    coord.apply_edits(
-        EditPlan(changes=(PlannedChange(path="x.txt", content="x"),))
-    )
+    coord.apply_edits(EditPlan(changes=(PlannedChange(path="x.txt", content="x"),)))
     seqs = [e.seq for e in recorded]
     assert seqs == list(range(len(recorded)))

@@ -91,6 +91,10 @@ export interface TelemetryEvents {
     mode: RunMode;
     stage_reached: string;
     token_count: number;
+    input_tokens: number;
+    output_tokens: number;
+    estimated_cost_cents: number;
+    context_window_proportion: number;
     duration_ms: number;
     succeeded: boolean;
     recovery_count: number;
@@ -103,6 +107,19 @@ export interface TelemetryEvents {
 }
 
 export type TelemetryKind = keyof TelemetryEvents;
+
+const FORBIDDEN_TELEMETRY_KEY = /(prompt|content|file|credential|secret|api[_-]?key|token_value)/iu;
+
+/** Runtime backstop for callers crossing a JS boundary with an untyped cast. */
+export function isTelemetrySafePayload(value: unknown): boolean {
+  if (value === null || typeof value !== "object") return true;
+  if (Array.isArray(value)) return value.every(isTelemetrySafePayload);
+  for (const [key, child] of Object.entries(value)) {
+    if (FORBIDDEN_TELEMETRY_KEY.test(key)) return false;
+    if (!isTelemetrySafePayload(child)) return false;
+  }
+  return true;
+}
 
 let optedIn: boolean | null = null;
 
@@ -145,6 +162,7 @@ export async function trackEvent<K extends TelemetryKind>(
   payload: TelemetryEvents[K],
 ): Promise<void> {
   if (!(await consent())) return;
+  if (!isTelemetrySafePayload(payload)) return;
   try {
     await telemetryEvent(kind, payload as Record<string, unknown>);
   } catch {
@@ -172,11 +190,12 @@ export function platformLabels(userAgent: string): { os: string; arch: string } 
       : ua.includes("linux")
         ? "linux"
         : "unknown";
-  const arch = ua.includes("arm64") || ua.includes("aarch64")
-    ? "arm64"
-    : ua.includes("x86_64") || ua.includes("win64") || ua.includes("x64")
-      ? "x86_64"
-      : "unknown";
+  const arch =
+    ua.includes("arm64") || ua.includes("aarch64")
+      ? "arm64"
+      : ua.includes("x86_64") || ua.includes("win64") || ua.includes("x64")
+        ? "x86_64"
+        : "unknown";
   return { os, arch };
 }
 
@@ -231,9 +250,7 @@ export async function flushTelemetry(): Promise<number> {
  */
 export async function startTelemetry(modelKind: ModelKind): Promise<void> {
   if (!(await consent())) return;
-  const { os, arch } = platformLabels(
-    typeof navigator === "undefined" ? "" : navigator.userAgent,
-  );
+  const { os, arch } = platformLabels(typeof navigator === "undefined" ? "" : navigator.userAgent);
   void trackEvent("app_start", { os, arch, model_kind: modelKind });
   void flushTelemetry();
 }

@@ -1,5 +1,14 @@
 import { useEffect, useMemo } from "react";
-import { CheckCircle2, FlaskConical, Hammer, Loader2, Play, RefreshCw, Wrench, XCircle } from "lucide-react";
+import {
+  CheckCircle2,
+  FlaskConical,
+  Hammer,
+  Loader2,
+  Play,
+  RefreshCw,
+  Wrench,
+  XCircle,
+} from "lucide-react";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -28,7 +37,9 @@ export function TasksPanel() {
   // Tests first (this doubles as a lightweight Test Explorer), then build, then the rest.
   const sorted = useMemo(() => {
     const rank = (g: TaskGroup) => (g === "test" ? 0 : g === "build" ? 1 : 2);
-    return [...tasks].sort((a, b) => rank(a.group) - rank(b.group) || a.label.localeCompare(b.label));
+    return [...tasks].sort(
+      (a, b) => rank(a.group) - rank(b.group) || a.label.localeCompare(b.label),
+    );
   }, [tasks]);
 
   return (
@@ -56,7 +67,12 @@ export function TasksPanel() {
         ) : (
           <ul className="py-1">
             {sorted.map((task) => (
-              <TaskRow key={task.id} task={task} status={taskRuns[task.id]} onRun={() => void runTask(task.id)} />
+              <TaskRow
+                key={task.id}
+                task={task}
+                status={taskRuns[task.id]}
+                onRun={() => void runTask(task.id)}
+              />
             ))}
           </ul>
         )}
@@ -106,8 +122,10 @@ function TaskRow({
 }
 
 function StatusIcon({ status }: { status: "running" | "passed" | "failed" | undefined }) {
-  if (status === "running") return <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin text-primary" />;
-  if (status === "passed") return <CheckCircle2 className={cn("h-3.5 w-3.5 shrink-0 text-emerald-500")} />;
+  if (status === "running")
+    return <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin text-primary" />;
+  if (status === "passed")
+    return <CheckCircle2 className={cn("h-3.5 w-3.5 shrink-0 text-emerald-500")} />;
   if (status === "failed") return <XCircle className="h-3.5 w-3.5 shrink-0 text-destructive" />;
   return <span className="w-3.5 shrink-0" />;
 }

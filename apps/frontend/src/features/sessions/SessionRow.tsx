@@ -19,7 +19,16 @@
  * undo because the original is still in the store until it lands.
  */
 import { useEffect, useRef, useState, type KeyboardEvent } from "react";
-import { Archive, ArchiveRestore, GitBranch, MoreHorizontal, Copy, Pencil, Pin, Trash2 } from "lucide-react";
+import {
+  Archive,
+  ArchiveRestore,
+  GitBranch,
+  MoreHorizontal,
+  Copy,
+  Pencil,
+  Pin,
+  Trash2,
+} from "lucide-react";
 
 import {
   DropdownMenu,
@@ -111,7 +120,10 @@ export function SessionRow({
 
   return (
     <li
-      className={cn("flex items-center gap-2 rounded-[var(--zoc-radius-chip)] px-2 py-1", className)}
+      className={cn(
+        "flex items-center gap-2 rounded-[var(--zoc-radius-chip)] px-2 py-1",
+        className,
+      )}
       data-zoc-session-row={row.id}
       data-active={active ? "" : undefined}
       data-archived={archived ? "" : undefined}
@@ -237,23 +249,19 @@ export function SessionRow({
               Duplicate
             </DropdownMenuItem>
           )}
-          {archived
-            ? onUnarchive === undefined
-              ? null
-              : (
-                  <DropdownMenuItem data-zoc-session-action="unarchive" onSelect={onUnarchive}>
-                    <ArchiveRestore aria-hidden className="mr-2 size-3.5" />
-                    Restore
-                  </DropdownMenuItem>
-                )
-            : onArchive === undefined
-              ? null
-              : (
-                  <DropdownMenuItem data-zoc-session-action="archive" onSelect={onArchive}>
-                    <Archive aria-hidden className="mr-2 size-3.5" />
-                    Archive
-                  </DropdownMenuItem>
-                )}
+          {archived ? (
+            onUnarchive === undefined ? null : (
+              <DropdownMenuItem data-zoc-session-action="unarchive" onSelect={onUnarchive}>
+                <ArchiveRestore aria-hidden className="mr-2 size-3.5" />
+                Restore
+              </DropdownMenuItem>
+            )
+          ) : onArchive === undefined ? null : (
+            <DropdownMenuItem data-zoc-session-action="archive" onSelect={onArchive}>
+              <Archive aria-hidden className="mr-2 size-3.5" />
+              Archive
+            </DropdownMenuItem>
+          )}
           {onDelete === undefined ? null : (
             <DropdownMenuItem data-zoc-session-action="delete" onSelect={onDelete}>
               <Trash2 aria-hidden className="mr-2 size-3.5" />

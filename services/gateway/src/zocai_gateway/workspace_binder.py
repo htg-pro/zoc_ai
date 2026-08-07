@@ -139,7 +139,9 @@ class WorkspaceBinder:
         scope_factory: ScopeFactory | None = None,
     ) -> None:
         self._override_raw = override
-        self._config_path = config_path if config_path is not None else default_desktop_config_path()
+        self._config_path = (
+            config_path if config_path is not None else default_desktop_config_path()
+        )
         self._env = env if env is not None else os.environ
         self._scope_factory = scope_factory
         # (mtime_ns, size) of the config the cached context was built from, or a

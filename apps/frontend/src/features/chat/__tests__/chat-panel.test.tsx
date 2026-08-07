@@ -92,7 +92,8 @@ const HEALTHY_SECRETS: SecretStatus = { backend: "keychain", degraded: false, re
 let transport: FakeTransport;
 
 function renderPanel(overrides: Partial<ChatPanelProps> = {}) {
-  transport = overrides.transport instanceof FakeTransport ? overrides.transport : new FakeTransport();
+  transport =
+    overrides.transport instanceof FakeTransport ? overrides.transport : new FakeTransport();
   const props: ChatPanelProps = {
     sessionId: "session-1",
     sessionTitle: "A session",
@@ -160,8 +161,13 @@ describe("Feature: zoc-agent-chat-rebuild, task 22.8: the empty state", () => {
 
   it("names the provider rather than the model in the gate reason", () => {
     renderPanel({ models: [CLOUD_WITHOUT_KEY], selectedModel: CLOUD_WITHOUT_KEY });
+    // Scoped to the empty state, which is this block's subject: the same sentence is also on the send
+    // control, because R13.3 blocks the Run as well as replacing the suggestions — see
+    // `model-picker-gating.test.tsx` for that half.
+    const reason = query("[data-zoc-empty-state]")?.textContent ?? "";
     // The key is per provider, so naming the model would send the user looking for a per-model setting.
-    expect(screen.getByText(/Anthropic needs an API key/u)).toBeTruthy();
+    expect(reason).toContain("Anthropic needs an API key");
+    expect(reason).not.toContain("claude-opus-5");
   });
 });
 
@@ -331,26 +337,27 @@ describe("Feature: zoc-agent-chat-rebuild, task 22.8: submission and the queue (
 });
 
 describe("Feature: zoc-agent-chat-rebuild, task 22.8: the interrupted row (R16.5)", () => {
-  const lifecycleRow = (state: RunLifecyclePart["state"]) =>
-    ({
-      kind: "error" as const,
-      id: "row-1",
-      error: {
-        type: "run-lifecycle" as const,
-        seq: 9,
-        runId: "run-1",
-        messageId: "m1",
-        ts: "2026-07-31T10:00:00.000Z",
-        agentName: null,
-        state,
-        code: state === "interrupted" ? "stream_lost" : "provider_error",
-        message: "The connection to this run was lost.",
-      },
-    });
+  const lifecycleRow = (state: RunLifecyclePart["state"]) => ({
+    kind: "error" as const,
+    id: "row-1",
+    error: {
+      type: "run-lifecycle" as const,
+      seq: 9,
+      runId: "run-1",
+      messageId: "m1",
+      ts: "2026-07-31T10:00:00.000Z",
+      agentName: null,
+      state,
+      code: state === "interrupted" ? "stream_lost" : "provider_error",
+      message: "The connection to this run was lost.",
+    },
+  });
 
   it("offers Continue with what we have on an interrupted Run", () => {
     const onErrorContinue = vi.fn();
-    render(<TranscriptRowView row={lifecycleRow("interrupted")} onErrorContinue={onErrorContinue} />);
+    render(
+      <TranscriptRowView row={lifecycleRow("interrupted")} onErrorContinue={onErrorContinue} />,
+    );
     const control = query("[data-zoc-error-continue]");
     expect(control).not.toBeNull();
     expect(control?.textContent).toContain("Continue with what we have");

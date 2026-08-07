@@ -138,9 +138,7 @@ class FailureRecord:
     @classmethod
     def from_dict(cls, data: object) -> FailureRecord:
         if not isinstance(data, dict):
-            raise StateWrapperError(
-                f"compilation log must be an object, got {type(data).__name__}"
-            )
+            raise StateWrapperError(f"compilation log must be an object, got {type(data).__name__}")
         try:
             command = data["command"]
             exit_code = data["exit_code"]

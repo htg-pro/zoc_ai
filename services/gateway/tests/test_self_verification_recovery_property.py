@@ -57,7 +57,9 @@ def _request() -> AgentRunRequest:
 
 
 @settings(max_examples=200)
-@given(exit_code=st.integers(min_value=-5, max_value=5), command=_COMMANDS, log=st.text(max_size=120))
+@given(
+    exit_code=st.integers(min_value=-5, max_value=5), command=_COMMANDS, log=st.text(max_size=120)
+)
 def test_verification_outcome_routes_run(exit_code: int, command: str, log: str) -> None:
     """Property 12: pass → SUMMARY; fail (below ceiling) → HANDLE_ERROR, recovery +1.
 
@@ -66,9 +68,7 @@ def test_verification_outcome_routes_run(exit_code: int, command: str, log: str)
     **Validates: Requirements 7.1, 7.2**
     """
     loop = RemediationLoop(fsm=FSM(initial=Stage.RUN_CHECKS, run_id="r"), run_id="r")
-    outcome = loop.on_checks_complete(
-        exit_code, command=command, log=log, prior_plan=EditPlan()
-    )
+    outcome = loop.on_checks_complete(exit_code, command=command, log=log, prior_plan=EditPlan())
     if exit_code == 0:
         assert outcome.stage is Stage.SUMMARY  # R7.1
         assert loop.recoveries == 0
@@ -160,9 +160,7 @@ def test_recovery_attempt_event_reports_attempt(command: str, log: str) -> None:
         def edit_plan(self, request: AgentRunRequest, context: RunContext) -> EditPlan:
             return EditPlan(reasoning="run verification")
 
-        def run_checks(
-            self, request: AgentRunRequest, plan: EditPlan
-        ) -> tuple[int, str, str]:
+        def run_checks(self, request: AgentRunRequest, plan: EditPlan) -> tuple[int, str, str]:
             self.checks += 1
             if self.checks == 1:
                 return (1, command, log)
@@ -209,9 +207,7 @@ def test_hot_swap_at_recovery_ceiling(tmp_path: Path) -> None:
         def edit_plan(self, request: AgentRunRequest, context: RunContext) -> EditPlan:
             return EditPlan(reasoning="initial")
 
-        def run_checks(
-            self, request: AgentRunRequest, plan: EditPlan
-        ) -> tuple[int, str, str]:
+        def run_checks(self, request: AgentRunRequest, plan: EditPlan) -> tuple[int, str, str]:
             return (1, "pytest", "FAILED tests/test_x.py::test_y - boom")
 
         def remediation_plan(self, prior: EditPlan, failure: object) -> EditPlan | None:

@@ -107,9 +107,9 @@ def _events() -> st.SearchStrategy[object]:
             "command": st.text(min_size=1, max_size=60),
         }
     ).map(lambda d: CommandEvent(**d))
-    summary = st.fixed_dictionaries(
-        {"seq": seq, "run_id": _run_ids, "ts": _ts, "text": _text}
-    ).map(lambda d: SummaryEvent(**d))
+    summary = st.fixed_dictionaries({"seq": seq, "run_id": _run_ids, "ts": _ts, "text": _text}).map(
+        lambda d: SummaryEvent(**d)
+    )
     approval = st.fixed_dictionaries(
         {
             "seq": seq,
@@ -121,9 +121,7 @@ def _events() -> st.SearchStrategy[object]:
     done = st.fixed_dictionaries(
         {"seq": seq, "run_id": _run_ids, "ts": _ts, "ok": st.booleans()}
     ).map(lambda d: DoneEvent(**d))
-    return st.one_of(
-        intent, thinking, read_files, edit_file, command, summary, approval, done
-    )
+    return st.one_of(intent, thinking, read_files, edit_file, command, summary, approval, done)
 
 
 def _drain_sse_queue(queue: asyncio.Queue[dict | None]) -> list[Mapping[str, object]]:

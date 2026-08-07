@@ -1,6 +1,8 @@
 /**
  * Structured plan output guards — zoc-agent-chat-rebuild R5.3, R10.1, R10.11, R10.14.
  *
+ * Feature: zoc-agent-chat-rebuild, R5.3, R10.1, R10.11, R10.14.
+ *
  * The assertion with the most teeth is the retry count: "one retry" is easy to
  * write and easy to drift into zero or three, and neither drift shows up as a
  * failing feature — a zero-retry path just fails more often, and a three-retry
@@ -129,7 +131,7 @@ describe("plan schema (R10.1)", () => {
   });
 
   it("never puts a value into the validation detail, only a path and expectation", () => {
-    const secretish = "sk-proj-shouldnotappear0123456789";
+    const secretish = "sk-proj-CANARY-shouldnotappear01234";
     try {
       validatePlan({ title: secretish.repeat(20), files: [] });
       expect.unreachable();

@@ -233,7 +233,10 @@ describe("agent-terminal: CommandEvent adapter", () => {
     const first = deriveEventsFromCommand(cmd({ commandId: "c1" }), empty);
     expect(first.events).toEqual([{ kind: "run-start", runId: "r1:c1", command: "pnpm test" }]);
 
-    const second = deriveEventsFromCommand(cmd({ commandId: "c1", outputDelta: "hello" }), first.book);
+    const second = deriveEventsFromCommand(
+      cmd({ commandId: "c1", outputDelta: "hello" }),
+      first.book,
+    );
     expect(second.events).toEqual([{ kind: "run-output", runId: "r1:c1", chunk: "hello" }]);
 
     const third = deriveEventsFromCommand(cmd({ commandId: "c1", exitCode: 2 }), second.book);
@@ -247,7 +250,10 @@ describe("agent-terminal: CommandEvent adapter", () => {
   it("assigns distinct lifecycle ids to commands in the same parent run", () => {
     const empty: CommandBookkeeping = { started: new Set(), ended: new Set() };
     const first = deriveEventsFromCommand(cmd({ commandId: "c1" }), empty);
-    const second = deriveEventsFromCommand(cmd({ commandId: "c2", command: "cargo test" }), first.book);
+    const second = deriveEventsFromCommand(
+      cmd({ commandId: "c2", command: "cargo test" }),
+      first.book,
+    );
     expect(first.events[0]).toMatchObject({ runId: "r1:c1" });
     expect(second.events[0]).toMatchObject({ runId: "r1:c2" });
   });
@@ -269,7 +275,10 @@ describe("agent-terminal: CommandEvent adapter", () => {
 // A synthetic `<stage:...>` marker is an internal Stage_Machine frame, not
 // process output, so it must produce no terminal events at all (R10.3, R13.2).
 describe("agent-terminal: internal <stage:> frames never reach the terminal (Property 25)", () => {
-  function cmd(command: string, patch: Partial<AgentEvents.CommandEvent> = {}): AgentEvents.CommandEvent {
+  function cmd(
+    command: string,
+    patch: Partial<AgentEvents.CommandEvent> = {},
+  ): AgentEvents.CommandEvent {
     return {
       type: "command",
       seq: 1,

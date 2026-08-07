@@ -1,7 +1,7 @@
 // Feature: zoc-ai-agent-chat-overhaul, Property 10: Provider keys round-trip and never appear in diagnostics
 import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
 import fc from "fast-check";
-import { secureStore } from "../secure-store";
+import { SECRET_STORAGE_PREFIX, secureStore } from "../secure-store";
 import { loadProviders, saveProviders } from "../providers";
 
 const realLocalStorage = globalThis.localStorage;
@@ -21,6 +21,17 @@ function fakeStorage(): Storage {
 
 const keyName = (id: string): string => `provider.${id}.api_key`;
 
+/**
+ * Read the stored value back out of the browser-preview shadow tier.
+ *
+ * Property 10 is a *round-trip* property, so it needs the value. Task 26.3
+ * removed `secureStore.get` — the renderer has no read path any more (R14.2) —
+ * and `has` would reduce the round-trip to "something is there", which the
+ * property already asserts elsewhere. The prefix is imported so this stays
+ * pinned to the real namespace.
+ */
+const shadow = (key: string): string | null => localStorage.getItem(SECRET_STORAGE_PREFIX + key);
+
 describe("provider key round-trip (Property 10)", () => {
   beforeEach(() => {
     vi.stubGlobal("localStorage", fakeStorage());
@@ -36,12 +47,13 @@ describe("provider key round-trip (Property 10)", () => {
         fc.hexaString({ minLength: 16, maxLength: 48 }).map((s) => `sk-${s}`),
         async (providerId, key) => {
           await secureStore.set(keyName(providerId), key);
-          const readBack = await secureStore.get(keyName(providerId));
-          expect(readBack).toBe(key);
+          expect(shadow(keyName(providerId))).toBe(key);
+          expect(await secureStore.has(keyName(providerId))).toBe(true);
 
           // A different provider id has no key.
           const other = `${providerId}-other`;
-          expect(await secureStore.get(keyName(other))).toBeNull();
+          expect(shadow(keyName(other))).toBeNull();
+          expect(await secureStore.has(keyName(other))).toBe(false);
 
           // The key never lands in the persisted provider *config* — the shape
           // that is serialized into diagnostics/telemetry payloads.
@@ -50,7 +62,8 @@ describe("provider key round-trip (Property 10)", () => {
           expect(serialized.includes(key)).toBe(false);
 
           await secureStore.clear(keyName(providerId));
-          expect(await secureStore.get(keyName(providerId))).toBeNull();
+          expect(shadow(keyName(providerId))).toBeNull();
+          expect(await secureStore.has(keyName(providerId))).toBe(false);
         },
       ),
       { numRuns: 100 },

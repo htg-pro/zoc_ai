@@ -24,23 +24,15 @@ import { AlertTriangle, Check, Crosshair, Lightbulb, Loader2, Search, X } from "
 import type { AgentEvents } from "@zoc-studio/shared-types";
 
 import { TerminalPanes } from "./TerminalPanes";
-import {
-  isPaneAgentActive,
-  paneBadge,
-  type CompletionBadge,
-} from "./agent-terminal";
-import { terminalHeader } from "@/features/agent/terminal-header";
-import {
-  startRun,
-  type RunPhase as LifecyclePhase,
-  type RunRecord,
-} from "@/features/agent/run-lifecycle";
-import { isTerminal, type TrackedRun } from "@/features/agent/agent-runs";
+import { isPaneAgentActive, paneBadge, type CompletionBadge } from "./agent-terminal";
+import { terminalHeader, type TerminalHolder } from "@/lib/terminal-header";
+import { isTerminal, type TrackedRun } from "@/lib/agent-runs";
 import { AnnotatedOutput } from "./OutputParser";
 import { parseTerminalOutput } from "./output-parser";
 import { useAgentTerminal } from "./useAgentTerminal";
 import { leaves, type TerminalPane } from "@/lib/terminal-layout";
 import { activeWorkspaceRoot, useApp, type TerminalProfile } from "@/lib/store";
+import { useChatSurface } from "@/features/chat/store";
 import { requestReveal, revealPosition } from "@/lib/editor-actions";
 import { joinPath } from "@/lib/paths";
 import {
@@ -59,9 +51,7 @@ export interface AgentTerminalPanesProps {
   commandEvents: readonly AgentEvents.CommandEvent[];
 }
 
-export function AgentTerminalPanes({
-  commandEvents,
-}: AgentTerminalPanesProps): JSX.Element {
+export function AgentTerminalPanes({ commandEvents }: AgentTerminalPanesProps): JSX.Element {
   const layout = useApp((s) => s.terminalLayout);
   const focusedPaneId = useApp((s) => s.focusedPaneId);
   const profiles = useApp((s) => s.terminalProfiles);
@@ -80,14 +70,15 @@ export function AgentTerminalPanes({
     }
     return null;
   }, [commandEvents]);
-  const holderRecord = useMemo<RunRecord | null>(() => {
+  const holderRecord = useMemo<TerminalHolder | null>(() => {
     const run: TrackedRun | undefined = trackedRuns.find((r) => r.runId === activeCommandRunId);
     if (!run) return null;
-    // A run that already settled no longer holds the terminal.
+    // A run that already settled no longer holds the terminal. `isTerminal` covers the same four
+    // phases the header's own check did, so this is the whole settled decision — which is why the
+    // relocated projection asks the caller for it rather than re-deriving it from a phase union
+    // that only the deleted panel owns (task 25.1).
     if (isTerminal(run)) return null;
-    // Map the one tracked-only phase; the rest are valid lifecycle phases.
-    const phase: LifecyclePhase = run.phase === "initializing" ? "starting" : (run.phase as LifecyclePhase);
-    return { ...startRun({ runId: run.runId, mode: run.mode, startedAt: run.startedAt }), phase };
+    return { runId: run.runId, mode: run.mode, settled: false };
   }, [trackedRuns, activeCommandRunId]);
 
   const sessionIdOf = useCallback(
@@ -131,7 +122,8 @@ export function AgentTerminalPanes({
           profile={
             profiles.find(
               (profile) =>
-                profile.id === terminals.find((terminal) => terminal.id === pane.sessionId)?.profileId,
+                profile.id ===
+                terminals.find((terminal) => terminal.id === pane.sessionId)?.profileId,
             ) ?? profiles[0]
           }
           workspaceRoot={workspaceRoot}
@@ -147,7 +139,7 @@ interface AgentTerminalPaneSurfaceProps {
   agentActive: boolean;
   followAgent: boolean;
   onToggleFollow: () => void;
-  holder: RunRecord | null;
+  holder: TerminalHolder | null;
   profile: TerminalProfile | undefined;
   workspaceRoot: string | null;
 }
@@ -189,12 +181,14 @@ function AgentTerminalPaneSurface({
   const insights = useMemo(() => {
     const lines = parseTerminalOutput(output.slice(-16 * 1024)).filter(
       (line) =>
-        line.annotations.length > 0 ||
-        (line.text.includes("\r") && /\d+\s*%/.test(line.text)),
+        line.annotations.length > 0 || (line.text.includes("\r") && /\d+\s*%/.test(line.text)),
     );
     return {
       count: lines.length,
-      text: lines.slice(-12).map((line) => line.text).join("\n"),
+      text: lines
+        .slice(-12)
+        .map((line) => line.text)
+        .join("\n"),
     };
   }, [output]);
 
@@ -240,8 +234,10 @@ function AgentTerminalPaneSurface({
     },
     onFixWithAgent: (text: string): void => {
       const state = useApp.getState();
-      state.setInput(`Fix this terminal error:\n\n${text}`);
-      state.setAgentMode("agent");
+      // The Chat_Surface's draft, not the app store's `input`: since 25.6 the mounted composer reads
+      // the former, so writing the latter opened the panel onto an empty box.
+      useChatSurface.getState().setDraft(`Fix this terminal error:\n\n${text}`);
+      useChatSurface.getState().setConversationMode("agent");
       if (!state.layout.rightPanelOpen) state.toggleRight();
     },
   };
@@ -393,20 +389,14 @@ function CompletionBadgeView({ badge }: { badge: CompletionBadge }): JSX.Element
       );
     case "ok":
       return (
-        <span
-          data-badge="ok"
-          className="flex items-center gap-1 text-[10px] text-emerald-500"
-        >
+        <span data-badge="ok" className="flex items-center gap-1 text-[10px] text-emerald-500">
           <Check className="h-3 w-3" />
           exit 0
         </span>
       );
     case "fail":
       return (
-        <span
-          data-badge="fail"
-          className="flex items-center gap-1 text-[10px] text-destructive"
-        >
+        <span data-badge="fail" className="flex items-center gap-1 text-[10px] text-destructive">
           <X className="h-3 w-3" />
           exit {badge.exitCode}
         </span>

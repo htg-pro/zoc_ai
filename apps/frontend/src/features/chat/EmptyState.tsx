@@ -1,6 +1,8 @@
 /**
  * The empty state — zoc-agent-chat-rebuild R13.2, R13.3, R18.1, task 22.8.
  *
+ * Feature: zoc-agent-chat-rebuild, task 22.8 (R13.2, R13.3, R18.1).
+ *
  * What a Session with no messages shows: the mark at 40 px, one line naming what the panel is for, and
  * three starting points derived from the open workspace (`panel-state.ts`).
  *
@@ -36,18 +38,15 @@ export interface EmptyStateProps {
   className?: string;
 }
 
-export function EmptyState({
-  workspaceRoot,
-  model,
-  onPick,
-  onAddKey,
-  className,
-}: EmptyStateProps) {
+export function EmptyState({ workspaceRoot, model, onPick, onAddKey, className }: EmptyStateProps) {
   const blocked = model !== null && !isSubmittable(model);
 
   return (
     <div
-      className={cn("flex min-h-0 flex-1 flex-col items-center justify-center gap-3 px-6", className)}
+      className={cn(
+        "flex min-h-0 flex-1 flex-col items-center justify-center gap-3 px-6",
+        className,
+      )}
       data-zoc-empty-state=""
     >
       <ZocMark size={40} state="idle" title="Zoc AI" />

@@ -2,6 +2,8 @@
  * The chat-local store — zoc-agent-chat-rebuild task 15.1 (R2.3, R2.4, R10.3, R16.4,
  * R20.7, R32.1).
  *
+ * Feature: zoc-agent-chat-rebuild, task 15.1 (R2.3, R2.4, R10.3, R16.4, R20.7, R32.1).
+ *
  * The task names no guard, and most of this store is a setter that needs none. What is
  * tested here is the part with invariants: the three-level decision map, whose whole reason
  * for existing is that a shallower shape loses data; the monotone `seq` floor, where a

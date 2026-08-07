@@ -2,6 +2,8 @@
  * Agent_Runtime run store, resume ring, and Slot manager — zoc-agent-chat-rebuild
  * R16.3, R25.1, R25.2, R25.7.
  *
+ * Feature: zoc-agent-chat-rebuild, R16.3, R25.1, R25.2, R25.7.
+ *
  * Three things live here because all three are per-Run bookkeeping the HTTP layer
  * reads and the agent loop writes, and splitting them across files would put the
  * Slot budget in one module and the thing it counts in another:
@@ -376,6 +378,45 @@ export class RunStore {
     return this.list().filter((run) => run.sessionId === sessionId && !run.finished);
   }
 
+  /** The sub-agent Runs one level below `runId` (R25.6). */
+  childrenOf(runId: string): readonly RunRecord[] {
+    return this.list().filter((run) => run.parentRunId === runId);
+  }
+
+  /**
+   * Every sub-agent Run beneath `runId`, shallowest level first (R25.6).
+   *
+   * Breadth-first over a `visited` set rather than a recursion, because
+   * `parentRunId` is a field a caller supplies and a cycle in it is therefore
+   * reachable input: a plain recursion would hang the runtime instead of refusing
+   * the malformed graph. A Run naming *itself* as parent is the one-node case of
+   * the same thing and is excluded by seeding the set with `runId`.
+   *
+   * `runId` is never in the result. The caller cancels the parent itself, and
+   * including it here would make a cascade indistinguishable from a self-cancel —
+   * which matters because `cancel` is idempotent and would then double-report.
+   *
+   * Scans the table per level rather than maintaining a parent index. The table is
+   * capped at {@link MAX_RETAINED_RUNS}, a cascade runs once per user-visible stop,
+   * and an index is a second structure that `delete` and `prune` would both have to
+   * keep honest — a correctness liability for no measurable gain at n ≤ 64.
+   */
+  descendantsOf(runId: string): readonly RunRecord[] {
+    const found: RunRecord[] = [];
+    const visited = new Set<string>([runId]);
+    const frontier: string[] = [runId];
+    while (frontier.length > 0) {
+      const parentId = frontier.shift() as string;
+      for (const child of this.childrenOf(parentId)) {
+        if (visited.has(child.runId)) continue;
+        visited.add(child.runId);
+        found.push(child);
+        frontier.push(child.runId);
+      }
+    }
+    return found;
+  }
+
   delete(runId: string): boolean {
     return this.runs.delete(runId);
   }
@@ -618,5 +659,28 @@ export class PathMutex {
       // entry per file it has ever touched.
       if (this.chains.get(key) === chain) this.chains.delete(key);
     }
+  }
+
+  /**
+   * Run `work` holding every path in `paths` at once.
+   *
+   * An apply is a *batch* — up to 64 files in one `workspace_apply_hunks` call —
+   * and locking them one at a time around each write would leave the batch
+   * interleavable, which is the thing R25.7 forbids. Held together, two Runs
+   * touching a shared file are ordered whole-batch against whole-batch, and two
+   * touching disjoint files never meet.
+   *
+   * **Deadlock-free because the order is global, not per-caller.** Keys are
+   * deduplicated and sorted before the first acquisition, so every caller in the
+   * process takes contended locks in the same sequence and the cycle a deadlock
+   * needs cannot form. That is the whole reason the sort is here rather than at
+   * the call site, where one caller passing paths in plan order would be enough
+   * to hang two Runs against each other.
+   */
+  async runAll<T>(paths: readonly string[], work: () => Promise<T>): Promise<T> {
+    const keys = [...new Set(paths.map(PathMutex.normalizeKey))].sort();
+    const acquire = (index: number): Promise<T> =>
+      index === keys.length ? work() : this.run(keys[index] as string, () => acquire(index + 1));
+    return acquire(0);
   }
 }

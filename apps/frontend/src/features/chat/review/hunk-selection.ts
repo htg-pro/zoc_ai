@@ -1,6 +1,8 @@
 /**
  * Hunk selection and staleness — zoc-agent-chat-rebuild R10.2, R10.3, R10.8, R10.9, task 18.1.
  *
+ * Feature: zoc-agent-chat-rebuild, task 18.1 (R10.2, R10.3, R10.8, R10.9).
+ *
  * What apply sends, and what a file changing on disk does to it. Deliberately a module of pure
  * functions: every claim R10.2, R10.3, R10.8, and R10.9 make is arithmetic over a plan, its diffs, and
  * the decision map, and none of it needs a rendered tree — which is what lets Properties 20, 21, and 22

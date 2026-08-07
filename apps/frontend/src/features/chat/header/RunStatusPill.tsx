@@ -1,6 +1,8 @@
 /**
  * The run status pill — zoc-agent-chat-rebuild R13.9, R16.1, R21.7, task 22.2.
  *
+ * Feature: zoc-agent-chat-rebuild, task 22.2 (R13.9, R16.1, R21.7).
+ *
  * State, elapsed time, the live Token_Rate while a Run streams, and a cancel affordance while one is active.
  * Three coordinated signals rather than a colour: a text label, a shape, and a tint, which is R21.7 satisfied
  * by construction rather than by audit.
@@ -70,11 +72,7 @@ const LOOKS: Readonly<Record<RunPillState, PillLook>> = {
 };
 
 /** States during which a Run can still be cancelled. */
-const ACTIVE: ReadonlySet<RunPillState> = new Set([
-  "queued",
-  "running",
-  "awaiting-approval",
-]);
+const ACTIVE: ReadonlySet<RunPillState> = new Set(["queued", "running", "awaiting-approval"]);
 
 export interface RunStatusPillProps {
   state: RunPillState;
@@ -103,9 +101,16 @@ export function RunStatusPill({
     <div
       className={cn("flex shrink-0 items-center gap-1.5", className)}
       data-zoc-run-pill={state}
-      // One live region for the whole pill, so a state change is announced as "Running, 0:14" rather than as
-      // three separate updates.
-      aria-live="polite"
+      // Deliberately NOT a live region, and this is the second attempt at it (task 23.1).
+      //
+      // The pill used to carry `aria-live="polite"` for the whole group, on the reasoning that a state change
+      // should be announced as "Running, 0:14" rather than as three separate updates. That reasoning missed
+      // that `elapsedMs` is re-rendered every second by the panel's interval — so the region mutated on every
+      // tick and a screen reader read the pill out once a second for the length of the Run.
+      //
+      // The lifecycle announcements R21.2 actually asks for now live in `RunAnnouncer`, inside the transcript
+      // where the requirement puts them, and they fire on *transitions* rather than on renders. A second live
+      // region here would announce the same transition twice.
       style={{ fontSize: "var(--zoc-text-label)" }}
     >
       <look.Glyph

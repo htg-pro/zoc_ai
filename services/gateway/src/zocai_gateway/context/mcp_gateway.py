@@ -209,9 +209,7 @@ GitHubInvoker = Callable[[str, Mapping[str, str]], Mapping[str, object]]
 # HTML cleaning
 # --------------------------------------------------------------------------- #
 
-_SCRIPT_STYLE_RE = re.compile(
-    r"<(script|style)\b[^>]*>.*?</\1>", re.IGNORECASE | re.DOTALL
-)
+_SCRIPT_STYLE_RE = re.compile(r"<(script|style)\b[^>]*>.*?</\1>", re.IGNORECASE | re.DOTALL)
 _TAG_RE = re.compile(r"<[^>]+>")
 _WHITESPACE_RE = re.compile(r"\s+")
 
@@ -346,9 +344,7 @@ class MCPGateway:
 
     # -- mcp::github ------------------------------------------------------
 
-    def github(
-        self, operation: str, params: Mapping[str, str] | None = None
-    ) -> GitHubOutcome:
+    def github(self, operation: str, params: Mapping[str, str] | None = None) -> GitHubOutcome:
         """Run an ``mcp::github`` tool call.
 
         Delegates ``operation``/``params`` to the injected GitHub backend and
@@ -394,28 +390,21 @@ class _SubprocessWebSearchWorker:
         try:
             stdout, stderr = self._process.communicate(timeout=timeout)
         except subprocess.TimeoutExpired as exc:
-            raise WorkerTimeout(
-                f"web search worker exceeded the {timeout:g}s timeout"
-            ) from exc
+            raise WorkerTimeout(f"web search worker exceeded the {timeout:g}s timeout") from exc
 
         if self._process.returncode != 0:
             detail = (stderr or "").strip()
             raise WorkerFailure(
-                f"web search worker exited with code "
-                f"{self._process.returncode}: {detail}"
+                f"web search worker exited with code " f"{self._process.returncode}: {detail}"
             )
 
         try:
             payload = json.loads(stdout)
         except json.JSONDecodeError as exc:
-            raise WorkerFailure(
-                f"web search worker emitted invalid JSON: {exc}"
-            ) from exc
+            raise WorkerFailure(f"web search worker emitted invalid JSON: {exc}") from exc
 
         if not isinstance(payload, list):
-            raise WorkerFailure(
-                "web search worker JSON must be a list of documents"
-            )
+            raise WorkerFailure("web search worker JSON must be a list of documents")
 
         documents: list[RawDocument] = []
         for entry in payload:

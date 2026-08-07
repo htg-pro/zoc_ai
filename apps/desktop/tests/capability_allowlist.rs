@@ -15,14 +15,21 @@ use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
 /// Commands that are registered in Rust but must **not** be reachable from the
-/// webview.
+/// webview. Both return a provider key in plaintext (R14.2).
 ///
-/// `runtime_secret_get` returns a provider key to a caller holding the
-/// per-launch runtime token. The Agent_Runtime is a separate OS process and
-/// reaches Desktop_Core over the loopback bridge, never over Tauri IPC, so it
-/// has no need of an IPC grant — and granting one would put a key-returning
-/// command one renderer bug away from being called (R14.2).
-const RENDERER_DENIED: &[&str] = &["runtime_secret_get"];
+/// `runtime_secret_get` serves a caller holding the per-launch runtime token.
+/// The Agent_Runtime is a separate OS process and reaches Desktop_Core over the
+/// loopback bridge, never over Tauri IPC, so it has no need of an IPC grant —
+/// and granting one would put a key-returning command one renderer bug away
+/// from being called. It has been denied since it was written.
+///
+/// `secret_get` was granted until task 26.3, when the last three renderer
+/// callers were repointed to `secret_has` or to services that resolve their own
+/// credential. Both halves of that step were required: `secureStore.get`'s
+/// vault-unavailable path fell through to the `localStorage` shadow, so
+/// revoking this grant *first* would have started reading plaintext out of
+/// renderer-accessible storage while this file looked correct.
+const RENDERER_DENIED: &[&str] = &["runtime_secret_get", "secret_get"];
 
 fn manifest_dir() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -77,11 +84,7 @@ fn manifest_commands() -> BTreeSet<String> {
 /// Plugin permissions carry a `plugin:` prefix and are skipped: this set is
 /// about the application's own commands.
 fn capability_allowed_commands() -> BTreeSet<String> {
-    let source = read(
-        &manifest_dir()
-            .join("capabilities")
-            .join("default.json"),
-    );
+    let source = read(&manifest_dir().join("capabilities").join("default.json"));
     let capability: serde_json::Value =
         serde_json::from_str(&source).expect("capabilities/default.json is valid JSON");
     let permissions = capability["permissions"]
@@ -153,10 +156,8 @@ fn every_declared_command_is_either_granted_or_deliberately_denied() {
 }
 
 #[test]
-fn the_runtime_facing_secret_command_is_not_reachable_from_the_renderer() {
-    // R14.2. Task 26.2 extends this to `secret_get` once the Legacy_Panel's
-    // reader is gone; until then `secret_get` is granted on purpose and this
-    // test asserts only the command that was never meant to be reachable.
+fn no_key_returning_command_is_reachable_from_the_renderer() {
+    // R14.2, closed structurally at task 26.3.
     let granted = capability_allowed_commands();
     for command in RENDERER_DENIED {
         assert!(
@@ -165,11 +166,37 @@ fn the_runtime_facing_secret_command_is_not_reachable_from_the_renderer() {
              must stay reachable only over the loopback bridge"
         );
     }
-    assert!(
-        manifest_commands().contains("runtime_secret_get"),
-        "runtime_secret_get must stay declared in build.rs — dropping it from the \
-         manifest removes it from the handler entirely, which is a different change"
-    );
+
+    // Belt and braces: `capability_allowed_commands` normalises kebab-case to
+    // snake_case, so a re-added `allow-secret-get` is caught by the loop above.
+    // This catches the other spelling — a raw `secret_get` identifier — which
+    // would slip past the `allow-` prefix filter and never reach the set.
+    let source = read(&manifest_dir().join("capabilities").join("default.json"));
+    let capability: serde_json::Value =
+        serde_json::from_str(&source).expect("capabilities/default.json is valid JSON");
+    for entry in capability["permissions"]
+        .as_array()
+        .expect("the capability has a permissions array")
+        .iter()
+        .filter_map(|e| e.as_str())
+    {
+        let normalised = entry.replace('-', "_");
+        assert!(
+            !normalised.contains("secret_get"),
+            "capabilities/default.json grants {entry:?}, which reaches a \
+             key-returning command (R14.2)"
+        );
+    }
+
+    let declared = manifest_commands();
+    for command in RENDERER_DENIED {
+        assert!(
+            declared.contains(*command),
+            "{command} must stay declared in build.rs — dropping it from the manifest \
+             removes it from the handler entirely, which is a different change and \
+             would make this test pass vacuously"
+        );
+    }
 }
 
 #[test]

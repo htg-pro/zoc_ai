@@ -32,12 +32,7 @@ import type { ServerName } from "./lsp-registry";
  * Monaco registers definition/reference/rename/hover providers for them.
  */
 const SERVER_LANGUAGES: Readonly<Record<ServerName, string[]>> = {
-  "typescript-language-server": [
-    "typescript",
-    "typescriptreact",
-    "javascript",
-    "javascriptreact",
-  ],
+  "typescript-language-server": ["typescript", "typescriptreact", "javascript", "javascriptreact"],
   pyright: ["python"],
   "rust-analyzer": ["rust"],
 };
@@ -88,27 +83,18 @@ export interface LspClientDeps {
    * language client so it runs after the client parses the wire payload into a
    * typed `Diagnostic[]` and a `Uri`, without disturbing the native squiggles.
    */
-  onPublishDiagnostics?: (
-    server: ServerName,
-    uri: string,
-    diags: readonly LspDiagnostic[],
-  ) => void;
+  onPublishDiagnostics?: (server: ServerName, uri: string, diags: readonly LspDiagnostic[]) => void;
 }
 
 async function defaultCreateLanguageClient(args: {
   server: ServerName;
   socket: LspSocket;
-  onPublishDiagnostics?: (
-    server: ServerName,
-    uri: string,
-    diags: readonly LspDiagnostic[],
-  ) => void;
+  onPublishDiagnostics?: (server: ServerName, uri: string, diags: readonly LspDiagnostic[]) => void;
 }): Promise<ManagedLanguageClient> {
   const { server, socket, onPublishDiagnostics } = args;
   const { MonacoLanguageClient } = await import("monaco-languageclient");
-  const { toSocket, WebSocketMessageReader, WebSocketMessageWriter } = await import(
-    "vscode-ws-jsonrpc"
-  );
+  const { toSocket, WebSocketMessageReader, WebSocketMessageWriter } =
+    await import("vscode-ws-jsonrpc");
   const rpc = toSocket(socket as unknown as WebSocket);
   const reader = new WebSocketMessageReader(rpc);
   const writer = new WebSocketMessageWriter(rpc);
@@ -144,11 +130,7 @@ interface DiagnosticsMiddleware {
  */
 export function createDiagnosticsMiddleware(
   server: ServerName,
-  onPublishDiagnostics?: (
-    server: ServerName,
-    uri: string,
-    diags: readonly LspDiagnostic[],
-  ) => void,
+  onPublishDiagnostics?: (server: ServerName, uri: string, diags: readonly LspDiagnostic[]) => void,
 ): DiagnosticsMiddleware {
   return {
     handleDiagnostics(uri, diagnostics, next) {

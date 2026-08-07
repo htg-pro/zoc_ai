@@ -1,6 +1,8 @@
 /**
  * The approval broker — zoc-agent-chat-rebuild R11.7, R11.9, R32.9.
  *
+ * Feature: zoc-agent-chat-rebuild, R11.7, R11.9, R32.9.
+ *
  * Holds the pending approval requests a Run is blocked on, so the HTTP route can
  * resolve one from outside the tool call that opened it. The deferred lives here
  * rather than in the route because the route is stateless and the Run is not.

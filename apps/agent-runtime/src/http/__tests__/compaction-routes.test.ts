@@ -1,6 +1,8 @@
 /**
  * The compact-now route over real HTTP — zoc-agent-chat-rebuild R34.4, R34.5.
  *
+ * Feature: zoc-agent-chat-rebuild, R34.4, R34.5.
+ *
  * Task 9.5's manual half. Exercised through the actual router and a real socket
  * rather than by calling the handler, because what task 9.5 promises here is a set
  * of HTTP facts: which status a fold answers with, and that the three refusals are

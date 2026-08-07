@@ -1,6 +1,8 @@
 /**
  * Agent_Runtime request validation gate — zoc-agent-chat-rebuild R7.5.
  *
+ * Feature: zoc-agent-chat-rebuild, R7.5.
+ *
  * Every `/v1/*` body passes through one `zod` schema and one converter. A
  * schema failure becomes HTTP 422 with all four envelope fields populated —
  * `code`, `message`, `details`, `retryable` — because a caller that receives a

@@ -1,6 +1,8 @@
 /**
  * The usage line's figures — zoc-agent-chat-rebuild R13.10, R27.1, task 16.3.
  *
+ * Feature: zoc-agent-chat-rebuild, task 16.3 (R13.10, R27.1).
+ *
  * A `UsagePart` reduced to the ordered, formatted cells one muted line shows. Pure, because every
  * decision here is arithmetic that a rendering test cannot reach cheaply: which figures appear at
  * all, how a token count abbreviates, and what happens to a rate the runtime could not measure.

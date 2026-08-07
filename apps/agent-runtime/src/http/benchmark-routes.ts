@@ -1,6 +1,8 @@
 /**
  * The per-model benchmark proxy — zoc-agent-chat-rebuild R13.11, R13.12, 9.9.
  *
+ * Feature: zoc-agent-chat-rebuild, task 9.9 (R13.11, R13.12).
+ *
  * ```
  * GET /v1/models/:id/benchmark
  *   → 200 { modelId, runCount, meanTokensPerSecond }

@@ -93,9 +93,7 @@ def test_file_budget_pause_fires_exactly_at_ceiling(n: int) -> None:
                 # Once paused, the gate raises rather than silently running; the
                 # pause has already fired, so we stop attempting further ops.
                 break
-            succeeded = orch.write_file(
-                PlannedChange(path=f"f{i}.txt", content=str(i))
-            )
+            succeeded = orch.write_file(PlannedChange(path=f"f{i}.txt", content=str(i)))
             attempts.append((i, was_paused, succeeded))
 
         expected_success = min(n, _FILE_CEILING)
@@ -104,9 +102,7 @@ def test_file_budget_pause_fires_exactly_at_ceiling(n: int) -> None:
         for index, was_paused, succeeded in attempts[:expected_success]:
             assert was_paused is False
             assert succeeded is True
-            assert (workspace / f"f{index}.txt").read_text(encoding="utf-8") == str(
-                index
-            )
+            assert (workspace / f"f{index}.txt").read_text(encoding="utf-8") == str(index)
 
         # The cumulative counter equals exactly the number of ops performed.
         assert orch.budget.file_iterations == expected_success

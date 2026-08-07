@@ -113,11 +113,14 @@ describe("reduceSidecarWait (Property 5)", () => {
   });
 
   it("a ready phase enables continue", () => {
-    const state = reduceSidecarWait({ kind: "waiting", reason: "x", sinceMs: 0 }, {
-      kind: "phase",
-      phase: "ready",
-      nowMs: 100,
-    });
+    const state = reduceSidecarWait(
+      { kind: "waiting", reason: "x", sinceMs: 0 },
+      {
+        kind: "phase",
+        phase: "ready",
+        nowMs: 100,
+      },
+    );
     expect(state.kind).toBe("ready");
   });
 });

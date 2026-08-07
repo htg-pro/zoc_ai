@@ -25,14 +25,11 @@ const KIND_COLOR: Record<SymbolKind, string> = {
 export function OutlinePanel() {
   const file = useApp((s) => {
     const active = s.activeFile;
-    return active ? s.openFiles.find((f) => f.path === active) ?? null : null;
+    return active ? (s.openFiles.find((f) => f.path === active) ?? null) : null;
   });
   const [query, setQuery] = useState("");
 
-  const symbols = useMemo(
-    () => (file ? extractOutline(file.content, file.language) : []),
-    [file],
-  );
+  const symbols = useMemo(() => (file ? extractOutline(file.content, file.language) : []), [file]);
   const filtered = useMemo(() => filterOutline(symbols, query), [symbols, query]);
 
   if (!file) {

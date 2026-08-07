@@ -6,13 +6,7 @@
  */
 import { describe, expect, it } from "vitest";
 
-import {
-  ErrorCodes,
-  formatDiagnostics,
-  formatUserError,
-  isAbort,
-  normalizeError,
-} from "../errors";
+import { ErrorCodes, formatDiagnostics, formatUserError, isAbort, normalizeError } from "../errors";
 
 describe("normalizeError", () => {
   it("keeps a real Error's message", () => {
@@ -58,14 +52,21 @@ describe("normalizeError", () => {
 
   it("unwraps an envelope nested under FastAPI's `detail`", () => {
     const result = normalizeError({
-      detail: { code: "run_not_found", message: "The agent run ended before it could be attached. Please retry.", retryable: true },
+      detail: {
+        code: "run_not_found",
+        message: "The agent run ended before it could be attached. Please retry.",
+        retryable: true,
+      },
     });
     expect(result.code).toBe(ErrorCodes.runNotFound);
     expect(result.retryable).toBe(true);
   });
 
   it("recovers an envelope serialised into an Error message", () => {
-    const raw = JSON.stringify({ code: "run_failed", message: "The run stopped because of an error." });
+    const raw = JSON.stringify({
+      code: "run_failed",
+      message: "The run stopped because of an error.",
+    });
     const result = normalizeError(new Error(raw));
     expect(result.code).toBe(ErrorCodes.runFailed);
     expect(result.message).toBe("The run stopped because of an error.");

@@ -34,9 +34,7 @@ from zocai_migration import (
     git_available,
 )
 
-pytestmark = pytest.mark.skipif(
-    not git_available(), reason="git executable not available on PATH"
-)
+pytestmark = pytest.mark.skipif(not git_available(), reason="git executable not available on PATH")
 
 
 # ---------------------------------------------------------------------------
@@ -70,9 +68,7 @@ class RealFileSystem:
 class RecordingGitVersionControl(GitVersionControl):
     """Real git adapter that also records create/commit ordering events."""
 
-    def __init__(
-        self, repo_dir: Path, log: list[tuple[str, str]], **kwargs: object
-    ) -> None:
+    def __init__(self, repo_dir: Path, log: list[tuple[str, str]], **kwargs: object) -> None:
         super().__init__(repo_dir, **kwargs)  # type: ignore[arg-type]
         self._log = log
 

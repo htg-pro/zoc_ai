@@ -124,9 +124,7 @@ def test_search_respects_threshold_and_cap() -> None:
     permissive = index.search("alpha", candidate_paths=list(paths), threshold=0.7)
     assert len(permissive) == 10
 
-    capped = index.search(
-        "alpha", candidate_paths=list(paths), threshold=0.7, max_fragments=3
-    )
+    capped = index.search("alpha", candidate_paths=list(paths), threshold=0.7, max_fragments=3)
     assert len(capped) == 3
 
     strict = index.search("zulu", candidate_paths=list(paths), threshold=0.7)

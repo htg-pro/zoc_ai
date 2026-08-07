@@ -27,9 +27,7 @@ const NOW = Date.parse("2050-06-15T12:00:00.000Z");
 
 // An arbitrary subset of the session ids to use as the pinned set.
 const arbWithPinned = arbSessionsUniqueIds.chain((sessions) =>
-  fc
-    .subarray(sessions.map((s) => s.id))
-    .map((ids) => ({ sessions, pinned: new Set(ids) })),
+  fc.subarray(sessions.map((s) => s.id)).map((ids) => ({ sessions, pinned: new Set(ids) })),
 );
 
 const FILTERS: SessionFilter[] = ["all", "active", "pinned", "archived"];
@@ -48,8 +46,7 @@ describe("session-query", () => {
           expect(bucket.some((s) => pinned.has(s.id))).toBe(false);
         }
         // Totality: every session lands in exactly one bucket.
-        const total =
-          g.pinned.length + g.today.length + g.yesterday.length + g.earlier.length;
+        const total = g.pinned.length + g.today.length + g.yesterday.length + g.earlier.length;
         expect(total).toBe(sessions.length);
 
         // Every non-pinned session appears in exactly one recency bucket.
@@ -67,9 +64,7 @@ describe("session-query", () => {
       fc.property(arbWithPinned, ({ sessions, pinned }) => {
         const counts = tabCounts(sessions, pinned);
         for (const f of FILTERS) {
-          const expected = sessions.filter((s) =>
-            matchesFilter(s, f, pinned),
-          ).length;
+          const expected = sessions.filter((s) => matchesFilter(s, f, pinned)).length;
           expect(counts[f]).toBe(expected);
           expect(Number.isInteger(counts[f])).toBe(true);
           expect(counts[f]).toBeGreaterThanOrEqual(0);
@@ -80,9 +75,7 @@ describe("session-query", () => {
           expect(Number.isInteger(v)).toBe(true);
           expect(v).toBeGreaterThanOrEqual(0);
         }
-        expect(stats.activeSessions).toBe(
-          sessions.filter((s) => s.status === "active").length,
-        );
+        expect(stats.activeSessions).toBe(sessions.filter((s) => s.status === "active").length);
         expect(stats.modelsUsed).toBeLessThanOrEqual(sessions.length);
       }),
       { numRuns: 200 },
@@ -117,8 +110,7 @@ describe("session-query", () => {
           const shownIds = new Set(shown.map((s) => s.id));
 
           for (const s of sessions) {
-            const expected =
-              matchesFilter(s, filter, pinned) && matchesSearch(s, query);
+            const expected = matchesFilter(s, filter, pinned) && matchesSearch(s, query);
             expect(shownIds.has(s.id)).toBe(expected);
           }
         },
@@ -129,24 +121,18 @@ describe("session-query", () => {
 
   it("Property 4: sort is deterministic, idempotent, and a permutation", () => {
     fc.assert(
-      fc.property(
-        arbSessionsUniqueIds,
-        fc.constantFrom(...SORTS),
-        (sessions, sort) => {
-          const once = sortSessions(sessions, sort);
-          const again = sortSessions(sessions, sort);
-          const twice = sortSessions(once, sort);
+      fc.property(arbSessionsUniqueIds, fc.constantFrom(...SORTS), (sessions, sort) => {
+        const once = sortSessions(sessions, sort);
+        const again = sortSessions(sessions, sort);
+        const twice = sortSessions(once, sort);
 
-          // Deterministic + idempotent.
-          expect(once.map((s) => s.id)).toEqual(again.map((s) => s.id));
-          expect(twice.map((s) => s.id)).toEqual(once.map((s) => s.id));
+        // Deterministic + idempotent.
+        expect(once.map((s) => s.id)).toEqual(again.map((s) => s.id));
+        expect(twice.map((s) => s.id)).toEqual(once.map((s) => s.id));
 
-          // Permutation: same multiset of ids.
-          expect(once.map((s) => s.id).sort()).toEqual(
-            sessions.map((s) => s.id).sort(),
-          );
-        },
-      ),
+        // Permutation: same multiset of ids.
+        expect(once.map((s) => s.id).sort()).toEqual(sessions.map((s) => s.id).sort());
+      }),
       { numRuns: 200 },
     );
   });
@@ -213,20 +199,14 @@ describe("session-query — Property 8: day-bucketing consistent with display ti
 
   it("two timestamps within the same local day share an index", () => {
     fc.assert(
-      fc.property(
-        arbDayIndex,
-        arbTzOffset,
-        arbWithinDay,
-        arbWithinDay,
-        (day, off, a, b) => {
-          const iso1 = isoForLocalDay(day, off, a);
-          const iso2 = isoForLocalDay(day, off, b);
-          // Both land on the intended local day, hence share an index.
-          expect(localDayIndex(iso1, off)).toBe(day);
-          expect(localDayIndex(iso2, off)).toBe(day);
-          expect(localDayIndex(iso1, off)).toBe(localDayIndex(iso2, off));
-        },
-      ),
+      fc.property(arbDayIndex, arbTzOffset, arbWithinDay, arbWithinDay, (day, off, a, b) => {
+        const iso1 = isoForLocalDay(day, off, a);
+        const iso2 = isoForLocalDay(day, off, b);
+        // Both land on the intended local day, hence share an index.
+        expect(localDayIndex(iso1, off)).toBe(day);
+        expect(localDayIndex(iso2, off)).toBe(day);
+        expect(localDayIndex(iso1, off)).toBe(localDayIndex(iso2, off));
+      }),
       { numRuns: 300 },
     );
   });
@@ -246,9 +226,7 @@ describe("session-query — Property 8: day-bucketing consistent with display ti
     fc.assert(
       fc.property(arbDayIndex, arbTzOffset, (day, off) => {
         const midnight = isoForLocalDay(day, off, 0);
-        const justBefore = new Date(
-          day * MS_PER_DAY + off * 60_000 - 1,
-        ).toISOString();
+        const justBefore = new Date(day * MS_PER_DAY + off * 60_000 - 1).toISOString();
         expect(localDayIndex(midnight, off)).toBe(day);
         expect(localDayIndex(justBefore, off)).toBe(day - 1);
       }),
@@ -278,9 +256,7 @@ describe("session-query — Property 8: day-bucketing consistent with display ti
         }
 
         // The three labeled buckets partition the non-pinned sessions.
-        expect(g.today.length + g.yesterday.length + g.earlier.length).toBe(
-          nonPinned.length,
-        );
+        expect(g.today.length + g.yesterday.length + g.earlier.length).toBe(nonPinned.length);
       }),
       { numRuns: 300 },
     );

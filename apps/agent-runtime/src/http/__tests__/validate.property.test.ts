@@ -2,6 +2,8 @@
  * Property 5: Schema-invalid payloads yield a complete error envelope.
  * Validates R7.5 (and the R9.8 invariants the envelope carries).
  *
+ * Feature: zoc-agent-chat-rebuild, Property 5 (R7.5, R9.8).
+ *
  * "Complete" is the load-bearing word: all four fields present, `retryable`
  * decided rather than absent, `details` bounded, and — the assertion with teeth
  * — `message` free of anything that could have come out of the rejected body. A

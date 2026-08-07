@@ -1,6 +1,8 @@
 /**
  * Admission properties — zoc-agent-chat-rebuild.
  *
+ * Feature: zoc-agent-chat-rebuild, task 3.4 (R3.4, R3.5, R3.6).
+ *
  * Property 10: Only the launch token is admitted    (validates R3.4, R3.5)
  * Property 11: Only loopback peers are admitted     (validates R3.6)
  *

@@ -34,8 +34,7 @@ describe("lsp-status formatter", () => {
         const view = formatLspStatus(id, state);
         expect(view.label.length).toBeGreaterThan(0);
         expect(view.state).toBe(state);
-        const expectedTone =
-          state === "connected" ? "ok" : state === "error" ? "error" : "busy";
+        const expectedTone = state === "connected" ? "ok" : state === "error" ? "error" : "busy";
         expect(view.tone).toBe(expectedTone);
       }),
       { numRuns: 100 },

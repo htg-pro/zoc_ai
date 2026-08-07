@@ -37,18 +37,18 @@ async def run_test():
         # Reload button
         elem = page.locator('[id="reload-button"]')
         await elem.click(timeout=10000)
-        
+
         # -> Click the 'Reload' button on the browser error page to retry loading the application and then check whether the Zoc Studio UI (e.g., 'Search files' input or chat composer) appears.
         # Reload button
         elem = page.locator('[id="reload-button"]')
         await elem.click(timeout=10000)
-        
+
         # --> Assertions to verify final state
         # Assert: Verify the matching file is displayed in the editor
         assert False, "Expected: Verify the matching file is displayed in the editor (could not be verified on the page)"
         # Assert: Verify the search results remain visible
         assert False, "Expected: Verify the search results remain visible (could not be verified on the page)"
-        
+
         # --> Test blocked by environment/access constraints during agent run
         # Reason: TEST BLOCKED The frontend application could not be reached — the browser shows an ERR_EMPTY_RESPONSE and the SPA never loaded. Observations: - The browser displays 'This page isn’t working' with 'ERR_EMPTY_RESPONSE' and a single 'Reload' button. - Attempts to reload the page (clicked Reload twice and waited multiple times) did not load any application UI or reveal the file search/composer/edito...
         raise AssertionError("Test blocked during agent run: " + "TEST BLOCKED The frontend application could not be reached \u2014 the browser shows an ERR_EMPTY_RESPONSE and the SPA never loaded. Observations: - The browser displays 'This page isn\u2019t working' with 'ERR_EMPTY_RESPONSE' and a single 'Reload' button. - Attempts to reload the page (clicked Reload twice and waited multiple times) did not load any application UI or reveal the file search/composer/edito..." + " — the exported script cannot reproduce a PASS in this environment.")
@@ -63,4 +63,3 @@ async def run_test():
             await pw.stop()
 
 asyncio.run(run_test())
-    

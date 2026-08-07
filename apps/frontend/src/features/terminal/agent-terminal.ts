@@ -20,7 +20,7 @@
  * contract type and the {@link isSyntheticStageCommand} predicate).
  */
 import type { AgentEvents } from "@zoc-studio/shared-types";
-import { isSyntheticStageCommand } from "@/features/agent/stage-markers";
+import { isSyntheticStageCommand } from "./stage-markers";
 
 /** The run-END separator appended exactly once when a command exits. */
 export const AGENT_RUN_END_SEPARATOR = "────────────────────────────────";
@@ -86,9 +86,7 @@ export type AgentTerminalEvent =
   | { kind: "user-input"; paneId: string; data: string };
 
 /** A fresh model, optionally seeded with the currently focused pane. */
-export function initialAgentTerminalState(
-  focusedPaneId: string | null = null,
-): AgentTerminalState {
+export function initialAgentTerminalState(focusedPaneId: string | null = null): AgentTerminalState {
   return {
     agentPaneId: null,
     focusedPaneId,
@@ -99,10 +97,7 @@ export function initialAgentTerminalState(
   };
 }
 
-function ensurePane(
-  panes: Record<string, PaneRuntime>,
-  paneId: string,
-): PaneRuntime {
+function ensurePane(panes: Record<string, PaneRuntime>, paneId: string): PaneRuntime {
   return (
     panes[paneId] ?? {
       paneId,
@@ -213,10 +208,7 @@ export function reduceAgentTerminal(
       // Non-blocking: recorded unconditionally, even while the agent is active.
       return {
         ...state,
-        userInputLog: [
-          ...state.userInputLog,
-          { paneId: event.paneId, data: event.data },
-        ],
+        userInputLog: [...state.userInputLog, { paneId: event.paneId, data: event.data }],
       };
   }
 }
@@ -231,33 +223,19 @@ export function runAgentTerminal(
 
 // --- selectors ------------------------------------------------------------
 
-export function paneRuntime(
-  state: AgentTerminalState,
-  paneId: string,
-): PaneRuntime | undefined {
+export function paneRuntime(state: AgentTerminalState, paneId: string): PaneRuntime | undefined {
   return state.panes[paneId];
 }
 
-export function paneBadge(
-  state: AgentTerminalState,
-  paneId: string,
-): CompletionBadge {
+export function paneBadge(state: AgentTerminalState, paneId: string): CompletionBadge {
   return state.panes[paneId]?.badge ?? { status: "idle" };
 }
 
-export function isPaneAgentActive(
-  state: AgentTerminalState,
-  paneId: string,
-): boolean {
-  return (
-    state.agentPaneId === paneId && state.panes[paneId]?.agentActive === true
-  );
+export function isPaneAgentActive(state: AgentTerminalState, paneId: string): boolean {
+  return state.agentPaneId === paneId && state.panes[paneId]?.agentActive === true;
 }
 
-export function paneOutputText(
-  state: AgentTerminalState,
-  paneId: string,
-): string[] {
+export function paneOutputText(state: AgentTerminalState, paneId: string): string[] {
   return state.panes[paneId]?.output.map((segment) => segment.text) ?? [];
 }
 

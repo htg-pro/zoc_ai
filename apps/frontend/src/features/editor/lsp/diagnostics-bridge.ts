@@ -140,11 +140,7 @@ function codeToString(code: LspDiagnostic["code"]): string | undefined {
  * - `source` is the diagnostic's own `source`, falling back to the Server_Name.
  * - `code` is `String(code)` when present, and left unset when absent.
  */
-export function mapLspDiagnostic(
-  server: ServerName,
-  uri: string,
-  d: LspDiagnostic,
-): Diagnostic {
+export function mapLspDiagnostic(server: ServerName, uri: string, d: LspDiagnostic): Diagnostic {
   const code = codeToString(d.code);
   const diagnostic: Diagnostic = {
     source: d.source && d.source.length > 0 ? d.source : server,
@@ -199,11 +195,7 @@ export interface DiagnosticsBridgeDeps {
 
 export interface DiagnosticsBridge {
   /** Wired as `LspClientDeps.onPublishDiagnostics` (R1, R2). */
-  onPublishDiagnostics(
-    server: ServerName,
-    uri: string,
-    diags: readonly LspDiagnostic[],
-  ): void;
+  onPublishDiagnostics(server: ServerName, uri: string, diags: readonly LspDiagnostic[]): void;
   /** R5.5: stop reacting to fs events and leave the store unchanged after. */
   dispose(): void;
 }

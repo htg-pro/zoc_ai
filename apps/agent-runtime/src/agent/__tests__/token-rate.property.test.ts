@@ -2,6 +2,8 @@
  * Property 85: Token_Rate measures generation, not time-to-first-token.
  * Validates R13.8.
  *
+ * Feature: zoc-agent-chat-rebuild, Property 85 (R13.8).
+ *
  * The generator is the one design.md:3702 says lives in the runtime's own suite rather
  * than the renderer's — an output-delta schedule paired with **two** time-to-first-token
  * intervals — and the pairing is the whole design of the property. Drawing both

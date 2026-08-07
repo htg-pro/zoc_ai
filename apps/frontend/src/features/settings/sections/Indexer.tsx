@@ -33,7 +33,8 @@ const PROVIDER_CHOICES: ProviderChoice[] = [
   {
     value: "auto",
     label: "Auto",
-    description: "Prefer a local llama.cpp embedding model, fall back to OpenAI, then the hash stub.",
+    description:
+      "Prefer a local llama.cpp embedding model, fall back to OpenAI, then the hash stub.",
     modelEditable: false,
   },
   {
@@ -289,7 +290,8 @@ export function IndexerSection() {
               <div className="flex items-center justify-between gap-2">
                 <span className="text-muted-foreground">Currently active</span>
                 <span className="font-mono">
-                  {active.model ? `${active.kind} · ${active.model}` : active.kind} ({active.dim}-dim)
+                  {active.model ? `${active.kind} · ${active.model}` : active.kind} ({active.dim}
+                  -dim)
                 </span>
               </div>
               {active.is_fallback && (
@@ -297,8 +299,8 @@ export function IndexerSection() {
                   No real embedding model is configured, so semantic search is running on the
                   deterministic <span className="font-mono">hash</span> fallback — results will be
                   much weaker. Run llama-server with an embedding model like{" "}
-                  <code className="font-mono">nomic-embed-text.gguf</code>, or add an OpenAI
-                  key, then choose that provider below.
+                  <code className="font-mono">nomic-embed-text.gguf</code>, or add an OpenAI key,
+                  then choose that provider below.
                 </p>
               )}
             </div>

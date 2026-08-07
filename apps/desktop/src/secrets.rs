@@ -951,6 +951,7 @@ fn runtime_secret_lookup(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use proptest::prelude::*;
 
     /// Models the observed broken-Linux secret service: a write returns `Ok`
     /// and an immediate read through a fresh handle finds nothing.
@@ -1680,6 +1681,196 @@ mod tests {
                     );
                 }
             }
+        }
+    }
+
+    // ── Properties 33 and 34 (tasks 4.5, 4.6) ─────────────────────────────
+    //
+    // Both quantify over the same two axes the four unit tests above pin to one
+    // point each: the backend's behaviour, and the keys written to it. What the
+    // generators add is the *combination* — a key value that round-trips through
+    // Argon2id, XChaCha20-Poly1305, and `serde_json` on one machine and through a
+    // keychain entry on another, with no case hand-picked to be easy.
+
+    /// Every backing store the vault can find itself on, and the shared state a
+    /// relaunch inherits from the launch before it.
+    ///
+    /// `store()` mints a *fresh* handle over that shared state on every call,
+    /// which is what makes "an immediate read through a fresh handle" (R14.4) and
+    /// "constructing a fresh Secret_Vault" (R14.9) the same operation here: a
+    /// second `SecretVault::new` over the same `persistent` map is a relaunch.
+    struct Fixture {
+        behaviour: Backend,
+        persistent: Arc<Mutex<HashMap<String, String>>>,
+    }
+
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    enum Backend {
+        /// A durable OS secret service: tier 1.
+        Healthy,
+        /// A session keyring that keeps one real entry and loses the rest, which
+        /// is the observed Linux failure mode: tier 2.
+        SessionRing,
+        /// Every write accepted and every read empty, master secret included, so
+        /// there is nothing durable to encrypt a vault with: tier 3.
+        Vanishing,
+        /// No secret service at all: tier 3.
+        Absent,
+    }
+
+    impl Fixture {
+        fn new(behaviour: Backend) -> Self {
+            Self {
+                behaviour,
+                persistent: Arc::new(Mutex::new(HashMap::new())),
+            }
+        }
+
+        fn store(&self) -> Box<dyn KeyStore> {
+            match self.behaviour {
+                Backend::Healthy => Box::new(GoodKeyStore {
+                    entries: self.persistent.clone(),
+                }),
+                Backend::SessionRing => Box::new(SessionKeyStore::new(
+                    self.persistent.clone(),
+                    &[MASTER_KEY_NAME],
+                )),
+                Backend::Vanishing => Box::new(WriteOnlyKeyStore),
+                Backend::Absent => Box::new(FailingKeyStore),
+            }
+        }
+    }
+
+    fn backend() -> impl Strategy<Value = Backend> {
+        prop_oneof![
+            Just(Backend::Healthy),
+            Just(Backend::SessionRing),
+            Just(Backend::Vanishing),
+            Just(Backend::Absent),
+        ]
+    }
+
+    /// Provider-shaped names, kept clear of `vault.master` and `vault.probe`:
+    /// generating either would have the property assert against the vault's own
+    /// bookkeeping rather than against a user's key.
+    const KEY_NAME: &str = r"provider\.[a-z]{1,8}";
+
+    /// Any non-empty value, `.` over the whole scalar range rather than an
+    /// API-key alphabet, because the value crosses a JSON encoder and an AEAD and
+    /// the interesting inputs are the ones no realistic key would contain.
+    ///
+    /// Empty is excluded deliberately and is not a gap: `get` reports an empty
+    /// tier-1 entry as absent so that `has` is false for it (R14.2), which makes
+    /// saving an empty value a clear rather than a save.
+    const KEY_VALUE: &str = r".{1,64}";
+
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(16))]
+
+        /// **Property 33: reported success implies readable persistence** (R14.4).
+        ///
+        /// Two claims, because `set` reports two different things. Any `Ok` means
+        /// the value reads back immediately, on every tier. `durable: true` means
+        /// more than that — it survives the process — so the relaunched vault has
+        /// to produce it, and that is the half a probe-less `keychain_set_verified`
+        /// would fail: tier 1 would report success on `Vanishing`, and the fresh
+        /// handle would find nothing.
+        #[test]
+        fn reported_success_implies_readable_persistence(
+            behaviour in backend(),
+            written in proptest::collection::hash_map(KEY_NAME, KEY_VALUE, 1..=3),
+        ) {
+            with_temp_home(|_| {
+                let fixture = Fixture::new(behaviour);
+                let vault = SecretVault::new(fixture.store());
+                let mut durable: Vec<(&String, &String)> = Vec::new();
+
+                for (key, value) in &written {
+                    // None of the four fakes has a write path that errors, so a
+                    // failure here is the vault refusing a save rather than the
+                    // property finding nothing to assert.
+                    let result = vault.set(key, value)
+                        .map_err(|err| TestCaseError::fail(format!("set refused: {err}")))?;
+
+                    prop_assert_eq!(
+                        vault.get(key).map(|held| held.to_string()),
+                        Some(value.clone()),
+                        "a save that reported success must read back exactly"
+                    );
+                    prop_assert_eq!(
+                        result.durable,
+                        result.backend != SecretBackend::Degraded,
+                        "only tier 3 may report a save as non-durable"
+                    );
+                    if result.durable {
+                        durable.push((key, value));
+                    }
+                }
+
+                prop_assert_eq!(
+                    durable.is_empty(),
+                    matches!(behaviour, Backend::Vanishing | Backend::Absent),
+                    "exactly the two masterless backends may report nothing durable"
+                );
+
+                let relaunched = SecretVault::new(fixture.store());
+                for (key, value) in durable {
+                    prop_assert_eq!(
+                        relaunched.get(key).map(|held| held.to_string()),
+                        Some(value.clone()),
+                        "a durable report must survive the process it was made in"
+                    );
+                }
+                Ok(())
+            })?;
+        }
+    }
+
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(12))]
+
+        /// **Property 34: keys survive a cleared session keyring** (R14.9).
+        ///
+        /// The generated form of `session_keyring_cleared_between_launches_still_returns_keys`:
+        /// a whole map of keys rather than two, and values byte-compared rather
+        /// than read for shape. The second `SecretVault::new` over the same
+        /// persistent ring *is* the cleared session — nothing carries over in
+        /// memory, and the only entry the ring kept is the master secret.
+        #[test]
+        fn keys_survive_a_cleared_session_keyring(
+            written in proptest::collection::hash_map(KEY_NAME, KEY_VALUE, 1..=3),
+        ) {
+            with_temp_home(|home| {
+                let fixture = Fixture::new(Backend::SessionRing);
+                let first = SecretVault::new(fixture.store());
+                prop_assert_eq!(
+                    first.backend(),
+                    SecretBackend::Vault,
+                    "a vanishing session ring must drop the vault to tier 2, not tier 1"
+                );
+
+                for (key, value) in &written {
+                    let result = first.set(key, value)
+                        .map_err(|err| TestCaseError::fail(format!("set refused: {err}")))?;
+                    prop_assert!(result.durable, "tier 2 is durable");
+                }
+                drop(first);
+
+                prop_assert!(
+                    home.join(".zoc-studio").join("secrets.vault").exists(),
+                    "tier 2 must have written the encrypted vault"
+                );
+
+                let relaunched = SecretVault::new(fixture.store());
+                for (key, value) in &written {
+                    prop_assert_eq!(
+                        relaunched.get(key).map(|held| held.to_string()),
+                        Some(value.clone()),
+                        "every key must come back byte-identical"
+                    );
+                }
+                Ok(())
+            })?;
         }
     }
 }

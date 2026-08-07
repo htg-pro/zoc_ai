@@ -133,9 +133,7 @@ def test_fsm_done_event_carries_recorded_outcome() -> None:
     assert done.reason is None
 
 
-def _review_run(
-    tmp_path: Path, brain: DefaultAgentBrain, decision: object
-) -> list[dict]:
+def _review_run(tmp_path: Path, brain: DefaultAgentBrain, decision: object) -> list[dict]:
     events: list[dict] = []
     RunPipeline(
         AgentRunRequest(prompt="do it", mode=Mode.AGENT, review_changes=True),
@@ -289,10 +287,8 @@ def test_capability_gate_is_the_real_table_not_hardcoded() -> None:
 # ── Task 6: provider auth 401/403 recognized without leaking secrets ────────
 
 
-
 _CONTEXT_OVERFLOW_BODY = (
-    '{"error":{"type":"exceed_context_size_error",'
-    '"n_prompt_tokens":9444,"n_ctx":8192}}'
+    '{"error":{"type":"exceed_context_size_error",' '"n_prompt_tokens":9444,"n_ctx":8192}}'
 )
 
 
@@ -322,6 +318,7 @@ def test_post_json_classifies_context_overflow_without_leaking_raw_json(
     assert "8,192" in str(exc)
     assert "exceed_context_size_error" not in str(exc)
     assert "{" not in str(exc)
+
 
 class _FakeResponse:
     def __init__(self, status_code: int, text: str) -> None:

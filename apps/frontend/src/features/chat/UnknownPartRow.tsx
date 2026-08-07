@@ -1,6 +1,8 @@
 /**
  * The unrecognised-discriminant row — zoc-agent-chat-rebuild R7.6, task 16.3.
  *
+ * Feature: zoc-agent-chat-rebuild, task 16.3 (R7.6).
+ *
  * One muted line naming the discriminant it could not render. It is the visible half of R7.6;
  * the log record is {@link ./unknown-parts.logUnknownPart} and the stream continuing is the
  * transcript row factory's `default` branch (17.1).

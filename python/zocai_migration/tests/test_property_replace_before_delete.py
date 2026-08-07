@@ -110,9 +110,7 @@ def _migration_world(draw: st.DrawFn) -> dict[str, object]:
     can_commit = draw(st.booleans())
 
     # Each replacement independently present or absent.
-    replacement_present = {
-        rep: draw(st.booleans()) for rep in _REPLACEMENTS
-    }
+    replacement_present = {rep: draw(st.booleans()) for rep in _REPLACEMENTS}
     # Self-aliased stages (legacy_dir == replacement) share a single path in the
     # fake filesystem, and ``_build_world`` always adds ``legacy_dir``. Such a
     # path therefore always exists regardless of the drawn boolean, so coerce
@@ -183,12 +181,12 @@ def test_property_51_removal_only_after_built_replacement_exists(
     #     replacement existed AND its language build returned exit code 0.
     for legacy_dir in result.removed_directories:
         stage = next(s for s in DEFAULT_STAGES if s.legacy_dir == legacy_dir)
-        assert replacement_present.get(stage.replacement, False) is True, (
-            f"{legacy_dir} removed though replacement {stage.replacement} was absent"
-        )
-        assert exit_codes.get(stage.build_id, 0) == 0, (
-            f"{legacy_dir} removed though build {stage.build_id} did not pass"
-        )
+        assert (
+            replacement_present.get(stage.replacement, False) is True
+        ), f"{legacy_dir} removed though replacement {stage.replacement} was absent"
+        assert (
+            exit_codes.get(stage.build_id, 0) == 0
+        ), f"{legacy_dir} removed though build {stage.build_id} did not pass"
 
     # (c) Removal order is a prefix of the stage order, and the controller halts
     #     at the FIRST stage that fails the gate (replace-before-delete is
@@ -203,9 +201,9 @@ def test_property_51_removal_only_after_built_replacement_exists(
             replacement_present.get(blocked.replacement, False)
             and exit_codes.get(blocked.build_id, 0) == 0
         )
-        assert gate_open is False, (
-            f"stage {blocked.legacy_dir} was blocked though its gate was open"
-        )
+        assert (
+            gate_open is False
+        ), f"stage {blocked.legacy_dir} was blocked though its gate was open"
 
 
 @settings(max_examples=200)

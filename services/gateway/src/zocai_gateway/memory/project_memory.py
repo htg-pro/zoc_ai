@@ -78,10 +78,40 @@ _WORD_RE = re.compile(r"[A-Za-z0-9_]+")
 #: Words too common to carry meaning when comparing two facts.
 _STOPWORDS = frozenset(
     {
-        "a", "an", "and", "are", "as", "at", "be", "by", "for", "from", "has",
-        "have", "in", "is", "it", "its", "of", "on", "or", "that", "the", "this",
-        "to", "uses", "use", "was", "were", "which", "with", "project", "code",
-        "codebase", "file", "files",
+        "a",
+        "an",
+        "and",
+        "are",
+        "as",
+        "at",
+        "be",
+        "by",
+        "for",
+        "from",
+        "has",
+        "have",
+        "in",
+        "is",
+        "it",
+        "its",
+        "of",
+        "on",
+        "or",
+        "that",
+        "the",
+        "this",
+        "to",
+        "uses",
+        "use",
+        "was",
+        "were",
+        "which",
+        "with",
+        "project",
+        "code",
+        "codebase",
+        "file",
+        "files",
     }
 )
 
@@ -132,9 +162,7 @@ class MemoryFact:
         if not text:
             return None
         raw_confidence = raw.get("confidence", 0.5)
-        if isinstance(raw_confidence, bool) or not isinstance(
-            raw_confidence, (int, float, str)
-        ):
+        if isinstance(raw_confidence, bool) or not isinstance(raw_confidence, int | float | str):
             confidence = 0.5
         else:
             try:
@@ -231,7 +259,7 @@ class ProjectMemory:
 
         def _int(key: str) -> int:
             value = raw.get(key, 0)
-            if isinstance(value, bool) or not isinstance(value, (int, float, str)):
+            if isinstance(value, bool) or not isinstance(value, int | float | str):
                 return 0
             try:
                 return max(0, int(value))
@@ -384,9 +412,7 @@ class ProjectMemoryStore:
                     confidence=min(1.0, existing.confidence + 0.1),
                 )
                 continue
-            memory.facts.append(
-                MemoryFact(fact=text, source_run_id=run_id, confidence=confidence)
-            )
+            memory.facts.append(MemoryFact(fact=text, source_run_id=run_id, confidence=confidence))
             added += 1
 
         if len(memory.facts) > MAX_FACTS:
@@ -407,19 +433,13 @@ class ProjectMemoryStore:
         text = summary.strip()
         if not path or not text:
             return
-        memory.file_summaries[path] = FileSummary(
-            summary=text, run_id=run_id, last_modified=_now()
-        )
+        memory.file_summaries[path] = FileSummary(summary=text, run_id=run_id, last_modified=_now())
         if len(memory.file_summaries) > MAX_FILE_SUMMARIES:
-            oldest = sorted(
-                memory.file_summaries.items(), key=lambda item: item[1].last_modified
-            )
+            oldest = sorted(memory.file_summaries.items(), key=lambda item: item[1].last_modified)
             for stale_path, _ in oldest[: len(memory.file_summaries) - MAX_FILE_SUMMARIES]:
                 memory.file_summaries.pop(stale_path, None)
 
-    def record_run(
-        self, memory: ProjectMemory, *, tokens_used: int = 0
-    ) -> ProjectMemory:
+    def record_run(self, memory: ProjectMemory, *, tokens_used: int = 0) -> ProjectMemory:
         """Increment the run counters."""
         memory.run_count += 1
         memory.total_tokens_used += max(0, tokens_used)

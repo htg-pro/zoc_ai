@@ -32,8 +32,7 @@ export const DEFAULT_LAYOUT: LayoutState = {
   agentOpen: true,
 };
 
-const clamp = (n: number, lo: number, hi: number): number =>
-  Math.min(hi, Math.max(lo, n));
+const clamp = (n: number, lo: number, hi: number): number => Math.min(hi, Math.max(lo, n));
 
 /** Clamp a side-panel width into [180, 600] (R12.7). */
 export function clampPanelWidth(px: number): number {
@@ -42,10 +41,7 @@ export function clampPanelWidth(px: number): number {
 
 /** Clamp the dock height into [120, 80% of window height] (R12.7). */
 export function clampDockHeight(px: number, windowHeight: number): number {
-  const upper = Math.max(
-    DOCK_MIN_HEIGHT,
-    Math.floor(windowHeight * DOCK_MAX_HEIGHT_RATIO),
-  );
+  const upper = Math.max(DOCK_MIN_HEIGHT, Math.floor(windowHeight * DOCK_MAX_HEIGHT_RATIO));
   return clamp(px, DOCK_MIN_HEIGHT, upper);
 }
 
@@ -62,10 +58,7 @@ export function togglePanel(state: LayoutState, panel: PanelKey): LayoutState {
 }
 
 /** Clamp all sizes in a layout into their bounds. */
-export function sanitizeLayout(
-  state: LayoutState,
-  windowHeight: number,
-): LayoutState {
+export function sanitizeLayout(state: LayoutState, windowHeight: number): LayoutState {
   return {
     ...state,
     explorerWidth: clampPanelWidth(state.explorerWidth),
@@ -82,10 +75,7 @@ export function serializeLayout(state: LayoutState): string {
 }
 
 /** Load a persisted layout, falling back to defaults for missing/invalid data. */
-export function deserializeLayout(
-  raw: string | null,
-  windowHeight: number,
-): LayoutState {
+export function deserializeLayout(raw: string | null, windowHeight: number): LayoutState {
   if (!raw) return { ...DEFAULT_LAYOUT };
   try {
     const parsed = JSON.parse(raw) as Partial<LayoutState>;

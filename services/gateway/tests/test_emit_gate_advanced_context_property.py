@@ -33,9 +33,7 @@ def _payload_case(draw: st.DrawFn) -> tuple[dict[str, object], bool]:
             rationale=draw(st.text(max_size=100)),
         ).model_dump(mode="json", by_alias=True)
         if not valid:
-            mutation = draw(
-                st.sampled_from(["missing-read", "too-many-reads", "bad-rationale"])
-            )
+            mutation = draw(st.sampled_from(["missing-read", "too-many-reads", "bad-rationale"]))
             if mutation == "missing-read":
                 del payload["readList"]
             elif mutation == "too-many-reads":
@@ -53,9 +51,7 @@ def _payload_case(draw: st.DrawFn) -> tuple[dict[str, object], bool]:
         ).model_dump(mode="json", by_alias=True)
         if not valid:
             mutation = draw(
-                st.sampled_from(
-                    ["missing-original", "zero-original", "expanded", "bad-ratio"]
-                )
+                st.sampled_from(["missing-original", "zero-original", "expanded", "bad-ratio"])
             )
             if mutation == "missing-original":
                 del payload["originalTokens"]

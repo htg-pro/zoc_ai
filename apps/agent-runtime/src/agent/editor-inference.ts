@@ -1,6 +1,8 @@
 /**
  * Editor inference: completion and inline-edit prompt construction — R6.2, 9.7.
  *
+ * Feature: zoc-agent-chat-rebuild, task 9.7 (R6.2).
+ *
  * Every helper here is a port of the retained Gateway's own, kept behaviour-for-
  * behaviour rather than reimagined: `routes/completions.py` and `routes/inline.py`
  * are the shapes the editor already speaks, and R6.2 moves *where the call happens*

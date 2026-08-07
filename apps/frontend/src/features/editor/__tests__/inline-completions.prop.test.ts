@@ -28,7 +28,10 @@ describe("inline-completions debounce (Property 7)", () => {
     fc.assert(
       fc.property(
         // Inter-keystroke gaps strictly below the debounce window.
-        fc.array(fc.integer({ min: 1, max: DEFAULT_DEBOUNCE_MS - 1 }), { minLength: 1, maxLength: 12 }),
+        fc.array(fc.integer({ min: 1, max: DEFAULT_DEBOUNCE_MS - 1 }), {
+          minLength: 1,
+          maxLength: 12,
+        }),
         (gaps) => {
           const stream = vi.fn(async () => {});
           const c = createInlineCompletionController({ streamCompletion: stream });
@@ -100,10 +103,12 @@ describe("inline-completions cancellation/stale discard (Property 9)", () => {
         fc.string({ minLength: 1, maxLength: 5 }),
         (staleChunks, liveChunk) => {
           const calls: Captured[] = [];
-          const stream = vi.fn((_body: CompletionRequestBody, onToken: (c: string) => void, signal: AbortSignal) => {
-            calls.push({ onToken, signal });
-            return new Promise<void>(() => {}); // never resolves on its own
-          });
+          const stream = vi.fn(
+            (_body: CompletionRequestBody, onToken: (c: string) => void, signal: AbortSignal) => {
+              calls.push({ onToken, signal });
+              return new Promise<void>(() => {}); // never resolves on its own
+            },
+          );
           const c = createInlineCompletionController({ streamCompletion: stream });
 
           c.request(win("a", ""), { automatic: false }); // request A

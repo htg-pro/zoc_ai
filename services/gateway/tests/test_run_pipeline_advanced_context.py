@@ -110,9 +110,7 @@ def test_compression_without_provider_continues_uncompressed(tmp_path: Path) -> 
     assert not any(event["type"] == "context-compressed" for event in events)
 
 
-def test_compression_provider_failure_continues_uncompressed(
-    tmp_path: Path, monkeypatch
-) -> None:
+def test_compression_provider_failure_continues_uncompressed(tmp_path: Path, monkeypatch) -> None:
     events, gate = _gate()
     pipeline = RunPipeline(
         _request(provider=True),
@@ -143,9 +141,7 @@ def test_compression_provider_failure_continues_uncompressed(
     assert not any(event["type"] == "context-compressed" for event in events)
 
 
-def test_successful_compression_continues_and_emits_once(
-    tmp_path: Path, monkeypatch
-) -> None:
+def test_successful_compression_continues_and_emits_once(tmp_path: Path, monkeypatch) -> None:
     events, gate = _gate()
     pipeline = RunPipeline(
         _request(provider=True),
@@ -169,14 +165,9 @@ def test_successful_compression_continues_and_emits_once(
     pipeline._maybe_compress(memory, 10)
     pipeline._maybe_compress(memory, 10)
 
-    compressed = [
-        event for event in events if event["type"] == "context-compressed"
-    ]
+    compressed = [event for event in events if event["type"] == "context-compressed"]
     assert len(compressed) == 1
-    assert any(
-        message.content.startswith(COMPRESSED_HISTORY_PREFIX)
-        for message in memory.messages
-    )
+    assert any(message.content.startswith(COMPRESSED_HISTORY_PREFIX) for message in memory.messages)
     assert compressed[0]["compressedTokens"] <= compressed[0]["originalTokens"]
 
 
@@ -189,9 +180,7 @@ def test_successful_compression_continues_and_emits_once(
     ],
     ids=["unparseable", "empty", "runtime-error"],
 )
-def test_map_files_failures_transition_to_error_closed(
-    tmp_path: Path, selector
-) -> None:
+def test_map_files_failures_transition_to_error_closed(tmp_path: Path, selector) -> None:
     events, gate = _gate()
     result = RunPipeline(
         _request(),
@@ -288,8 +277,7 @@ def test_candidate_source_switches_only_for_ready_enabled_index(
             brain=DefaultAgentBrain(),
             rag_matcher=matcher,
             file_selector=lambda prompt: (
-                captured.append(prompt)
-                or '{"read":[],"write":[],"rationale":"ok"}'
+                captured.append(prompt) or '{"read":[],"write":[],"rationale":"ok"}'
             ),
             workspace_indexer=indexer,  # type: ignore[arg-type]
             index_session_id="editor-session",
@@ -299,14 +287,10 @@ def test_candidate_source_switches_only_for_ready_enabled_index(
 
     hybrid_prompt, hybrid_matcher, hybrid_indexer = run_case(enabled=True, ready=True)
     assert "- hybrid.py" in hybrid_prompt
-    assert hybrid_indexer.queries == [
-        ("editor-session", "implement feature", 20)
-    ]
+    assert hybrid_indexer.queries == [("editor-session", "implement feature", 20)]
     assert hybrid_matcher.calls == 1  # context build only
 
-    fallback_prompt, fallback_matcher, fallback_indexer = run_case(
-        enabled=True, ready=False
-    )
+    fallback_prompt, fallback_matcher, fallback_indexer = run_case(enabled=True, ready=False)
     assert "- rag.py" in fallback_prompt
     assert fallback_indexer.queries == []
     assert fallback_matcher.calls == 2  # context build + MAP_FILES candidates
@@ -317,9 +301,7 @@ class _EndToEndBrain(DefaultAgentBrain):
         self.seen_read_payload = ""
         self.seen_history = ""
 
-    def structured_plan(
-        self, request: AgentRunRequest, context: RunContext
-    ) -> AgentPlan:
+    def structured_plan(self, request: AgentRunRequest, context: RunContext) -> AgentPlan:
         self.seen_read_payload = context.read_files_payload
         self.seen_history = context.conversation_history
         return AgentPlan(
@@ -339,9 +321,7 @@ class _EndToEndBrain(DefaultAgentBrain):
         self.seen_history = context.conversation_history
         return EditPlan(
             reasoning="use selected input",
-            changes=(
-                PlannedChange(path="out.txt", content="generated\n", diff="+generated"),
-            ),
+            changes=(PlannedChange(path="out.txt", content="generated\n", diff="+generated"),),
         )
 
 
@@ -431,9 +411,7 @@ def test_undeclared_write_approval_resumes_or_pauses(
     assert len(approvals) == 1
     assert "undeclared.txt" in str(approvals[0]["prompt"])
     if verdict == "approve":
-        assert (tmp_path / "undeclared.txt").read_text(encoding="utf-8") == (
-            "undeclared"
-        )
+        assert (tmp_path / "undeclared.txt").read_text(encoding="utf-8") == ("undeclared")
         assert result.paused is False
     else:
         assert not (tmp_path / "undeclared.txt").exists()

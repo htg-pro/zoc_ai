@@ -2,8 +2,11 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import fc from "fast-check";
 
-const resolveAgentPort = vi.hoisted(() => vi.fn());
-vi.mock("@/lib/agent-port", () => ({ resolveAgentPort }));
+const resolveWorkspaceServicesEndpoint = vi.hoisted(() => vi.fn());
+vi.mock("@/lib/workspace-services-endpoint", () => ({ resolveWorkspaceServicesEndpoint }));
+
+/** The resolver returns `{port, baseUrl}`; keep the two consistent so a URL assertion means something. */
+const endpoint = (port: number) => ({ port, baseUrl: `http://127.0.0.1:${String(port)}` });
 
 import { createLspClient, type ManagedLanguageClient } from "../lsp-client";
 import type { LspSocket } from "../lsp-connection";
@@ -39,8 +42,8 @@ interface FakeClient extends ManagedLanguageClient {
 const flush = () => new Promise((resolve) => setTimeout(resolve, 0));
 
 beforeEach(() => {
-  resolveAgentPort.mockReset();
-  resolveAgentPort.mockResolvedValue(9999);
+  resolveWorkspaceServicesEndpoint.mockReset();
+  resolveWorkspaceServicesEndpoint.mockResolvedValue(endpoint(9999));
 });
 
 describe("lsp-client", () => {

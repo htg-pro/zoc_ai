@@ -112,9 +112,9 @@ def test_initialize_creates_every_missing_store(present: list[str]) -> None:
         # Idempotence: any store that pre-existed is left exactly as found.
         for attr, content in preseeded.items():
             path = getattr(matrix, attr)
-            assert path.read_text(encoding="utf-8") == content, (
-                f"pre-existing store was truncated/overwritten: {attr}"
-            )
+            assert (
+                path.read_text(encoding="utf-8") == content
+            ), f"pre-existing store was truncated/overwritten: {attr}"
 
         # R9.1 confinement: only ``.zocai/`` is created under the workspace
         # root, and every owned path lives under that subtree.

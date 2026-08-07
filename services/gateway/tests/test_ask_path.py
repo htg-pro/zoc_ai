@@ -108,9 +108,7 @@ def test_build_ask_context_compiles_steering_and_runs_rag(tmp_path: Path) -> Non
     fragments = (RagFragment(path="src/a.py", content="def a(): ...", score=0.9),)
     matcher = _RecordingRagMatcher(fragments)
 
-    context = build_ask_context(
-        "how does a work?", workspace_root=tmp_path, rag_matcher=matcher
-    )
+    context = build_ask_context("how does a work?", workspace_root=tmp_path, rag_matcher=matcher)
 
     assert isinstance(context, AskContext)
     assert context.steering.text == "Be concise."
@@ -129,9 +127,7 @@ def test_build_ask_context_defaults_to_null_matcher(tmp_path: Path) -> None:
 
 def test_execute_returns_response_for_a_question(tmp_path: Path) -> None:
     _write_steering(tmp_path, "rules.md", "steer")
-    matcher = _RecordingRagMatcher(
-        (RagFragment(path="m.py", content="x", score=0.8),)
-    )
+    matcher = _RecordingRagMatcher((RagFragment(path="m.py", content="x", score=0.8),))
     seen: dict[str, AskContext] = {}
 
     def generate(prompt: str, context: AskContext) -> str:

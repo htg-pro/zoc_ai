@@ -53,9 +53,10 @@ def _scripts() -> dict[str, str]:
 def _argv(script: str) -> list[str]:
     """The command `pnpm <script>` runs, re-pointed at this interpreter."""
     interpreter, script_path, *flags = _scripts()[script].split()
-    assert interpreter in ("python", "python3"), (
-        f"`{script}` no longer invokes a Python interpreter: {interpreter}"
-    )
+    assert interpreter in (
+        "python",
+        "python3",
+    ), f"`{script}` no longer invokes a Python interpreter: {interpreter}"
     return [sys.executable, str(REPO_ROOT / script_path), *flags]
 
 
@@ -134,9 +135,9 @@ def test_hand_edit_is_detected(name: str) -> None:
     try:
         target.write_text(original + "\nexport type HandEditedDrift = true;\n", encoding="utf-8")
         result = _run("schema:check")
-        assert result.returncode == 1, (
-            f"schema:check accepted a hand-edited {name}; the drift gate is not actually gating"
-        )
+        assert (
+            result.returncode == 1
+        ), f"schema:check accepted a hand-edited {name}; the drift gate is not actually gating"
         assert name in result.stderr
     finally:
         target.write_text(original, encoding="utf-8")

@@ -2,6 +2,8 @@
  * The context meter and the overflow gate — zoc-agent-chat-rebuild R12.5, R12.6, R12.8, R12.9, R12.10,
  * R34.4, task 20.3.
  *
+ * Feature: zoc-agent-chat-rebuild, task 20.3 (R12.5, R12.6, R12.8, R12.9, R12.10, R34.4).
+ *
  * `12.4k / 200k` beside the four context facts, and at overflow a button that opens the dialog for fixing
  * it. Every figure comes from one call to `contextFigures`, in one `useMemo`, keyed on the model — which
  * is R12.10 implemented rather than promised.
@@ -166,8 +168,8 @@ export function ContextMeter({
           <DialogHeader>
             <DialogTitle>Too much context</DialogTitle>
             <DialogDescription>
-              The attached context is {formatTokens(figures.overflowBy)} over{" "}
-              {model.modelId}&apos;s window. Remove enough to send.
+              The attached context is {formatTokens(figures.overflowBy)} over {model.modelId}&apos;s
+              window. Remove enough to send.
             </DialogDescription>
           </DialogHeader>
 

@@ -39,19 +39,19 @@ async def run_test():
             await page.wait_for_load_state("domcontentloaded", timeout=5000)
         except Exception:
             pass
-        
+
         # -> Open the 'Sessions' panel by clicking the 'Sessions' button in the left activity bar (visible as 'Sessions' in the activity bar).
         # Sessions button
         elem = page.get_by_role('button', name='Sessions', exact=True)
         await elem.click(timeout=10000)
-        
+
         # -> Click the 'New session' button in the Sessions panel to create a new session.
         # New session button
         elem = page.get_by_text('Filter sessions…', exact=True).locator("xpath=ancestor-or-self::*[.//button][1]").get_by_role('button', name='New session', exact=True)
         await elem.click(timeout=10000)
-        
+
         # --> Assertions to verify final state
-        
+
         # --> Verify a new session is displayed as the active session
         await page.locator("xpath=/html/body/div[1]/div/div/div/div[1]/div/aside/div/div/div[3]/div/div/div/div[2]/button").nth(0).scroll_into_view_if_needed()
         # Assert: The newly created session 'Session 3:10:16 PM — 3:10 PM' is visible in the sessions list.
@@ -70,4 +70,3 @@ async def run_test():
             await pw.stop()
 
 asyncio.run(run_test())
-    

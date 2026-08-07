@@ -69,9 +69,7 @@ class ProviderAuthError(ModelRuntimeError):
     def __init__(self, provider: str | None, status_code: int) -> None:
         self.provider = (provider or "").strip() or "the model provider"
         self.status_code = status_code
-        super().__init__(
-            f"{self.provider} rejected the API key (HTTP {status_code})."
-        )
+        super().__init__(f"{self.provider} rejected the API key (HTTP {status_code}).")
 
 
 _CONTEXT_PROMPT_TOKENS_RE = re.compile(r'n_prompt_tokens\\?"?\s*:\s*(\d+)', re.IGNORECASE)
@@ -519,9 +517,7 @@ def _anthropic_tools_messages(
     if system_prompt:
         payload["system"] = system_prompt
     payload.update(_reasoning_effort_payload(request, "anthropic", model))
-    response = _post_json(
-        f"{base_url}/messages", headers, payload, timeout, provider="anthropic"
-    )
+    response = _post_json(f"{base_url}/messages", headers, payload, timeout, provider="anthropic")
     content = response.get("content")
     text_parts: list[str] = []
     tool_calls: list[ToolCall] = []
@@ -947,7 +943,7 @@ def _stream_metrics(frame: Mapping[str, Any]) -> StreamMetrics | None:
         if completion_tokens is None and isinstance(predicted_n, int) and predicted_n >= 0:
             completion_tokens = predicted_n
         predicted_per_second = timings.get("predicted_per_second")
-        if isinstance(predicted_per_second, (int, float)):
+        if isinstance(predicted_per_second, int | float):
             parsed = float(predicted_per_second)
             if math.isfinite(parsed) and parsed >= 0:
                 tokens_per_second = parsed
@@ -1011,9 +1007,7 @@ _OPENAI_COMPATIBLE_PROVIDERS = frozenset(
 )
 
 
-def readiness(
-    provider: str | None, model: str | None, base_url: str | None
-) -> ModelReadiness:
+def readiness(provider: str | None, model: str | None, base_url: str | None) -> ModelReadiness:
     """Whether a run naming ``(provider, model, base_url)`` could reach a model (R5.2).
 
     Structural, so the run-start gate can refuse before creating a run record:
@@ -1197,9 +1191,7 @@ def _anthropic_messages(
     if system_prompt:
         payload["system"] = system_prompt
     payload.update(_reasoning_effort_payload(request, "anthropic", model))
-    response = _post_json(
-        f"{base_url}/messages", headers, payload, timeout, provider="anthropic"
-    )
+    response = _post_json(f"{base_url}/messages", headers, payload, timeout, provider="anthropic")
     text = _content_to_text(response.get("content"))
     if not text:
         raise ModelRuntimeError("Anthropic returned an empty message")

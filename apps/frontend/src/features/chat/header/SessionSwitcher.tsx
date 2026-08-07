@@ -1,6 +1,8 @@
 /**
  * The session switcher — zoc-agent-chat-rebuild R15.1, R15.3, R35.2, task 22.2.
  *
+ * Feature: zoc-agent-chat-rebuild, task 22.2 (R15.1, R15.3, R35.2).
+ *
  * The header's title, as a dropdown trigger, wrapping **the** `SessionList` from `features/sessions` rather
  * than a list of its own. That is R35.2's whole point, and it is the reason this component is thin: it owns
  * the trigger, the panel width, and the new-session action, and every row decision belongs to the list.
@@ -37,12 +39,7 @@ export interface SessionSwitcherProps extends Omit<SessionListProps, "className"
   className?: string;
 }
 
-export function SessionSwitcher({
-  title,
-  onNewSession,
-  className,
-  ...list
-}: SessionSwitcherProps) {
+export function SessionSwitcher({ title, onNewSession, className, ...list }: SessionSwitcherProps) {
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
@@ -60,7 +57,11 @@ export function SessionSwitcher({
         >
           {/* Truncated last under the header's container query: the title is the most useful thing on it. */}
           <span className="zoc-header-session-title truncate">{title}</span>
-          <ChevronDown aria-hidden className="size-3 shrink-0" style={{ color: "var(--zoc-text-faint)" }} />
+          <ChevronDown
+            aria-hidden
+            className="size-3 shrink-0"
+            style={{ color: "var(--zoc-text-faint)" }}
+          />
         </button>
       </DropdownMenuTrigger>
       <DropdownMenuContent

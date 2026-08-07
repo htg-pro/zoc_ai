@@ -2,6 +2,8 @@
  * The model catalogue and the context-window chain — zoc-agent-chat-rebuild R12.10,
  * R13.12, 9.7.
  *
+ * Feature: zoc-agent-chat-rebuild, task 9.7 (R12.10, R13.12).
+ *
  * The chain is the part worth guarding. It is the one mechanism the design marks as
  * surviving `MemoryIndicator`'s deletion, and every step of it is a case where the
  * obvious implementation returns something unusable: a `0` for an unknown model, a

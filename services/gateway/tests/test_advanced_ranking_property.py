@@ -101,9 +101,7 @@ def test_hybrid_search_is_a_bounded_deterministic_prefix(
         f"needle document {index}" if matches else f"other document {index}"
         for index, matches in enumerate(lexical_flags)
     ]
-    embeddings = [
-        (value, 1.0 - value) for value in semantic_values
-    ]
+    embeddings = [(value, 1.0 - value) for value in semantic_values]
     chunks = tuple(range(len(documents)))
     bm25 = BM25Index(documents)
     embed_query = lambda _query: (1.0, 0.0)  # noqa: E731

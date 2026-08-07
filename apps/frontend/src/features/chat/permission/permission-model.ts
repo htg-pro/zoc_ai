@@ -1,6 +1,8 @@
 /**
  * The approval dock's model — zoc-agent-chat-rebuild R11.7, R11.8, R11.9, R21.3, task 19.1.
  *
+ * Feature: zoc-agent-chat-rebuild, task 19.1 (R11.7, R11.8, R11.9, R21.3).
+ *
  * Which request is pending, how long it has left, what its scopes and reason are called, and the
  * accessible name R21.3 asks for. Split from the components for the reason the rest of the feature
  * splits: Properties 18 and 55 are claims about *which* request is on screen and *what it announces*,

@@ -1,9 +1,5 @@
 import { describe, expect, it } from "vitest";
-import {
-  buildRunTargets,
-  defaultRunTarget,
-  parseTargetId,
-} from "@/lib/run-targets";
+import { buildRunTargets, defaultRunTarget, parseTargetId } from "@/lib/run-targets";
 import type { LaunchConfig } from "@/lib/launch-configs";
 import type { Task } from "@/lib/tasks";
 
@@ -64,7 +60,10 @@ describe("defaultRunTarget", () => {
 
 describe("parseTargetId", () => {
   it("splits debug vs task ids", () => {
-    expect(parseTargetId("debug:Launch Program")).toEqual({ kind: "debug", name: "Launch Program" });
+    expect(parseTargetId("debug:Launch Program")).toEqual({
+      kind: "debug",
+      name: "Launch Program",
+    });
     expect(parseTargetId("npm:build")).toEqual({ kind: "task", name: "npm:build" });
   });
 });

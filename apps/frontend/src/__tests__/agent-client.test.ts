@@ -169,9 +169,7 @@ describe("agent-client", () => {
     const changed = await c.indexFilesChanged("s1", ["/workspace/src/app.ts"]);
     expect(changed.accepted).toBe(1);
     const changedReq = captured[captured.length - 1];
-    expect(changedReq.url).toBe(
-      "http://127.0.0.1:9999/v1/sessions/s1/index/fs-changed",
-    );
+    expect(changedReq.url).toBe("http://127.0.0.1:9999/v1/sessions/s1/index/fs-changed");
     expect(changedReq.init.method).toBe("POST");
     expect(JSON.parse(changedReq.init.body as string)).toEqual({
       paths: ["/workspace/src/app.ts"],

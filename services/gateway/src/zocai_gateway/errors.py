@@ -123,9 +123,7 @@ ERROR_MESSAGES: Final[dict[str, str]] = {
     ErrorCode.GIT_NOT_A_REPOSITORY: (
         "This workspace is not a git repository, so git actions are unavailable."
     ),
-    ErrorCode.GIT_COMMAND_FAILED: (
-        "A git command failed. See logs for the details."
-    ),
+    ErrorCode.GIT_COMMAND_FAILED: ("A git command failed. See logs for the details."),
     ErrorCode.INTERNAL: "Something went wrong. See logs for details.",
 }
 

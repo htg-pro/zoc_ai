@@ -60,7 +60,9 @@ def _budget_tokens_for_noise(noise: int, root: Path) -> list[int]:
     scratchpad = "FIXED SCRATCHPAD CONTENT"
     thinking_response = ("x" * noise) + f"<think>{scratchpad}</think>" + ("y" * noise)
 
-    def fake_generate_text(request: AgentRunRequest, *, system_prompt: str | None = None, **_kw: object):
+    def fake_generate_text(
+        request: AgentRunRequest, *, system_prompt: str | None = None, **_kw: object
+    ):
         if system_prompt and "Wrap ALL your reasoning" in system_prompt:
             return thinking_response  # the thinking call
         return ""  # planning calls → empty structured plan / edit plan
@@ -86,7 +88,9 @@ def _budget_tokens_for_noise(noise: int, root: Path) -> list[int]:
 
 
 @settings(max_examples=30, deadline=None)
-@given(noise_a=st.integers(min_value=0, max_value=60), noise_b=st.integers(min_value=0, max_value=60))
+@given(
+    noise_a=st.integers(min_value=0, max_value=60), noise_b=st.integers(min_value=0, max_value=60)
+)
 def test_thinking_tokens_excluded_from_budget(noise_a: int, noise_b: int) -> None:
     """Property 24: budget tokensUsed is independent of the thinking response size.
 
@@ -216,9 +220,7 @@ def test_sequence_numbers_strictly_increase(files: list[str]) -> None:
         def structured_plan(self, request: AgentRunRequest, context: RunContext) -> AgentPlan:
             return AgentPlan.model_validate(
                 {
-                    "steps": [
-                        {"file": f, "action": "create", "rationale": "make"} for f in files
-                    ],
+                    "steps": [{"file": f, "action": "create", "rationale": "make"} for f in files],
                     "confidence": 1.0,
                 }
             )
@@ -229,9 +231,7 @@ def test_sequence_numbers_strictly_increase(files: list[str]) -> None:
                 changes=tuple(PlannedChange(path=f, content="x\n", diff="+x") for f in files),
             )
 
-        def run_checks(
-            self, request: AgentRunRequest, plan: EditPlan
-        ) -> tuple[int, str, str]:
+        def run_checks(self, request: AgentRunRequest, plan: EditPlan) -> tuple[int, str, str]:
             return (0, "noop-check", "")
 
     events: list[dict] = []

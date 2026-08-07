@@ -2,6 +2,8 @@
  * Approval and audit endpoints over real HTTP — zoc-agent-chat-rebuild R11.7,
  * R11.9, R32.9.
  *
+ * Feature: zoc-agent-chat-rebuild, R11.7, R11.9, R32.9.
+ *
  * Exercised through the actual router and a real socket rather than by calling the
  * handlers, because two of the three things under test are HTTP facts: the status
  * code a repeated decision produces, and that one route accepts both decision

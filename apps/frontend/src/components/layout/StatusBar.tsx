@@ -16,11 +16,7 @@ import { toast } from "@/components/ui/toast";
 import { subscribeWorkspaceIndexProgress } from "@/lib/index-progress";
 import { countBySeverity } from "@/lib/problem-matchers";
 import { problemsBadge } from "@/lib/problems-badge";
-import {
-  getCursorPosition,
-  subscribeCursor,
-  type CursorPosition,
-} from "@/lib/editor-actions";
+import { getCursorPosition, subscribeCursor, type CursorPosition } from "@/lib/editor-actions";
 import {
   agentStateLabel,
   diagnosticsLabel,
@@ -93,9 +89,7 @@ export function StatusBar() {
       if (progress.type === "index.completed") {
         const files = progress.indexedFiles.toLocaleString();
         const tokens = progress.tokenCount.toLocaleString();
-        toast.success(
-          `Workspace indexed — ${files} files, ${tokens} tokens`,
-        );
+        toast.success(`Workspace indexed — ${files} files, ${tokens} tokens`);
         void loadIndexStatus();
       }
     })
@@ -156,9 +150,12 @@ export function StatusBar() {
     <footer className="flex h-[22px] shrink-0 items-center justify-between border-t border-border bg-[hsl(var(--surface))] px-1 text-[11px] text-muted-foreground select-none">
       {/* Left cluster: repo / agent / diagnostics / index */}
       <div className="flex min-w-0 items-center">
-        <Item onClick={openScm} title={git?.is_repo ? "Open Source Control" : "Not a Git repository"}>
+        <Item
+          onClick={openScm}
+          title={git?.is_repo ? "Open Source Control" : "Not a Git repository"}
+        >
           <GitBranch className="h-3 w-3" />
-          <span className="font-mono">{git?.is_repo ? git.branch ?? "(detached)" : "—"}</span>
+          <span className="font-mono">{git?.is_repo ? (git.branch ?? "(detached)") : "—"}</span>
           {gitDirty > 0 && <span className="text-warning">{gitDirty}*</span>}
         </Item>
 
@@ -166,7 +163,12 @@ export function StatusBar() {
           {agent.tone === "busy" ? (
             <Loader2 className="h-3 w-3 animate-spin text-primary" />
           ) : (
-            <Sparkles className={cn("h-3 w-3", agent.tone === "ask" ? "text-[var(--zoc-info)]" : "text-primary")} />
+            <Sparkles
+              className={cn(
+                "h-3 w-3",
+                agent.tone === "ask" ? "text-[var(--zoc-info)]" : "text-primary",
+              )}
+            />
           )}
           <span>{agent.label}</span>
         </Item>
@@ -201,9 +203,17 @@ export function StatusBar() {
         )}
 
         {runningTasks > 0 && (
-          <Item onClick={() => { setBottomTab("tasks"); if (!bottomDockOpen) toggleBottom(); }} title="Background tasks">
+          <Item
+            onClick={() => {
+              setBottomTab("tasks");
+              if (!bottomDockOpen) toggleBottom();
+            }}
+            title="Background tasks"
+          >
             <Loader2 className="h-3 w-3 animate-spin" />
-            <span>{runningTasks} task{runningTasks === 1 ? "" : "s"}</span>
+            <span>
+              {runningTasks} task{runningTasks === 1 ? "" : "s"}
+            </span>
           </Item>
         )}
       </div>
@@ -212,7 +222,11 @@ export function StatusBar() {
       <div className="flex shrink-0 items-center">
         {liveMode && <HardwareMonitor />}
 
-        {dirtyCount > 0 && <Item title="Unsaved files"><span>{dirtyCount} unsaved</span></Item>}
+        {dirtyCount > 0 && (
+          <Item title="Unsaved files">
+            <span>{dirtyCount} unsaved</span>
+          </Item>
+        )}
 
         {file && (
           <>
@@ -257,8 +271,7 @@ function Item({
   onClick?: () => void;
   title?: string;
 }) {
-  const className =
-    "flex h-[22px] items-center gap-1 px-2 transition-colors hover:bg-accent/60";
+  const className = "flex h-[22px] items-center gap-1 px-2 transition-colors hover:bg-accent/60";
   if (onClick) {
     return (
       <button type="button" onClick={onClick} title={title} className={className}>

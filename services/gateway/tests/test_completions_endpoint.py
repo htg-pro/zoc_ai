@@ -18,8 +18,22 @@ from zocai_gateway.mode_router import AgentRunRequest
 from zocai_gateway.routes import completions as comp
 from zocai_gateway.settings import GatewaySettings
 
-_BODY_FIM = {"prefix": "def ", "suffix": "", "language": "python", "filePath": "/f.py", "provider": "p", "model": "codellama-7b"}
-_BODY_FALLBACK = {"prefix": "const x", "suffix": "", "language": "typescript", "filePath": "/f.ts", "provider": "p", "model": "gpt-4o-mini"}
+_BODY_FIM = {
+    "prefix": "def ",
+    "suffix": "",
+    "language": "python",
+    "filePath": "/f.py",
+    "provider": "p",
+    "model": "codellama-7b",
+}
+_BODY_FALLBACK = {
+    "prefix": "const x",
+    "suffix": "",
+    "language": "typescript",
+    "filePath": "/f.ts",
+    "provider": "p",
+    "model": "gpt-4o-mini",
+}
 
 
 def _parse_sse(body: str) -> list[tuple[str, str]]:

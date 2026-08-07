@@ -1,6 +1,8 @@
 /**
  * Agent_Runtime admission — zoc-agent-chat-rebuild R3.4, R3.5, R3.6.
  *
+ * Feature: zoc-agent-chat-rebuild, R3.4, R3.5, R3.6.
+ *
  * Two independent checks, in a deliberate order:
  *
  *   1. The peer must be loopback. Checked *first*, before the credential is

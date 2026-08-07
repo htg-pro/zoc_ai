@@ -37,7 +37,10 @@ export default defineConfig(async () => ({
     watch: {
       ignored: ["**/src-tauri/**", "**/legacy/**", "**/node_modules/**"],
     },
-    // Proxy /v1, /api, /health to the Zoc AI backend server (port 3001).
+    // Proxy /v1, /api, /health to the Workspace_Services sidecar. In browser dev
+    // mode `lib/workspace-services-endpoint.ts` assumes `DEFAULT_DEV_PORT`, so run
+    // `pnpm dev:agent` with ZOC_STUDIO_AGENT_PORT=3001 alongside `pnpm dev:frontend`.
+    // Task 26.7 deleted `server/index.js`, the Replit-era mock that used to squat here.
     proxy: {
       "/v1": {
         target: "http://127.0.0.1:3001",

@@ -48,9 +48,11 @@ _loopback_hosts = st.sampled_from(sorted(LOOPBACK_HOSTS))
 # happens to be a loopback host so this strategy stays strictly non-loopback.
 _non_loopback_hosts = st.one_of(
     # Public / private IPv4-looking addresses.
-    st.from_regex(r"\A(?:[1-9]?[0-9]|1[0-9][0-9]|2[0-4][0-9]|25[0-5])"
-                  r"(?:\.(?:[0-9]|[1-9][0-9]|1[0-9][0-9]|2[0-4][0-9]|25[0-5])){3}\Z",
-                  fullmatch=True),
+    st.from_regex(
+        r"\A(?:[1-9]?[0-9]|1[0-9][0-9]|2[0-4][0-9]|25[0-5])"
+        r"(?:\.(?:[0-9]|[1-9][0-9]|1[0-9][0-9]|2[0-4][0-9]|25[0-5])){3}\Z",
+        fullmatch=True,
+    ),
     # DNS-style hostnames.
     st.from_regex(r"\A[a-z][a-z0-9-]{0,20}(?:\.[a-z][a-z0-9-]{0,20}){0,3}\Z", fullmatch=True),
     # Bind-all / arbitrary tokens.

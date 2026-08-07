@@ -279,7 +279,11 @@ class ModelAllocator:
 
         if reachable and complexity >= _COMPLEXITY_CLOUD_THRESHOLD:
             return ModelTier.CLOUD
-        if reachable and complexity >= _COMPLEXITY_EDGE_THRESHOLD and memory_gb >= _EDGE_MIN_MEMORY_GB:
+        if (
+            reachable
+            and complexity >= _COMPLEXITY_EDGE_THRESHOLD
+            and memory_gb >= _EDGE_MIN_MEMORY_GB
+        ):
             return ModelTier.EDGE
         return ModelTier.LOCAL_SLM
 

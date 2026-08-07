@@ -60,19 +60,14 @@ _filenames = st.text(
 @st.composite
 def _planned_changes(draw: st.DrawFn) -> tuple[PlannedChange, ...]:
     """A non-empty tuple of changes with distinct in-workspace paths."""
-    names = draw(
-        st.lists(_filenames, min_size=1, max_size=4, unique=True)
-    )
+    names = draw(st.lists(_filenames, min_size=1, max_size=4, unique=True))
     return tuple(
-        PlannedChange(path=f"{name}.txt", content=draw(st.text(max_size=20)))
-        for name in names
+        PlannedChange(path=f"{name}.txt", content=draw(st.text(max_size=20))) for name in names
     )
 
 
 _empty_plans = st.builds(EditPlan, reasoning=_reasoning, changes=st.just(()))
-_non_empty_plans = st.builds(
-    EditPlan, reasoning=_reasoning, changes=_planned_changes()
-)
+_non_empty_plans = st.builds(EditPlan, reasoning=_reasoning, changes=_planned_changes())
 
 
 # ── Property 16: the FSM branch ──────────────────────────────────────────────

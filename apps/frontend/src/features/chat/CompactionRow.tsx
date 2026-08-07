@@ -1,6 +1,8 @@
 /**
  * The compaction row — zoc-agent-chat-rebuild R34.3, R34.6, R34.7, task 16.3.
  *
+ * Feature: zoc-agent-chat-rebuild, task 16.3 (R34.3, R34.6, R34.7).
+ *
  * This is what replaces the retired `ContextCompressedEvent` banner, and **the banner stays
  * retired**. The reasoning against it holds: a modal-weight strip announcing an automatic action
  * the user did not trigger and cannot undo is noise, and it occupies the panel's most valuable row

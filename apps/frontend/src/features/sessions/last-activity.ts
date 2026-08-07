@@ -22,4 +22,3 @@ export function formatLastActivity(iso: string, now: number): string {
   const days = Math.floor(hours / 24);
   return days < 30 ? `${String(days)}d ago` : new Date(at).toISOString().slice(0, 10);
 }
-

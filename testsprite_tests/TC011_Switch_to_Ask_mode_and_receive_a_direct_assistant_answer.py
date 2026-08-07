@@ -39,29 +39,29 @@ async def run_test():
             await page.wait_for_load_state("domcontentloaded", timeout=5000)
         except Exception:
             pass
-        
+
         # -> Type a prompt into the composer ('Explain this project in two sentences.'), switch the composer to Ask mode by clicking the 'Ask' button, then click the 'Send' button to submit the prompt and observe the assistant output.
         # Message the agent… text area
         elem = page.get_by_placeholder('Message the agent…', exact=True)
         await elem.wait_for(state="visible", timeout=10000)
         await elem.fill("Explain this project in two sentences.")
-        
+
         # -> Type a prompt into the composer ('Explain this project in two sentences.'), switch the composer to Ask mode by clicking the 'Ask' button, then click the 'Send' button to submit the prompt and observe the assistant output.
         # Ask button
         elem = page.get_by_role('button', name='Ask', exact=True)
         await elem.click(timeout=10000)
-        
+
         # -> Type a prompt into the composer ('Explain this project in two sentences.'), switch the composer to Ask mode by clicking the 'Ask' button, then click the 'Send' button to submit the prompt and observe the assistant output.
         # Send button
         elem = page.get_by_role('button', name='Send', exact=True)
         await elem.click(timeout=10000)
-        
+
         # --> Assertions to verify final state
         # Assert: Verify a streamed assistant answer appears
         assert False, "Expected: Verify a streamed assistant answer appears (could not be verified on the page)"
         # Assert: Verify no review step is shown
         assert False, "Expected: Verify no review step is shown (could not be verified on the page)"
-        
+
         # --> Test blocked by environment/access constraints during agent run
         # Reason: TEST BLOCKED The test could not be run — the model backend required to produce a streamed assistant response is not available. Observations: - The UI shows the error: "Error: llama-server is not running. Start llama.cpp from Settings -> Models or load a local .gguf model before sending." - The Send button is disabled and no assistant output is being produced. - No model is selected/connected, s...
         raise AssertionError("Test blocked during agent run: " + "TEST BLOCKED The test could not be run \u2014 the model backend required to produce a streamed assistant response is not available. Observations: - The UI shows the error: \"Error: llama-server is not running. Start llama.cpp from Settings -> Models or load a local .gguf model before sending.\" - The Send button is disabled and no assistant output is being produced. - No model is selected/connected, s..." + " — the exported script cannot reproduce a PASS in this environment.")
@@ -76,4 +76,3 @@ async def run_test():
             await pw.stop()
 
 asyncio.run(run_test())
-    

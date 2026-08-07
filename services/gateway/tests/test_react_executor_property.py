@@ -182,7 +182,9 @@ def test_tool_history_accumulates_in_order(counts: list[int]) -> None:
     ]
 
     with tempfile.TemporaryDirectory() as tmp:
-        executor, _events, calls = _build(Path(tmp), _plan(("goal.py", "create", "r")), _script(responses))
+        executor, _events, calls = _build(
+            Path(tmp), _plan(("goal.py", "create", "r")), _script(responses)
+        )
         executor.run()
 
     assert calls[0]["tool_history"] == []  # the first request carries no history
@@ -208,11 +210,15 @@ def test_stop_response_executes_no_tools(content: str) -> None:
     """
     stop_with_calls = ModelToolResponse(
         text="all done",
-        tool_calls=(ToolCall(id="c1", name="write_file", arguments={"path": "a.py", "content": content}),),
+        tool_calls=(
+            ToolCall(id="c1", name="write_file", arguments={"path": "a.py", "content": content}),
+        ),
         finish_reason="stop",
     )
     with tempfile.TemporaryDirectory() as tmp:
-        executor, events, calls = _build(Path(tmp), _plan(("a.py", "create", "r")), _script([stop_with_calls]))
+        executor, events, calls = _build(
+            Path(tmp), _plan(("a.py", "create", "r")), _script([stop_with_calls])
+        )
         outcome = executor.run()
         assert not (Path(tmp) / "a.py").exists()  # the tool call in a stop is not run
 
@@ -235,13 +241,21 @@ def test_loop_terminates_on_satisfaction_or_non_tool_response(mode: str, extra: 
     """
     with tempfile.TemporaryDirectory() as tmp:
         if mode == "satisfy":
-            tool_calls = (ToolCall(id="c1", name="write_file", arguments={"path": "a.py", "content": "x"}),)
+            tool_calls = (
+                ToolCall(id="c1", name="write_file", arguments={"path": "a.py", "content": "x"}),
+            )
             if extra:
                 # A trailing call in the same response must be ignored once the
                 # step is satisfied (R8.5).
-                tool_calls += (ToolCall(id="c2", name="write_file", arguments={"path": "b.py", "content": "y"}),)
+                tool_calls += (
+                    ToolCall(
+                        id="c2", name="write_file", arguments={"path": "b.py", "content": "y"}
+                    ),
+                )
             response = ModelToolResponse(text="", tool_calls=tool_calls, finish_reason="tool_calls")
-            executor, _events, calls = _build(Path(tmp), _plan(("a.py", "create", "r")), _script([response]))
+            executor, _events, calls = _build(
+                Path(tmp), _plan(("a.py", "create", "r")), _script([response])
+            )
             outcome = executor.run()
             assert outcome.stopped_reason == "all_satisfied"
             assert outcome.satisfied_step_ids == ("edit-1",)
@@ -249,8 +263,12 @@ def test_loop_terminates_on_satisfaction_or_non_tool_response(mode: str, extra: 
             if extra:
                 assert not (Path(tmp) / "b.py").exists()  # remaining content ignored
         else:
-            response = ModelToolResponse(text="thinking...", tool_calls=(), finish_reason="tool_calls")
-            executor, _events, calls = _build(Path(tmp), _plan(("a.py", "create", "r")), _script([response]))
+            response = ModelToolResponse(
+                text="thinking...", tool_calls=(), finish_reason="tool_calls"
+            )
+            executor, _events, calls = _build(
+                Path(tmp), _plan(("a.py", "create", "r")), _script([response])
+            )
             outcome = executor.run()
             assert outcome.stopped_reason == "no_tool_calls"
             assert len(calls) == 1
@@ -280,7 +298,9 @@ def test_react_tool_activity_only_edit_file_and_command(content: str) -> None:
     with tempfile.TemporaryDirectory() as tmp:
         # The plan step (goal.py) is never satisfied by the write to other.py,
         # so all three tool calls execute.
-        executor, events, _calls = _build(Path(tmp), _plan(("goal.py", "create", "r")), _script([response]))
+        executor, events, _calls = _build(
+            Path(tmp), _plan(("goal.py", "create", "r")), _script([response])
+        )
         executor.run()
 
     edit_events = [e for e in events if e.type == "edit-file"]
@@ -305,14 +325,32 @@ def test_react_confinement_never_aborts(content: str) -> None:
     """
     script = [
         # Out-of-workspace write: rejected, no effect, loop continues (R9.5).
-        ModelToolResponse("", (ToolCall(id="1", name="write_file", arguments={"path": "../escape.py", "content": "x"}),), "tool_calls"),
+        ModelToolResponse(
+            "",
+            (
+                ToolCall(
+                    id="1", name="write_file", arguments={"path": "../escape.py", "content": "x"}
+                ),
+            ),
+            "tool_calls",
+        ),
         # In-workspace operational failure: deleting a missing file (R9.6).
-        ModelToolResponse("", (ToolCall(id="2", name="delete_file", arguments={"path": "missing.py"}),), "tool_calls"),
+        ModelToolResponse(
+            "",
+            (ToolCall(id="2", name="delete_file", arguments={"path": "missing.py"}),),
+            "tool_calls",
+        ),
         # A valid write that satisfies the plan and stops the loop.
-        ModelToolResponse("", (ToolCall(id="3", name="write_file", arguments={"path": "ok.py", "content": content}),), "tool_calls"),
+        ModelToolResponse(
+            "",
+            (ToolCall(id="3", name="write_file", arguments={"path": "ok.py", "content": content}),),
+            "tool_calls",
+        ),
     ]
     with tempfile.TemporaryDirectory() as tmp:
-        executor, events, calls = _build(Path(tmp), _plan(("ok.py", "create", "r")), _script(script))
+        executor, events, calls = _build(
+            Path(tmp), _plan(("ok.py", "create", "r")), _script(script)
+        )
         outcome = executor.run()
         assert (Path(tmp) / "ok.py").exists()  # the loop continued past both failures
 
@@ -337,14 +375,22 @@ def test_react_file_iterations_counted_and_bounded(n_writes: int) -> None:
     responses = [
         ModelToolResponse(
             text="",
-            tool_calls=(ToolCall(id=f"c{i}", name="write_file", arguments={"path": f"f{i}.py", "content": f"v{i}"}),),
+            tool_calls=(
+                ToolCall(
+                    id=f"c{i}",
+                    name="write_file",
+                    arguments={"path": f"f{i}.py", "content": f"v{i}"},
+                ),
+            ),
             finish_reason="tool_calls",
         )
         for i in range(n_writes)
     ]
     with tempfile.TemporaryDirectory() as tmp:
         # The plan step (goal.py) is never satisfied by the f{i}.py writes.
-        executor, events, _calls = _build(Path(tmp), _plan(("goal.py", "create", "never")), _script(responses))
+        executor, events, _calls = _build(
+            Path(tmp), _plan(("goal.py", "create", "never")), _script(responses)
+        )
         outcome = executor.run()
 
     edit_events = [e for e in events if e.type == "edit-file"]

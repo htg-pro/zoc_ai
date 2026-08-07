@@ -203,9 +203,7 @@ describe("waitForRuntimeHealth", () => {
     vi.useFakeTimers();
     fetchMock.mockRejectedValue(new Error("ECONNREFUSED"));
 
-    const settled = waitForRuntimeHealth(45231, "launch-token").catch(
-      (error: unknown) => error,
-    );
+    const settled = waitForRuntimeHealth(45231, "launch-token").catch((error: unknown) => error);
     await vi.advanceTimersByTimeAsync(HEALTH_WAIT_MS + PORT_POLL_MS);
 
     const error = await settled;
@@ -225,11 +223,9 @@ describe("waitForRuntimeHealth", () => {
 
 describe("runtimeAuthHeaders", () => {
   it("presents the bearer for a resolved runtime and nothing for a preview", () => {
-    expect(
-      runtimeAuthHeaders({ port: 1, token: "t", baseUrl: "http://127.0.0.1:1" }),
-    ).toEqual({ authorization: "Bearer t" });
-    expect(
-      runtimeAuthHeaders({ port: 1, token: "", baseUrl: "http://127.0.0.1:1" }),
-    ).toEqual({});
+    expect(runtimeAuthHeaders({ port: 1, token: "t", baseUrl: "http://127.0.0.1:1" })).toEqual({
+      authorization: "Bearer t",
+    });
+    expect(runtimeAuthHeaders({ port: 1, token: "", baseUrl: "http://127.0.0.1:1" })).toEqual({});
   });
 });

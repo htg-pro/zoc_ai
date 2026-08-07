@@ -1,6 +1,8 @@
 /**
  * The mention index and its filter — zoc-agent-chat-rebuild R12.2, R12.4, R12.5, task 20.2.
  *
+ * Feature: zoc-agent-chat-rebuild, task 20.2 (R12.2, R12.4, R12.5).
+ *
  * The popover's candidates, ranked. Four categories (R12.2's Files, Symbols, Terminal, Docs), one
  * pre-built `fuse.js` index over an in-memory snapshot, results capped at {@link MENTION_RESULT_LIMIT}.
  *
@@ -108,8 +110,10 @@ const FUSE_OPTIONS: IFuseOptions<MentionCandidate> = {
 export function matchesQuery(candidate: MentionCandidate, query: string): boolean {
   const needle = query.trim().toLowerCase();
   if (needle.length === 0) return true;
-  return isSubsequence(needle, candidate.label.toLowerCase()) ||
-    isSubsequence(needle, candidate.ref.toLowerCase());
+  return (
+    isSubsequence(needle, candidate.label.toLowerCase()) ||
+    isSubsequence(needle, candidate.ref.toLowerCase())
+  );
 }
 
 function isSubsequence(needle: string, haystack: string): boolean {
@@ -167,7 +171,9 @@ export function buildMentionIndex(candidates: readonly MentionCandidate[]): Ment
       // admitted order keeps the popover from going empty on a query that genuinely matched — the rule the
       // user can hold in their head wins over the library's distance function.
       if (ranked.length === 0) {
-        return admitted.slice(0, MENTION_RESULT_LIMIT).map((candidate) => ({ candidate, score: 1 }));
+        return admitted
+          .slice(0, MENTION_RESULT_LIMIT)
+          .map((candidate) => ({ candidate, score: 1 }));
       }
       return ranked;
     },

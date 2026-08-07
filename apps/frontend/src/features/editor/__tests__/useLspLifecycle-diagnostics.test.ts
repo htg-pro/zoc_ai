@@ -50,7 +50,14 @@ afterEach(() => {
 describe("useLspLifecycle diagnostics wiring (task 4.2)", () => {
   it("adds no lsp:* keys and leaves checker entries untouched with no server (R7.1, R7.2)", async () => {
     const checker: Diagnostic[] = [
-      { source: "typescript", file: "/ws/a.ts", line: 1, column: 1, severity: "error", message: "e" },
+      {
+        source: "typescript",
+        file: "/ws/a.ts",
+        line: 1,
+        column: 1,
+        severity: "error",
+        message: "e",
+      },
     ];
     useApp.setState({ diagnostics: { typescript: checker } });
 

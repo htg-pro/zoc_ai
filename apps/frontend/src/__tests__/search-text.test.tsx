@@ -38,7 +38,9 @@ describe("SearchPanel text mode", () => {
   it("Replace All invokes applyReplace with the replacement", async () => {
     vi.spyOn(bridge, "isTauri").mockReturnValue(true);
     const searchWorkspace = vi.fn().mockResolvedValue({
-      files: [{ file: "/ws/a.ts", matches: [{ line: 1, column: 1, start: 0, end: 3, text: "foo" }] }],
+      files: [
+        { file: "/ws/a.ts", matches: [{ line: 1, column: 1, start: 0, end: 3, text: "foo" }] },
+      ],
       total: 1,
       truncated: false,
     });

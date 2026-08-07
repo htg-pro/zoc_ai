@@ -67,17 +67,19 @@ const plan: fc.Arbitrary<PlanPart> = fc
 
 /** An outcome over a prefix of the plan's files: apply writes in order and stops where it stops. */
 const outcomeFor = (subject: PlanPart): fc.Arbitrary<ApplyOutcome> =>
-  fc.tuple(
-    fc.integer({ min: 0, max: subject.files.length }),
-    fc.option(fc.constant({ code: "tool_failed", message: "The apply failed part-way." }), {
-      nil: null,
-    }),
-    fc.option(fc.hexaString({ minLength: 6, maxLength: 10 }), { nil: null }),
-  ).map(([written, error, checkpoint]) => ({
-    checkpointId: checkpoint === null ? null : `ckpt_${checkpoint}`,
-    appliedPaths: subject.files.slice(0, written).map((file) => file.path),
-    error,
-  }));
+  fc
+    .tuple(
+      fc.integer({ min: 0, max: subject.files.length }),
+      fc.option(fc.constant({ code: "tool_failed", message: "The apply failed part-way." }), {
+        nil: null,
+      }),
+      fc.option(fc.hexaString({ minLength: 6, maxLength: 10 }), { nil: null }),
+    )
+    .map(([written, error, checkpoint]) => ({
+      checkpointId: checkpoint === null ? null : `ckpt_${checkpoint}`,
+      appliedPaths: subject.files.slice(0, written).map((file) => file.path),
+      error,
+    }));
 
 describe("Feature: zoc-agent-chat-rebuild, Property 23: a partial failure names exactly what was applied", () => {
   it("names exactly the written paths, in apply order (R16.7)", () => {

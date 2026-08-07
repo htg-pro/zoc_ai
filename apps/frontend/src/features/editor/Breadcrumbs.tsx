@@ -31,10 +31,7 @@ export function Breadcrumbs({ path }: { path: string }) {
     return rel.split(sep).filter(Boolean);
   }, [path, workspaceRoot]);
 
-  const symbols = useMemo(
-    () => (file ? extractOutline(file.content, file.language) : []),
-    [file],
-  );
+  const symbols = useMemo(() => (file ? extractOutline(file.content, file.language) : []), [file]);
 
   return (
     <div className="flex h-6 shrink-0 items-center gap-0.5 overflow-x-auto border-b border-border bg-[hsl(var(--surface))] px-2 text-[11px] text-muted-foreground">
@@ -84,7 +81,9 @@ function SymbolDropdown({ symbols }: { symbols: OutlineSymbol[] }) {
             onSelect={() => revealLine(s.line)}
             className="flex items-center gap-2"
           >
-            <span className="w-12 shrink-0 text-[9px] uppercase text-muted-foreground">{s.kind}</span>
+            <span className="w-12 shrink-0 text-[9px] uppercase text-muted-foreground">
+              {s.kind}
+            </span>
             <span className="truncate font-mono text-xs">{s.name}</span>
             <span className="ml-auto font-mono text-[10px] text-muted-foreground">:{s.line}</span>
           </DropdownMenuItem>

@@ -19,9 +19,7 @@ from zocai_gateway.workspace_index import WorkspaceIndexer
     declared=st.integers(min_value=1, max_value=8),
     returned=st.integers(min_value=0, max_value=9),
 )
-def test_dimension_mismatch_aborts_build_and_rejects_search(
-    declared: int, returned: int
-) -> None:
+def test_dimension_mismatch_aborts_build_and_rejects_search(declared: int, returned: int) -> None:
     """Feature: advanced-context-engine, Property 2: dimension mismatch aborts.
 
     **Validates: Requirements 1.6, 3.7**

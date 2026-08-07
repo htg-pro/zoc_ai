@@ -1,6 +1,8 @@
 /**
  * The action badge — zoc-agent-chat-rebuild R10.11, R21.7, task 18.2.
  *
+ * Feature: zoc-agent-chat-rebuild, task 18.2 (R10.11, R21.7).
+ *
  * One letter and one shape in a fixed-width monospace slot, per plan file: `A` create, `M` modify,
  * `D` delete, `R` rename. The letter is the compact form the plan card's file rows need; the shape is
  * what makes the four distinguishable without colour perception (R21.7), and it is drawn from the same
@@ -39,7 +41,9 @@ function glyphOf(action: HunkAction) {
         </>
       );
     case "delete":
-      return <rect x="2.5" y="2.5" width="7" height="7" fill="none" stroke={colour} strokeWidth="1.5" />;
+      return (
+        <rect x="2.5" y="2.5" width="7" height="7" fill="none" stroke={colour} strokeWidth="1.5" />
+      );
     case "rename":
       return (
         <path

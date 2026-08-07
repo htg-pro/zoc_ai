@@ -1,6 +1,8 @@
 /**
  * The pre-submission gate — zoc-agent-chat-rebuild R32.2, R32.6, R32.13, R32.14, R32.15, task 20.2.
  *
+ * Feature: zoc-agent-chat-rebuild, task 20.2 (R32.2, R32.6, R32.13, R32.14, R32.15).
+ *
  * R32.13's renderer half: the Chat_Surface evaluates the Capability_Policy *before* submitting a Run, and
  * the Agent_Runtime's verdict governs where the two differ. Which makes this a courtesy check rather than
  * an enforcement point, and the distinction is worth stating because it decides what belongs here. Its

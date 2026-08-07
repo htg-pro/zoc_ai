@@ -201,9 +201,7 @@ class Orchestrator:
     budget: Budget = field(default_factory=Budget)
     run_id: str = "run"
     emit: EmitSink | None = None
-    next_seq: Callable[[], int] = field(
-        default_factory=lambda: itertools.count().__next__
-    )
+    next_seq: Callable[[], int] = field(default_factory=lambda: itertools.count().__next__)
     active_file_markers: list[str] = field(init=False, default_factory=list)
     patch_diffs: list[Diff] = field(init=False, default_factory=list)
     events: list[AgentEvent] = field(init=False, default_factory=list)
@@ -339,15 +337,9 @@ class Orchestrator:
         ceiling that fired and, by virtue of being an approval row, requires the
         developer to confirm (approve) before the run continues.
         """
-        ceiling = (
-            self.budget.FILE_CEILING
-            if kind is BudgetKind.FILE
-            else self.budget.ERROR_CEILING
-        )
+        ceiling = self.budget.FILE_CEILING if kind is BudgetKind.FILE else self.budget.ERROR_CEILING
         count = (
-            self.budget.file_iterations
-            if kind is BudgetKind.FILE
-            else self.budget.error_recoveries
+            self.budget.file_iterations if kind is BudgetKind.FILE else self.budget.error_recoveries
         )
         prompt = (
             f"execution budget exceeded: {kind.value} ceiling of {ceiling} reached "

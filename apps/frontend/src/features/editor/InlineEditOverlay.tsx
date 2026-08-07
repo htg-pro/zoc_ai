@@ -2,10 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { DiffEditor } from "@monaco-editor/react";
 import { Check, Loader2, Sparkles, X } from "lucide-react";
 import { toast } from "@/components/ui/toast";
-import {
-  streamInlineEdit,
-  type InlineEditRequest,
-} from "@/features/chat/wire/inline-edit-client";
+import { streamInlineEdit, type InlineEditRequest } from "@/features/chat/wire/inline-edit-client";
 import {
   AgentEditAnimator,
   singleReplacePlan,
@@ -248,10 +245,10 @@ export function InlineEditOverlay({
               : phase === "applying"
                 ? "Applying edit…"
                 : phase === "ready"
-                ? "Enter / Accept to apply · Esc to discard"
-                : phase === "error"
-                  ? "Something went wrong"
-                  : "Enter to generate · Esc to cancel"}
+                  ? "Enter / Accept to apply · Esc to discard"
+                  : phase === "error"
+                    ? "Something went wrong"
+                    : "Enter to generate · Esc to cancel"}
           </span>
           <span className="flex items-center gap-2">
             {error ? <span className="text-[var(--zoc-error,#f87171)]">{error}</span> : null}

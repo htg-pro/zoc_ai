@@ -1,6 +1,8 @@
 /**
  * The `@perf` fixture — zoc-agent-chat-rebuild task 17.6, budgets 19.4 and 20.5.
  *
+ * Feature: zoc-agent-chat-rebuild, task 17.6.
+ *
  * Mounts the real `Transcript` in a real browser and exposes an imperative handle on `window` so the
  * CDP harness can drive it: build an N-message Session, then stream parts at a scripted rate while the
  * page samples animation-frame intervals and long tasks.
@@ -107,9 +109,7 @@ function buildMessages(count: number): ZocUIMessage[] {
       continue;
     }
 
-    const parts: ZocUIMessage["parts"] = [
-      { type: "text", text: PROSE.repeat(4), state: "done" },
-    ];
+    const parts: ZocUIMessage["parts"] = [{ type: "text", text: PROSE.repeat(4), state: "done" }];
     if (index % 4 === 1) {
       for (let call = 0; call < 3; call += 1) {
         parts.push({
@@ -161,6 +161,15 @@ export interface StreamReport {
   frameSamples: number;
   /** `longtask` entries observed over the whole stream. */
   longTasks: number;
+  /**
+   * Each observed entry's duration and start offset, so a failure says *how bad* and *when*.
+   *
+   * The count alone is not diagnosable: it cannot tell a 51 ms task from a 300 ms one, nor one
+   * clustered at the first commit from one at the largest tail string — and on a contended host a
+   * `longtask` is reported for time the OS scheduler stole, which looks identical to a regression.
+   * `startMs` is relative to the stream's own start.
+   */
+  longTaskSamples: { durationMs: number; startMs: number }[];
   /** Parts appended, so the driver can check the stream ran at the rate it asked for. */
   parts: number;
 }
@@ -229,11 +238,16 @@ const api: PerfApi = {
     };
     requestAnimationFrame(onFrame);
 
-    let longTasks = 0;
+    // Raw `startTime` values, rebased against the stream's start at report time — the observer is
+    // constructed before `startedAt` exists, and moving that declaration up would put the clock read
+    // before the frame sampler rather than beside the loop it times.
+    const longTaskEntries: { durationMs: number; rawStartMs: number }[] = [];
     let observer: PerformanceObserver | null = null;
     try {
       observer = new PerformanceObserver((list) => {
-        longTasks += list.getEntries().length;
+        for (const entry of list.getEntries()) {
+          longTaskEntries.push({ durationMs: entry.duration, rawStartMs: entry.startTime });
+        }
       });
       observer.observe({ entryTypes: ["longtask"] });
     } catch {
@@ -271,6 +285,13 @@ const api: PerfApi = {
     });
 
     sampling = false;
+    // `takeRecords()` before `disconnect()`, because disconnect drops whatever the callback has not
+    // been delivered yet. Without it the count is a floor: the entries queued by the last few commits
+    // of a 30 s stream — the most expensive ones, at the largest tail string — are exactly the ones
+    // lost, so the guard was quietest about the case most likely to fail it.
+    for (const entry of observer?.takeRecords() ?? []) {
+      longTaskEntries.push({ durationMs: entry.duration, rawStartMs: entry.startTime });
+    }
     observer?.disconnect();
     setState({ streaming: false });
     await nextFrames();
@@ -279,7 +300,11 @@ const api: PerfApi = {
       // The first interval is measured from before the loop started and is not an inter-frame gap.
       p95IntervalMs: percentile(intervals.slice(1), 0.95),
       frameSamples: Math.max(0, intervals.length - 1),
-      longTasks,
+      longTasks: longTaskEntries.length,
+      longTaskSamples: longTaskEntries.map(({ durationMs, rawStartMs }) => ({
+        durationMs: Math.round(durationMs),
+        startMs: Math.round(rawStartMs - startedAt),
+      })),
       parts,
     };
   },

@@ -95,9 +95,7 @@ def test_budget_counters_equal_operations_performed(ops: list[str]) -> None:
                     assert orch.read_file("seed.txt") is not None
                 expected_file_ops += 1
             elif op == "write":
-                change = PlannedChange(
-                    path=f"w{next(write_seq)}.txt", content="x", diff="+x"
-                )
+                change = PlannedChange(path=f"w{next(write_seq)}.txt", content="x", diff="+x")
                 if orch.write_file(change) is False:
                     orch.confirm_continue()
                     assert orch.write_file(change) is True

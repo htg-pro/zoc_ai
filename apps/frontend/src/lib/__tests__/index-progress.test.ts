@@ -1,8 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const resolveAgentPort = vi.hoisted(() => vi.fn());
+const resolveWorkspaceServicesEndpoint = vi.hoisted(() => vi.fn());
 
-vi.mock("@/lib/agent-port", () => ({ resolveAgentPort }));
+vi.mock("@/lib/workspace-services-endpoint", () => ({ resolveWorkspaceServicesEndpoint }));
 
 import {
   parseIndexProgress,
@@ -19,8 +19,11 @@ class FakeSocket implements IndexProgressSocket {
 }
 
 beforeEach(() => {
-  resolveAgentPort.mockReset();
-  resolveAgentPort.mockResolvedValue(9999);
+  resolveWorkspaceServicesEndpoint.mockReset();
+  resolveWorkspaceServicesEndpoint.mockResolvedValue({
+    port: 9999,
+    baseUrl: "http://127.0.0.1:9999",
+  });
 });
 
 describe("workspace index progress websocket", () => {
@@ -30,9 +33,7 @@ describe("workspace index progress websocket", () => {
     const onProgress = vi.fn();
     const unsubscribe = await subscribeWorkspaceIndexProgress(onProgress, factory);
 
-    expect(factory).toHaveBeenCalledWith(
-      "ws://127.0.0.1:9999/v1/workspace/index-progress",
-    );
+    expect(factory).toHaveBeenCalledWith("ws://127.0.0.1:9999/v1/workspace/index-progress");
     socket.onmessage?.({
       data: JSON.stringify({
         type: "index.progress",

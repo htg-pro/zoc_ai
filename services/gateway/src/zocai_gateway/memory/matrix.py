@@ -434,9 +434,7 @@ def runtime_summarizer(request: AgentRunRequest) -> Summarizer:
 
 def _is_compressed_marker(message: Message) -> bool:
     """Whether ``message`` is the synthetic compressed-history system message."""
-    return message.role is Role.SYSTEM and message.content.startswith(
-        COMPRESSED_HISTORY_PREFIX
-    )
+    return message.role is Role.SYSTEM and message.content.startswith(COMPRESSED_HISTORY_PREFIX)
 
 
 def _leading_system_count(messages: Sequence[Message]) -> int:
@@ -588,9 +586,7 @@ class ConversationMemory:
             while low <= high:
                 midpoint = (low + high) // 2
                 trial_messages = candidate(summary[:midpoint].rstrip())
-                trial_tokens = count_history_tokens(
-                    trial_messages, self.tokenizer_kind
-                )
+                trial_tokens = count_history_tokens(trial_messages, self.tokenizer_kind)
                 if trial_tokens <= original_tokens:
                     best = (trial_messages, trial_tokens)
                     low = midpoint + 1

@@ -7,13 +7,7 @@
  * keys). Profiles also drive import/export: a profile document carries both
  * settings and keybinding overrides as portable JSON.
  */
-import {
-  SETTINGS_REGISTRY,
-  coerce,
-  loadScope,
-  saveScope,
-  type SettingValue,
-} from "./settings";
+import { SETTINGS_REGISTRY, coerce, loadScope, saveScope, type SettingValue } from "./settings";
 import {
   loadOverrides,
   saveOverrides,

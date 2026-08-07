@@ -318,9 +318,7 @@ class DeletionGuard:
                 spec.replacement_module
             ):
                 missing.append(f"module {spec.replacement_module!r} is not importable")
-            if spec.replacement_path is not None and not self._fs.exists(
-                spec.replacement_path
-            ):
+            if spec.replacement_path is not None and not self._fs.exists(spec.replacement_path):
                 missing.append(f"path {spec.replacement_path!r} does not exist")
             return GuardOutcome(
                 reason=GuardReason.REPLACEMENT_NOT_READY,

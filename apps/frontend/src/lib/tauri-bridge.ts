@@ -277,9 +277,7 @@ export async function runtimeRestart(): Promise<void> {
   await callOrNull<void>("runtime_restart");
 }
 
-export async function onRuntimeStatus(
-  cb: (ev: RuntimeStatus) => void,
-): Promise<() => void> {
+export async function onRuntimeStatus(cb: (ev: RuntimeStatus) => void): Promise<() => void> {
   const b = await bindings();
   if (!b) return () => undefined;
   try {
@@ -325,9 +323,12 @@ export async function localModelHardwareFit(
 // paths returned by the backend's file-tree, so the backend's `safePath`
 // helper accepts them directly.
 
-async function webFsGet<T>(endpoint: string, params: Record<string, string> = {}): Promise<T | null> {
+async function webFsGet<T>(
+  endpoint: string,
+  params: Record<string, string> = {},
+): Promise<T | null> {
   try {
-    const qs  = new URLSearchParams(params).toString();
+    const qs = new URLSearchParams(params).toString();
     const url = `${endpoint}${qs ? "?" + qs : ""}`;
     const res = await fetch(url);
     if (!res.ok) return null;
@@ -340,9 +341,9 @@ async function webFsGet<T>(endpoint: string, params: Record<string, string> = {}
 async function webFsPost<T>(endpoint: string, body: unknown): Promise<T | null> {
   try {
     const res = await fetch(endpoint, {
-      method:  "POST",
+      method: "POST",
       headers: { "Content-Type": "application/json" },
-      body:    JSON.stringify(body),
+      body: JSON.stringify(body),
     });
     if (!res.ok) return null;
     return res.json() as Promise<T>;
@@ -355,7 +356,7 @@ async function webFsPost<T>(endpoint: string, body: unknown): Promise<T | null> 
 export async function fsListDir(root: string, depth?: number): Promise<FileNode[]> {
   if (!isTauri()) {
     const tree = await webFsGet<FileNode[]>("/api/fs/list", {
-      path:  root,
+      path: root,
       depth: String(depth ?? 4),
     });
     return tree ?? [];
@@ -831,7 +832,10 @@ export async function legacyImport(): Promise<LegacyImportResult> {
   );
 }
 
-export async function telemetryLog(kind: string, meta: Record<string, unknown> = {}): Promise<void> {
+export async function telemetryLog(
+  kind: string,
+  meta: Record<string, unknown> = {},
+): Promise<void> {
   await callOrNull<void>("telemetry_log", { event: { kind, meta } });
 }
 
@@ -1040,9 +1044,7 @@ export async function llamacppStatus(): Promise<LlamaCppStatus | null> {
   return callOrNull<LlamaCppStatus>("llamacpp_status");
 }
 
-export async function onLlamaCppStatus(
-  cb: (ev: LlamaCppStatus) => void,
-): Promise<() => void> {
+export async function onLlamaCppStatus(cb: (ev: LlamaCppStatus) => void): Promise<() => void> {
   const b = await bindings();
   if (!b) return () => undefined;
   try {

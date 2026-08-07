@@ -56,9 +56,7 @@ def test_events_endpoint_is_event_stream_and_streams_in_order(tmp_path: Path) ->
             json={"prompt": "build the thing", "mode": "agent"},
         ).json()["runId"]
 
-        with client.stream(
-            "GET", "/v1/agent/events", params={"runId": run_id}
-        ) as resp:
+        with client.stream("GET", "/v1/agent/events", params={"runId": run_id}) as resp:
             assert resp.status_code == 200
             # R6.1: the bus is delivered as Server-Sent Events.
             assert resp.headers["content-type"].startswith("text/event-stream")

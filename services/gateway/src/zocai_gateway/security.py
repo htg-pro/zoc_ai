@@ -196,9 +196,7 @@ class RateLimiter:
                     allowed=False, remaining=0, retry_after_seconds=retry_after
                 )
             window.append(now)
-            return RateLimitDecision(
-                allowed=True, remaining=self._limit - len(window)
-            )
+            return RateLimitDecision(allowed=True, remaining=self._limit - len(window))
 
     def reset(self, key: str | None = None) -> None:
         """Forget recorded attempts (all keys when ``key`` is ``None``)."""

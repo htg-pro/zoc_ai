@@ -69,7 +69,9 @@ export const Cards: Story = () => (
       <h3 className="text-sm font-semibold">Indexing</h3>
       <p className="mt-1 text-xs text-muted-foreground">3,214 chunks · 128 files</p>
       <Separator className="my-3" />
-      <Button size="sm" variant="outline">Reindex</Button>
+      <Button size="sm" variant="outline">
+        Reindex
+      </Button>
     </Card>
     <Card className="p-4">
       <h3 className="text-sm font-semibold">Permissions</h3>

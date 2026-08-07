@@ -8,12 +8,12 @@ integration backlog.
 
 ## Linux downloads
 
-| Package | Use |
-|---|---|
-| `Zoc AI_0.0.2_amd64.deb` | Debian, Ubuntu, and derivatives |
-| `Zoc AI-0.0.2-1.x86_64.rpm` | Fedora, RHEL, openSUSE, and derivatives |
-| `zoc-studio-0.0.2-linux-x86_64.tar.gz` | Portable x86_64 Linux bundle |
-| `SHA256SUMS` | Artifact integrity verification |
+| Package                                | Use                                     |
+| -------------------------------------- | --------------------------------------- |
+| `Zoc AI_0.0.2_amd64.deb`               | Debian, Ubuntu, and derivatives         |
+| `Zoc AI-0.0.2-1.x86_64.rpm`            | Fedora, RHEL, openSUSE, and derivatives |
+| `zoc-studio-0.0.2-linux-x86_64.tar.gz` | Portable x86_64 Linux bundle            |
+| `SHA256SUMS`                           | Artifact integrity verification         |
 
 Verify downloads from the directory containing the files:
 

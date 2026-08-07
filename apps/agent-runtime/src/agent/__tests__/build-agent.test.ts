@@ -2,6 +2,8 @@
  * The Run stream — zoc-agent-chat-rebuild task 9.6 (R5.1, R8.1, R8.2, R9.1,
  * R15.6, R30.4), plus the ordering half of R7.7.
  *
+ * Feature: zoc-agent-chat-rebuild, task 9.6 (R5.1, R8.1, R8.2, R9.1, R15.6, R30.4).
+ *
  * These tests assert the *order* of a Run's emissions as much as their content,
  * because ordering is the part of the contract a refactor breaks silently. In
  * particular: the terminal `run-lifecycle` is last, the `finish` chunk carrying
@@ -292,6 +294,44 @@ describe("request shaping", () => {
       { role: "user", content: "hello" },
       { role: "assistant", content: "hi" },
     ]);
+  });
+
+  it("places document text and image data on the newest user turn (R29.2/R29.4)", () => {
+    const converted = toModelMessages(
+      request({
+        messages: [
+          { id: "m1", role: "user", text: "older" },
+          { id: "m2", role: "assistant", text: "answer" },
+          { id: "m3", role: "user", text: "inspect these" },
+        ],
+        attachments: [
+          {
+            kind: "document",
+            name: "notes.txt",
+            mediaType: "text/plain",
+            size: 5,
+            text: "hello",
+            estimatedTokens: 2,
+          },
+          {
+            kind: "image",
+            name: "screen.png",
+            mediaType: "image/png",
+            size: 2,
+            dataUrl: "data:image/png;base64,AA==",
+            estimatedTokens: 0,
+          },
+        ],
+      }),
+    );
+    expect(converted[0]).toEqual({ role: "user", content: "older" });
+    expect(converted[2]).toEqual({
+      role: "user",
+      content: [
+        { type: "text", text: "inspect these\n\n[Attached document: notes.txt]\nhello" },
+        { type: "image", image: "AA==", mediaType: "image/png" },
+      ],
+    });
   });
 });
 
@@ -722,14 +762,14 @@ describe("failure", () => {
     const chunks = await run({
       languageModel: failing(),
       classifyError: () => ({
-        code: ErrorCode.PROVIDER_RATE_LIMITED,
-        message: "Too many requests.",
+        code: ErrorCode.PROVIDER_CONTENT_FILTERED,
+        message: "Request refused.",
         details: null,
-        retryable: true,
+        retryable: false,
       }),
     });
     expect(dataParts<{ code: string }>(chunks, "data-zoc-error")[0]?.code).toBe(
-      ErrorCode.PROVIDER_RATE_LIMITED,
+      ErrorCode.PROVIDER_CONTENT_FILTERED,
     );
   });
 });

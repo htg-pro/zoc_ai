@@ -185,9 +185,7 @@ class AmbiguousTransitionError(RuntimeError):
 
     def __init__(self, source: Stage, targets: frozenset[Stage]) -> None:
         listed = ", ".join(sorted(t.value for t in targets)) or "<none>"
-        super().__init__(
-            f"ambiguous advance from {source.value}; legal targets: {listed}"
-        )
+        super().__init__(f"ambiguous advance from {source.value}; legal targets: {listed}")
         self.source = source
         self.targets = targets
 
@@ -445,7 +443,9 @@ class FSM:
         if self.emit is not None:
             self.emit(event)
 
-    def report_review(self, state: StageState, ts: str | None = None, reason: str | None = None) -> None:
+    def report_review(
+        self, state: StageState, ts: str | None = None, reason: str | None = None
+    ) -> None:
         """Emit a REVIEW reported-stage frame (plan-mode approval gate, R7.5/R7.8).
 
         REVIEW has no FSM stage; the plan-mode approval gate drives it directly.

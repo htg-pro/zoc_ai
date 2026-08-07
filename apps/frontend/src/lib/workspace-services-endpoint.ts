@@ -40,10 +40,7 @@ function delay(ms: number): Promise<void> {
   return new Promise((resolve) => globalThis.setTimeout(resolve, ms));
 }
 
-export async function waitForWorkspaceHealth(
-  port: number,
-  signal?: AbortSignal,
-): Promise<void> {
+export async function waitForWorkspaceHealth(port: number, signal?: AbortSignal): Promise<void> {
   const deadline = Date.now() + HEALTH_WAIT_MS;
   let lastError = "timed out";
   const url = `http://127.0.0.1:${port}/health`;
@@ -63,9 +60,7 @@ export async function waitForWorkspaceHealth(
     await delay(PORT_POLL_MS);
   }
 
-  throw new WorkspaceServicesUnavailableError(
-    `port ${port} did not pass /health (${lastError})`,
-  );
+  throw new WorkspaceServicesUnavailableError(`port ${port} did not pass /health (${lastError})`);
 }
 
 export async function resolveWorkspaceServicesEndpoint(

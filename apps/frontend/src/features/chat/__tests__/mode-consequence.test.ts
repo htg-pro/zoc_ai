@@ -34,9 +34,7 @@ describe("Feature: zoc-agent-chat-rebuild, task 20.2: the nine mode-consequence 
   it("reads its capability flags straight from the policy", () => {
     for (const { mode, permissionMode, consequence } of everyModePair()) {
       const label = `${mode}:${permissionMode}`;
-      expect(consequence.mayChangeNow, label).toBe(
-        checkCapability(mode, false, "write").permitted,
-      );
+      expect(consequence.mayChangeNow, label).toBe(checkCapability(mode, false, "write").permitted);
       expect(consequence.mayChangeAfterPlanApproval, label).toBe(
         checkCapability(mode, true, "write").permitted,
       );
@@ -46,8 +44,7 @@ describe("Feature: zoc-agent-chat-rebuild, task 20.2: the nine mode-consequence 
   it("promises a change only where the policy permits one", () => {
     for (const { mode, permissionMode, consequence } of everyModePair()) {
       const label = `${mode}:${permissionMode}`;
-      const canEverChange =
-        consequence.mayChangeNow || consequence.mayChangeAfterPlanApproval;
+      const canEverChange = consequence.mayChangeNow || consequence.mayChangeAfterPlanApproval;
       if (!canEverChange) {
         // The sentence must not imply a mutation the gate would refuse.
         expect(consequence.sentence, label).not.toMatch(/changes files|approve the plan/);

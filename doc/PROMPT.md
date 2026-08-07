@@ -46,18 +46,18 @@ approval gate for destructive actions.
 
 **Tech stack at a glance:**
 
-| Layer | Technology |
-|---|---|
-| Desktop shell | Rust + Tauri v2 |
-| Agent gateway / sidecar | Python 3.12 + FastAPI |
-| Frontend | React 18 + TypeScript + Vite + Tailwind CSS |
-| Local LLM runtime | llama.cpp (`llama-server` binary) |
-| Cloud LLM fallback | OpenAI / Anthropic (OpenAI-compatible API) |
-| Editor | Monaco Editor |
-| Terminal | xterm.js + OS PTY via Python sidecar |
-| State management | Zustand |
-| IPC | Tauri `invoke` + SSE (Server-Sent Events) |
-| Monorepo | pnpm workspaces + Cargo workspace |
+| Layer                   | Technology                                  |
+| ----------------------- | ------------------------------------------- |
+| Desktop shell           | Rust + Tauri v2                             |
+| Agent gateway / sidecar | Python 3.12 + FastAPI                       |
+| Frontend                | React 18 + TypeScript + Vite + Tailwind CSS |
+| Local LLM runtime       | llama.cpp (`llama-server` binary)           |
+| Cloud LLM fallback      | OpenAI / Anthropic (OpenAI-compatible API)  |
+| Editor                  | Monaco Editor                               |
+| Terminal                | xterm.js + OS PTY via Python sidecar        |
+| State management        | Zustand                                     |
+| IPC                     | Tauri `invoke` + SSE (Server-Sent Events)   |
+| Monorepo                | pnpm workspaces + Cargo workspace           |
 
 ---
 
@@ -122,6 +122,7 @@ and Windows."
 ```
 
 **Manual steps:**
+
 ```bash
 # Rust
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
@@ -1149,21 +1150,21 @@ Save to the workspace root as 'zoc-session-<date>.md'."
 
 ## QUICK REFERENCE
 
-| What you want to do | File to edit | Prompt keyword |
-|---|---|---|
-| Add a new FSM state | services/gateway/fsm.py | "FSM transition" |
-| Add a new agent tool | services/gateway/toolsets.py | "new tool" |
-| Add a new Tauri IPC command | apps/desktop/src/lib.rs | "tauri::command" |
-| Add a new frontend feature | apps/frontend/src/features/ | "new feature panel" |
-| Add a new SSE event type | services/gateway/events.py | "EventType" |
-| Change the system prompt | services/gateway/prompts.py | "system prompt" |
-| Add a new model provider | services/gateway/model_runtime.py | "provider config" |
-| Change design tokens | apps/frontend/src/styles/globals.css | "zoc-*" |
-| Add a new UI component | apps/frontend/src/components/ui/ | "shadcn" |
-| Add a Rust test | apps/desktop/src/\*.rs | "#[cfg(test)]" |
-| Add a Python property test | services/gateway/tests/ | "hypothesis @given" |
+| What you want to do         | File to edit                         | Prompt keyword      |
+| --------------------------- | ------------------------------------ | ------------------- |
+| Add a new FSM state         | services/gateway/fsm.py              | "FSM transition"    |
+| Add a new agent tool        | services/gateway/toolsets.py         | "new tool"          |
+| Add a new Tauri IPC command | apps/desktop/src/lib.rs              | "tauri::command"    |
+| Add a new frontend feature  | apps/frontend/src/features/          | "new feature panel" |
+| Add a new SSE event type    | services/gateway/events.py           | "EventType"         |
+| Change the system prompt    | services/gateway/prompts.py          | "system prompt"     |
+| Add a new model provider    | services/gateway/model_runtime.py    | "provider config"   |
+| Change design tokens        | apps/frontend/src/styles/globals.css | "zoc-\*"            |
+| Add a new UI component      | apps/frontend/src/components/ui/     | "shadcn"            |
+| Add a Rust test             | apps/desktop/src/\*.rs               | "#[cfg(test)]"      |
+| Add a Python property test  | services/gateway/tests/              | "hypothesis @given" |
 
 ---
 
-*Generated for Zoc Studio — local-first AI coding agent desktop app.*
-*Stack: Tauri v2 · React 18 · FastAPI · llama.cpp · Monaco · xterm.js*
+_Generated for Zoc Studio — local-first AI coding agent desktop app._
+_Stack: Tauri v2 · React 18 · FastAPI · llama.cpp · Monaco · xterm.js_

@@ -13,13 +13,15 @@ import type { OnMount } from "@monaco-editor/react";
 import type { OpenFile } from "@/lib/store";
 import { useApp } from "@/lib/store";
 import { useReducedMotion } from "@/lib/reduced-motion";
-import { clearActiveEditor, setActiveEditor, setCursorPosition, revealPosition, takePendingReveal } from "@/lib/editor-actions";
-import type { Severity } from "@/lib/problem-matchers";
 import {
-  captureMonaco,
-  ensureServicesInitialized,
-  toMonacoModelUri,
-} from "./lsp/monaco-services";
+  clearActiveEditor,
+  setActiveEditor,
+  setCursorPosition,
+  revealPosition,
+  takePendingReveal,
+} from "@/lib/editor-actions";
+import type { Severity } from "@/lib/problem-matchers";
+import { captureMonaco, ensureServicesInitialized, toMonacoModelUri } from "./lsp/monaco-services";
 import { createInlineCompletionsProvider } from "./inline-completions";
 import { streamCompletion } from "@/lib/completions-client";
 import { toast } from "@/components/ui/toast";
@@ -299,18 +301,14 @@ export function MonacoView({
     // Ensure a caret content widget exists.
     if (!caretWidgetRef.current) {
       const node = document.createElement("span");
-      node.className = `monaco-agent-caret ${
-        reducedMotion ? "" : "motion-caret-blink"
-      }`.trim();
+      node.className = `monaco-agent-caret ${reducedMotion ? "" : "motion-caret-blink"}`.trim();
       const position = { lineNumber: 1, column: 1 };
       const widget = {
         getId: () => "agent.editing.caret",
         getDomNode: () => node,
         getPosition: () => ({
           position,
-          preference: [
-            monaco.editor.ContentWidgetPositionPreference.EXACT,
-          ],
+          preference: [monaco.editor.ContentWidgetPositionPreference.EXACT],
         }),
       };
       editor.addContentWidget?.(widget as never);

@@ -1,6 +1,8 @@
 /**
  * Rule-source classification, runtime copy — zoc-agent-chat-rebuild R30.1, R30.3.
  *
+ * Feature: zoc-agent-chat-rebuild, R30.1, R30.3.
+ *
  * A deliberate copy of `apps/frontend/src/lib/rules-sources.ts`, made under the
  * additive-copy rule in the plan's *Cutover discipline*. The renderer's Rules
  * display and the runtime's prompt assembly must not be able to disagree about

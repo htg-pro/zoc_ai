@@ -5,10 +5,16 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { useApp } from "@/lib/store";
 import { isTauri } from "@/lib/tauri-bridge";
-import { countBySeverity, type CheckKind, type Diagnostic, type Severity } from "@/lib/problem-matchers";
+import {
+  countBySeverity,
+  type CheckKind,
+  type Diagnostic,
+  type Severity,
+} from "@/lib/problem-matchers";
 import { basename, joinPath } from "@/lib/paths";
 import { revealPosition, requestReveal } from "@/lib/editor-actions";
 import { buildFixErrorsPrompt, errorCount } from "./fix-errors-prompt";
+import { useChatSurface } from "@/features/chat/store";
 import { cn } from "@/lib/utils";
 
 const SEVERITY_ICON: Record<Severity, { Icon: typeof AlertTriangle; className: string }> = {
@@ -40,8 +46,8 @@ export function ProblemsPanel() {
   const openFile = useApp((s) => s.openFile);
   const workspaceRoot = useApp((s) => s.workspaceRoot);
   const activeFile = useApp((s) => s.activeFile);
-  const setInput = useApp((s) => s.setInput);
-  const setAgentMode = useApp((s) => s.setAgentMode);
+  const setDraft = useChatSurface((s) => s.setDraft);
+  const setConversationMode = useChatSurface((s) => s.setConversationMode);
 
   const all = useMemo<Diagnostic[]>(() => Object.values(diagnostics).flat(), [diagnostics]);
   const byFile = useMemo(() => {
@@ -78,10 +84,11 @@ export function ProblemsPanel() {
   };
 
   // R6: hand a file's error-severity diagnostics to the agent as an editable,
-  // unsent Composer draft in Agent mode. Sends nothing.
+  // unsent Composer draft in Agent mode. Sends nothing. Written to the
+  // Chat_Surface's store, which is what the mounted composer reads since 25.6.
   const runAgentToFix = (file: string, items: Diagnostic[]) => {
-    setInput(buildFixErrorsPrompt(file, items));
-    setAgentMode("agent");
+    setDraft(buildFixErrorsPrompt(file, items));
+    setConversationMode("agent");
   };
 
   return (
@@ -99,7 +106,11 @@ export function ProblemsPanel() {
         </span>
         <div className="ml-auto flex items-center gap-0.5">
           {CHECKS.map((c) => (
-            <RunButton key={c.kind} label={c.label} onClick={() => void runDiagnostics(c.kind, c.cwd)} />
+            <RunButton
+              key={c.kind}
+              label={c.label}
+              onClick={() => void runDiagnostics(c.kind, c.cwd)}
+            />
           ))}
           <Button
             size="sm"
@@ -119,7 +130,9 @@ export function ProblemsPanel() {
             <CheckCircle2 className="h-6 w-6 text-emerald-500/70" />
             <div className="text-xs text-muted-foreground">No problems detected</div>
             <div className="text-[10px] text-muted-foreground/70">
-              {isTauri() ? "Run a checker above to populate this list." : "Validation runs in the desktop app."}
+              {isTauri()
+                ? "Run a checker above to populate this list."
+                : "Validation runs in the desktop app."}
             </div>
           </div>
         ) : (
@@ -134,7 +147,9 @@ export function ProblemsPanel() {
                       onClick={() => openAt(file, items[0]?.line ?? 1, items[0]?.column ?? 1)}
                       className="flex min-w-0 flex-1 items-center gap-1.5 text-left"
                     >
-                      <span className="truncate font-mono text-[11px] text-foreground">{basename(file)}</span>
+                      <span className="truncate font-mono text-[11px] text-foreground">
+                        {basename(file)}
+                      </span>
                       <span className="truncate text-[10px] text-muted-foreground">{file}</span>
                     </button>
                     {nErrors >= 1 && (
@@ -186,7 +201,9 @@ export function ProblemsPanel() {
                             >
                               <Icon className={cn("mt-0.5 h-3.5 w-3.5 shrink-0", className)} />
                               <span className="min-w-0 flex-1">
-                                <span className="block truncate text-xs text-foreground">{d.message}</span>
+                                <span className="block truncate text-xs text-foreground">
+                                  {d.message}
+                                </span>
                                 <span className="font-mono text-[10px] text-muted-foreground">
                                   {d.source}
                                   {d.code ? `(${d.code})` : ""} · {d.line}:{d.column}

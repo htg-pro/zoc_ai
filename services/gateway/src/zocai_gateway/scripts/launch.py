@@ -171,7 +171,10 @@ def main() -> int:
     args = sys.argv[1:]
     if args and args[0] == MCP_SERVER_FLAG:
         if len(args) != 2:
-            print("usage: zoc-studio-agent --mcp-server <web_search|docs|git_history>", file=sys.stderr)
+            print(
+                "usage: zoc-studio-agent --mcp-server <web_search|docs|git_history>",
+                file=sys.stderr,
+            )
             return 2
         return run_bundled_mcp_server(args[1])
     if any(arg in {"-h", "--help"} for arg in args):

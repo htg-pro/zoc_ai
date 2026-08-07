@@ -94,8 +94,7 @@ def test_initialize_reports_protocol_capabilities_and_server_info() -> None:
 
 def test_notifications_initialized_has_no_response() -> None:
     assert (
-        handle_request({"jsonrpc": "2.0", "method": "notifications/initialized"}, {}, _ROOT)
-        is None
+        handle_request({"jsonrpc": "2.0", "method": "notifications/initialized"}, {}, _ROOT) is None
     )
 
 

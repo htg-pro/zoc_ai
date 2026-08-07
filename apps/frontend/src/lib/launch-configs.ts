@@ -24,9 +24,11 @@ export interface LaunchConfig {
 
 function familyOf(type: string): LaunchConfig["kind"] {
   const t = type.toLowerCase();
-  if (t.includes("node") || t === "pwa-node" || t.includes("chrome") || t.includes("js")) return "node";
+  if (t.includes("node") || t === "pwa-node" || t.includes("chrome") || t.includes("js"))
+    return "node";
   if (t.includes("python") || t === "debugpy") return "python";
-  if (t.includes("lldb") || t.includes("cppdbg") || t.includes("gdb") || t === "cargo") return "rust";
+  if (t.includes("lldb") || t.includes("cppdbg") || t.includes("gdb") || t === "cargo")
+    return "rust";
   if (t.includes("go") || t === "delve") return "go";
   return "other";
 }

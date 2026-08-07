@@ -81,9 +81,7 @@ class RecordingFileSystem:
     def remove_directory(self, path: str) -> None:
         self.removed.append(path)
         self._paths.discard(path)
-        self.config_after_each_removal.append(
-            {c for c in self._config_files if c in self._paths}
-        )
+        self.config_after_each_removal.append({c for c in self._config_files if c in self._paths})
 
 
 class ClobberingFileSystem(RecordingFileSystem):
@@ -131,9 +129,7 @@ def _scenarios(draw: st.DrawFn) -> tuple[tuple[MigrationStage, ...], tuple[str, 
     """Generate a stage list and a shared-config set with disjoint paths."""
     # Unique slugs partitioned into legacy dirs, replacements, and config files.
     n_stages = draw(st.integers(min_value=1, max_value=6))
-    slugs = draw(
-        st.lists(_NAMES, min_size=2 * n_stages + 1, max_size=40, unique=True)
-    )
+    slugs = draw(st.lists(_NAMES, min_size=2 * n_stages + 1, max_size=40, unique=True))
 
     legacy_slugs = slugs[:n_stages]
     replacement_slugs = slugs[n_stages : 2 * n_stages]
@@ -160,9 +156,7 @@ def _scenarios(draw: st.DrawFn) -> tuple[tuple[MigrationStage, ...], tuple[str, 
     return stages, config
 
 
-def _full_workspace_paths(
-    stages: tuple[MigrationStage, ...], config: tuple[str, ...]
-) -> set[str]:
+def _full_workspace_paths(stages: tuple[MigrationStage, ...], config: tuple[str, ...]) -> set[str]:
     paths: set[str] = set(config)
     for stage in stages:
         paths.add(stage.replacement)

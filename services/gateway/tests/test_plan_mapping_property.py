@@ -110,14 +110,10 @@ def test_plan_row_precedes_any_edit(files: list[str]) -> None:
         def edit_plan(self, request: AgentRunRequest, context: RunContext) -> EditPlan:
             return EditPlan(
                 reasoning="apply",
-                changes=tuple(
-                    PlannedChange(path=f, content="x\n", diff="+x") for f in files
-                ),
+                changes=tuple(PlannedChange(path=f, content="x\n", diff="+x") for f in files),
             )
 
-        def run_checks(
-            self, request: AgentRunRequest, plan: EditPlan
-        ) -> tuple[int, str, str]:
+        def run_checks(self, request: AgentRunRequest, plan: EditPlan) -> tuple[int, str, str]:
             return (0, "noop-check", "")
 
     with tempfile.TemporaryDirectory() as tmp:
@@ -160,14 +156,10 @@ def test_plan_update_done_iff_applied(case: tuple[list[str], list[str]]) -> None
         def edit_plan(self, request: AgentRunRequest, context: RunContext) -> EditPlan:
             return EditPlan(
                 reasoning="apply",
-                changes=tuple(
-                    PlannedChange(path=f, content="x\n", diff="+x") for f in applied
-                ),
+                changes=tuple(PlannedChange(path=f, content="x\n", diff="+x") for f in applied),
             )
 
-        def run_checks(
-            self, request: AgentRunRequest, plan: EditPlan
-        ) -> tuple[int, str, str]:
+        def run_checks(self, request: AgentRunRequest, plan: EditPlan) -> tuple[int, str, str]:
             return (0, "noop-check", "")
 
     with tempfile.TemporaryDirectory() as tmp:
@@ -177,13 +169,7 @@ def test_plan_update_done_iff_applied(case: tuple[list[str], list[str]]) -> None
     done_edit_ids = {
         e["id"]
         for e in events
-        if e["type"] == "plan-update"
-        and e["status"] == "done"
-        and str(e["id"]).startswith("edit-")
+        if e["type"] == "plan-update" and e["status"] == "done" and str(e["id"]).startswith("edit-")
     }
-    expected = {
-        f"edit-{index}"
-        for index, file in enumerate(files, start=1)
-        if file in applied
-    }
+    expected = {f"edit-{index}" for index, file in enumerate(files, start=1) if file in applied}
     assert done_edit_ids == expected
