@@ -16,9 +16,7 @@ _VALID_FILES = st.sampled_from(
     ["a.py", "src/b.py", "dir/sub/c.txt", "x", "a/b/c/d.md", "pkg/mod.py"]
 )
 # Empty, whitespace-only, absolute, or parent-escaping paths are all rejected.
-_INVALID_FILES = st.sampled_from(
-    ["", "   ", "/abs/path", "../escape", "a/../b", "..", "/", "\t"]
-)
+_INVALID_FILES = st.sampled_from(["", "   ", "/abs/path", "../escape", "a/../b", "..", "/", "\t"])
 _VALID_ACTIONS = st.sampled_from(["create", "modify", "delete", "rename"])
 _INVALID_ACTIONS = st.sampled_from(["CREATE", "append", "", "read", "renamed"])
 _RATIONALES = st.text(max_size=30)

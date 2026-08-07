@@ -1,6 +1,8 @@
 /**
  * Jump to latest — zoc-agent-chat-rebuild R20.8, task 17.2.
  *
+ * Feature: zoc-agent-chat-rebuild, task 17.2 (R20.8).
+ *
  * Appears when the transcript is scrolled away from the newest row, and names how many rows have
  * arrived since. Both facts come from the store rather than from props: `anchored` is written by the
  * transcript's `onScroll` at the measured 32 px rule, and `rowsSinceUnanchored` is incremented by

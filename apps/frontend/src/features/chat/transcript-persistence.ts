@@ -1,6 +1,8 @@
 /**
  * Transcript persistence, renderer side — zoc-agent-chat-rebuild R15.2, R15.6, R15.7, task 22.5.
  *
+ * Feature: zoc-agent-chat-rebuild, task 22.5 (R15.2, R15.6, R15.7).
+ *
  * The read half of R15.6. The runtime writes a completed Run's messages to
  * Workspace_Services (`onFinish`, through its own `RunPersistence`); this module is
  * what the Chat_Surface calls to get them back when a Session is selected, plus the

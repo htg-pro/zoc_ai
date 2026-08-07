@@ -41,9 +41,7 @@ class _StructuredBrain(DefaultAgentBrain):
     def structured_plan(self, request: AgentRunRequest, context: RunContext) -> AgentPlan:
         return _PLAN
 
-    def run_checks(
-        self, request: AgentRunRequest, plan: EditPlan
-    ) -> tuple[int, str, str]:
+    def run_checks(self, request: AgentRunRequest, plan: EditPlan) -> tuple[int, str, str]:
         return (0, "noop-check", "")
 
 
@@ -55,14 +53,20 @@ def test_react_strategy_drives_full_run(tmp_path: Path) -> None:
             ModelToolResponse(
                 text="",
                 tool_calls=(
-                    ToolCall(id="w1", name="write_file", arguments={"path": "a.py", "content": "print(1)\n"}),
+                    ToolCall(
+                        id="w1",
+                        name="write_file",
+                        arguments={"path": "a.py", "content": "print(1)\n"},
+                    ),
                 ),
                 finish_reason="tool_calls",
             ),
             # A shell check surfaces as a command row.
             ModelToolResponse(
                 text="",
-                tool_calls=(ToolCall(id="s1", name="run_shell", arguments={"argv": ["echo", "ok"]}),),
+                tool_calls=(
+                    ToolCall(id="s1", name="run_shell", arguments={"argv": ["echo", "ok"]}),
+                ),
                 finish_reason="tool_calls",
             ),
             # Finish with a stop finish reason.
@@ -101,8 +105,7 @@ def test_react_strategy_drives_full_run(tmp_path: Path) -> None:
     assert "command" in types  # R9.2 shell call surfaced
     assert "budget" in types  # R10.1/10.4 budget emitted on the counted write
     assert any(
-        e["type"] == "plan-update" and e["id"] == "edit-1" and e["status"] == "done"
-        for e in events
+        e["type"] == "plan-update" and e["id"] == "edit-1" and e["status"] == "done" for e in events
     )
     edit_paths = [e["path"] for e in events if e["type"] == "edit-file"]
     assert "a.py" in edit_paths

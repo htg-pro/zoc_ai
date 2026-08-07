@@ -89,7 +89,9 @@ describe("command registry", () => {
     // With an active file it resolves.
     useApp.setState({
       activeFile: "/a.ts",
-      openFiles: [{ path: "/a.ts", name: "a.ts", language: "typescript", content: "", dirty: false }],
+      openFiles: [
+        { path: "/a.ts", name: "a.ts", language: "typescript", content: "", dirty: false },
+      ],
     });
     expect(matchKeybinding(key({ key: "s", metaKey: true }), useApp.getState())?.id).toBe(
       "workbench.action.files.save",

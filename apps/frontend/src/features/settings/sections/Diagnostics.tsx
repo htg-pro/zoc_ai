@@ -10,11 +10,7 @@ import {
   type AgentStatus,
   type CrashReport,
 } from "@/lib/tauri-bridge";
-import {
-  crashSummary,
-  formatCrashTime,
-  formatReportForClipboard,
-} from "@/features/agent/crash-recovery";
+import { crashSummary, formatCrashTime, formatReportForClipboard } from "@/lib/crash-recovery";
 import { cn } from "@/lib/utils";
 
 /**
@@ -71,8 +67,8 @@ export function DiagnosticsSection() {
           <HeartPulse className="h-4 w-4" /> Diagnostics
         </h2>
         <p className="text-xs text-muted-foreground">
-          Crash reports are stored locally in <code>~/.zoc-studio/crashes/</code>{" "}
-          and are never sent anywhere automatically.
+          Crash reports are stored locally in <code>~/.zoc-studio/crashes/</code> and are never sent
+          anywhere automatically.
         </p>
       </header>
 

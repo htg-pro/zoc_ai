@@ -1,6 +1,8 @@
 /**
  * A timeline node — zoc-agent-chat-rebuild R9.7, R19.1, R19.3, R21.7, 16.1.
  *
+ * Feature: zoc-agent-chat-rebuild, task 16.1 (R9.7, R19.1, R19.3, R21.7).
+ *
  * One 8 px glyph on the rail, and the only thing in the timeline that animates. Its whole job
  * is to encode *what a tool did* in a shape, so a reader learns six shapes once rather than a
  * glyph per tool — and so the state survives without colour (R21.7), which is why the shape is

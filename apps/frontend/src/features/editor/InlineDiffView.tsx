@@ -10,7 +10,9 @@ export function InlineDiffView({ patch }: { patch: DiffPatch }) {
       <div className="font-mono text-[12.5px] leading-relaxed">
         {hunks.map((h, hi) => (
           <div key={hi} className="border-b border-border/40">
-            <div className="bg-muted/40 px-3 py-1 text-[11px] text-muted-foreground">{h.header}</div>
+            <div className="bg-muted/40 px-3 py-1 text-[11px] text-muted-foreground">
+              {h.header}
+            </div>
             {h.lines.map((l, li) => (
               <div
                 key={li}

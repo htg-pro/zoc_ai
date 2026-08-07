@@ -1,6 +1,8 @@
 /**
  * The Conversation_Mode control — zoc-agent-chat-rebuild R11.10, R32.1, R32.2, task 20.2.
  *
+ * Feature: zoc-agent-chat-rebuild, task 20.2 (R11.10, R32.1, R32.2).
+ *
  * `Ask` / `Plan` / `Agent`, leftmost in the composer's control row, labelled **Mode**. Radix `Tabs`
  * styled as a segmented control — the same primitive and the same roving-tabindex model the header's
  * Approval control uses, deliberately: the two axes are siblings, and using a different primitive to

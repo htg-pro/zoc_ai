@@ -1,6 +1,8 @@
 /**
  * The usage row — zoc-agent-chat-rebuild R13.10, R27.1, task 16.3.
  *
+ * Feature: zoc-agent-chat-rebuild, task 16.3 (R13.10, R27.1).
+ *
  * One muted line at the foot of a settled Run: tokens in and out, the estimated cost, the model,
  * and the Run's Token_Rate. Activity tier and terminal — it says what the Run cost, which is
  * information rather than a decision, so it gets no card and no border.

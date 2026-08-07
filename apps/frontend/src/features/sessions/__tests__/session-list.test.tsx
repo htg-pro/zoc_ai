@@ -145,7 +145,9 @@ describe("Feature: zoc-agent-chat-rebuild, task 22.5: the Session list", () => {
     expect(view.container.querySelector("[data-zoc-session-row='open-one']")).not.toBeNull();
     expect(view.container.querySelector("[data-zoc-session-row='archived-one']")).toBeNull();
 
-    fireEvent.click(view.container.querySelector("[data-zoc-session-filter-tab='archived']") as HTMLElement);
+    fireEvent.click(
+      view.container.querySelector("[data-zoc-session-filter-tab='archived']") as HTMLElement,
+    );
 
     expect(view.container.querySelector("[data-zoc-session-row='archived-one']")).not.toBeNull();
     expect(view.container.querySelector("[data-zoc-session-row='open-one']")).toBeNull();
@@ -184,9 +186,12 @@ describe("Feature: zoc-agent-chat-rebuild, task 22.5: the Session list", () => {
 
   it("confirms a delete through a dialog and reports only on confirmation (R15.4)", () => {
     const onDelete = vi.fn();
-    const view = renderList([sessionOf({ id: "doomed", title: "Old work", messages: messagesOf(3, 1) })], {
-      onDelete,
-    });
+    const view = renderList(
+      [sessionOf({ id: "doomed", title: "Old work", messages: messagesOf(3, 1) })],
+      {
+        onDelete,
+      },
+    );
 
     openMenu(view.container, "doomed");
     fireEvent.click(document.querySelector('[data-zoc-session-action="delete"]') as HTMLElement);
@@ -214,7 +219,9 @@ describe("Feature: zoc-agent-chat-rebuild, task 22.5: the Session list", () => {
     const startEditing = () => {
       openMenu(view.container, "s_1");
       fireEvent.click(document.querySelector('[data-zoc-session-action="rename"]') as HTMLElement);
-      return view.container.querySelector("[data-zoc-session-rename-input='s_1']") as HTMLInputElement;
+      return view.container.querySelector(
+        "[data-zoc-session-rename-input='s_1']",
+      ) as HTMLInputElement;
     };
 
     const input = startEditing();

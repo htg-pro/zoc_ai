@@ -39,24 +39,24 @@ async def run_test():
             await page.wait_for_load_state("domcontentloaded", timeout=5000)
         except Exception:
             pass
-        
+
         # -> Type a prompt into the composer textarea labeled 'Message the agent…' and click the 'Send' button to start a streaming agent run.
         # Message the agent… text area
         elem = page.get_by_placeholder('Message the agent…', exact=True)
         await elem.wait_for(state="visible", timeout=10000)
         await elem.fill("Please produce a long, streaming test response that can be stopped \u2014 start streaming now.")
-        
+
         # -> Type a prompt into the composer textarea labeled 'Message the agent…' and click the 'Send' button to start a streaming agent run.
         # Send button
         elem = page.get_by_role('button', name='Send', exact=True)
         await elem.click(timeout=10000)
-        
+
         # --> Assertions to verify final state
         # Assert: Verify the run is marked as stopped
         assert False, "Expected: Verify the run is marked as stopped (could not be verified on the page)"
         # Assert: Verify streaming output stops
         assert False, "Expected: Verify streaming output stops (could not be verified on the page)"
-        
+
         # --> Test blocked by environment/access constraints during agent run
         # Reason: TEST BLOCKED The test could not be run — the agent backend sidecar is unreachable so streaming cannot be started. Observations: - Sending a message produced a mock reply: "Got it. (Mock response — agent sidecar not reachable.)" - No active streaming run appeared and no Stop/Cancel control is visible in the agent UI - The Send control is disabled and streaming output is not present, preventing t...
         raise AssertionError("Test blocked during agent run: " + "TEST BLOCKED The test could not be run \u2014 the agent backend sidecar is unreachable so streaming cannot be started. Observations: - Sending a message produced a mock reply: \"Got it. (Mock response \u2014 agent sidecar not reachable.)\" - No active streaming run appeared and no Stop/Cancel control is visible in the agent UI - The Send control is disabled and streaming output is not present, preventing t..." + " — the exported script cannot reproduce a PASS in this environment.")
@@ -71,4 +71,3 @@ async def run_test():
             await pw.stop()
 
 asyncio.run(run_test())
-    

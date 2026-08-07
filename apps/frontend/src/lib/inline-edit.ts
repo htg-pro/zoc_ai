@@ -10,12 +10,7 @@ import { createTwoFilesPatch } from "diff";
 import type { DiffPatch } from "@zoc-studio/shared-types";
 
 /** Replace the half-open [start, end) range of `full` with `replacement`. */
-export function spliceText(
-  full: string,
-  start: number,
-  end: number,
-  replacement: string,
-): string {
+export function spliceText(full: string, start: number, end: number, replacement: string): string {
   const lo = Math.max(0, Math.min(start, full.length));
   const hi = Math.max(lo, Math.min(end, full.length));
   return full.slice(0, lo) + replacement + full.slice(hi);
@@ -66,15 +61,9 @@ export function buildInlineEditPatch(
   summary?: string,
 ): DiffPatch | null {
   if (originalFull === newFull) return null;
-  const unified = createTwoFilesPatch(
-    filePath,
-    filePath,
-    originalFull,
-    newFull,
-    "",
-    "",
-    { context: 3 },
-  );
+  const unified = createTwoFilesPatch(filePath, filePath, originalFull, newFull, "", "", {
+    context: 3,
+  });
   return {
     id:
       typeof crypto !== "undefined" && "randomUUID" in crypto

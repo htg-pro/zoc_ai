@@ -1,6 +1,8 @@
 /**
  * The three Run routes over real HTTP — zoc-agent-chat-rebuild R5.1, R16.1, R16.3.
  *
+ * Feature: zoc-agent-chat-rebuild, R5.1, R16.1, R16.3.
+ *
  * Driven through the real router, the real admission gate, and a real socket, for
  * the reason 9.7's contract is written in HTTP: the facts under test are which
  * status each refusal answers with and what the SSE frames look like on the wire.
@@ -200,7 +202,7 @@ describe("POST /v1/runs", () => {
     await listen();
     const { status, body: answer } = await post("/v1/runs", {
       ...body,
-      apiKey: "sk-should-never-travel-this-path",
+      apiKey: "sk-should-never-travel-CANARY",
     });
 
     // A closed schema is what makes R7.8 a property of the route. And the rejection

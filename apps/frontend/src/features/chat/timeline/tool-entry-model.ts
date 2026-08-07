@@ -1,6 +1,8 @@
 /**
  * The tool-call timeline's model — zoc-agent-chat-rebuild R9.2, R9.4, R9.5, R9.7, 16.1.
  *
+ * Feature: zoc-agent-chat-rebuild, task 16.1 (R9.2, R9.4, R9.5, R9.7).
+ *
  * Everything about a timeline entry that is a *decision* rather than a layout lives here as a
  * pure function: which shape a node takes, how a path is truncated, what the metric column
  * reads, where a cluster begins, and what a screen reader is told. The components below are
@@ -149,6 +151,8 @@ export interface ToolEntryModel {
   readonly kind: ToolKind;
   readonly state: ToolEntryState;
   readonly durationMs: number;
+  /** The sub-agent that made this call, when it was not the parent Run (R25.5). */
+  readonly agentName?: string;
   /** The one-line summary the runtime produced, if the call has finished. */
   readonly summary?: string;
   /** The model's arguments, for the expanded detail (R9.3). */
@@ -208,7 +212,13 @@ export function groupTimeline(entries: readonly ToolEntryModel[]): readonly Time
   while (index < entries.length) {
     const first = entries[index] as ToolEntryModel;
     let end = index + 1;
-    while (end < entries.length && entries[end]?.toolName === first.toolName) end += 1;
+    while (
+      end < entries.length &&
+      entries[end]?.toolName === first.toolName &&
+      entries[end]?.agentName === first.agentName
+    ) {
+      end += 1;
+    }
     const run = entries.slice(index, end);
 
     if (run.length > CLUSTER_THRESHOLD) {

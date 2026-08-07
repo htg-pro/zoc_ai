@@ -1,6 +1,8 @@
 /**
  * A cluster of consecutive same-tool calls — zoc-agent-chat-rebuild R9.5, R9.7, R21.4.
  *
+ * Feature: zoc-agent-chat-rebuild, R9.5, R9.7, R21.4.
+ *
  * One `<li>` reading `4 × workspace_read`, expanding to its members as ordinary entries. The
  * grouping itself is `groupTimeline`'s; this is the row.
  *
@@ -47,6 +49,7 @@ export function ToolCluster({
   return (
     <li
       className={cn("flex flex-col", className)}
+      role="listitem"
       style={{ gap: "var(--zoc-row-gap-tight)" }}
       data-zoc-tool-cluster={cluster.toolName}
       data-zoc-cluster-count={String(cluster.count)}
@@ -102,9 +105,11 @@ export function ToolCluster({
         <CollapsibleContent data-zoc-cluster-members="">
           {/* A nested `<ol>`, not a `<div>`: the members are a list inside a list item, which is
               what a screen reader needs to report "4 items" rather than a flat run of siblings
-              (R21.4). */}
+              (R21.4). `role="list"` is restated because the element is a flex container, which
+              is enough to drop the implicit role in several browsers. */}
           <ol
             className="flex flex-col border-l pl-3 pt-1"
+            role="list"
             style={{ borderColor: "var(--zoc-border)" }}
           >
             {cluster.members.map((member) => (

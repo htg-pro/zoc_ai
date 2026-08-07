@@ -129,9 +129,7 @@ def _scenarios(draw: st.DrawFn) -> dict:
         recoveries = draw(st.integers(min_value=0, max_value=Budget.ERROR_CEILING))
     else:
         # Arbitrary (sub-ceiling) file ops, then fill the whole error window.
-        file_ops = draw(
-            st.lists(_file_op, min_size=0, max_size=Budget.FILE_CEILING - 1)
-        )
+        file_ops = draw(st.lists(_file_op, min_size=0, max_size=Budget.FILE_CEILING - 1))
         recoveries = Budget.ERROR_CEILING
     return {
         "kind": kind,

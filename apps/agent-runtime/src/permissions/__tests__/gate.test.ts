@@ -1,6 +1,8 @@
 /**
  * Permission gate guards — zoc-agent-chat-rebuild.
  *
+ * Feature: zoc-agent-chat-rebuild, Property 16 (R11.2, R11.6, R11.7, R11.11, R32.5, R32.12).
+ *
  * Property 16: The permission decision matrix holds in every mode  (R11.2–R11.6)
  * Property 17: A grant covers exactly its scope                    (R11.7)
  * Property 72: A Capability refusal never becomes an approval request (R11.11, R32.5, R32.12)

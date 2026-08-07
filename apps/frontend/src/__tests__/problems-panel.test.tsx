@@ -23,7 +23,15 @@ describe("ProblemsPanel", () => {
       openFile,
       diagnostics: {
         typescript: [
-          { source: "typescript", file: "src/app.ts", line: 12, column: 5, severity: "error", message: "bad type", code: "TS2322" },
+          {
+            source: "typescript",
+            file: "src/app.ts",
+            line: 12,
+            column: 5,
+            severity: "error",
+            message: "bad type",
+            code: "TS2322",
+          },
         ],
       },
     });

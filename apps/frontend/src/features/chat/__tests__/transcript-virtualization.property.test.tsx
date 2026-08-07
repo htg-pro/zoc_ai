@@ -84,24 +84,21 @@ function mountedRowIds(container: HTMLElement): string[] {
 describe("Feature: zoc-agent-chat-rebuild, Property 47: virtualization bounds the mounted row count", () => {
   it("mounts the visible range plus overscan rather than the transcript (R20.4)", () => {
     fc.assert(
-      fc.property(
-        fc.integer({ min: VIRTUALIZATION_FLOOR_ROWS + 1, max: 600 }),
-        (rowCount) => {
-          const harness = renderTranscript({
-            messages: settledMessages(rowCount),
-            streaming: false,
-          });
+      fc.property(fc.integer({ min: VIRTUALIZATION_FLOOR_ROWS + 1, max: 600 }), (rowCount) => {
+        const harness = renderTranscript({
+          messages: settledMessages(rowCount),
+          streaming: false,
+        });
 
-          const mounted = mountedRowIds(harness.container);
-          expect(mounted.length).toBeLessThanOrEqual(MOUNTED_CEILING);
-          expect(mounted.length).toBeLessThan(rowCount);
-          // The bound has to be a bound and not an empty region: a virtualiser that mounted nothing
-          // would also satisfy every ceiling above.
-          expect(mounted.length).toBeGreaterThan(0);
+        const mounted = mountedRowIds(harness.container);
+        expect(mounted.length).toBeLessThanOrEqual(MOUNTED_CEILING);
+        expect(mounted.length).toBeLessThan(rowCount);
+        // The bound has to be a bound and not an empty region: a virtualiser that mounted nothing
+        // would also satisfy every ceiling above.
+        expect(mounted.length).toBeGreaterThan(0);
 
-          harness.unmount();
-        },
-      ),
+        harness.unmount();
+      }),
       { numRuns: 25 },
     );
   });

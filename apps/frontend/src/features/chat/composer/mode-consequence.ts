@@ -1,6 +1,8 @@
 /**
  * The consequence line — zoc-agent-chat-rebuild R11.10, R32.1, R32.3, R32.4, task 20.2.
  *
+ * Feature: zoc-agent-chat-rebuild, task 20.2 (R11.10, R32.1, R32.3, R32.4).
+ *
  * One muted sentence under the composer's control row, stating what the current *pair* of modes permits.
  * Two three-value controls in one panel is a real confusability problem — Conversation_Mode governs what
  * Zoc AI may attempt at all, Permission_Mode governs what it may do without asking — and the interaction

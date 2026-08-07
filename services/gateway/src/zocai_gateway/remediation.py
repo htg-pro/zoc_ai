@@ -265,9 +265,7 @@ class RemediationLoop:
     on_recovery: Callable[[], None] | None = None
     run_id: str = "run"
     emit: EmitSink | None = None
-    next_seq: Callable[[], int] = field(
-        default_factory=lambda: itertools.count().__next__
-    )
+    next_seq: Callable[[], int] = field(default_factory=lambda: itertools.count().__next__)
     recoveries: int = field(init=False, default=0)
     recorded_failures: list[FailureRecord] = field(init=False, default_factory=list)
     events: list[ApprovalEvent] = field(init=False, default_factory=list)
@@ -321,16 +319,12 @@ class RemediationLoop:
             delta = diff_plans(prior, candidate)
             if delta.differs and plan_references_failure(candidate, failure):
                 stage = self.fsm.remediate()  # HANDLE_ERROR -> PLAN_EDITS (R5.5)
-                return RemediationOutcome(
-                    stage=stage, failure=failure, plan=candidate, delta=delta
-                )
+                return RemediationOutcome(stage=stage, failure=failure, plan=candidate, delta=delta)
 
         # R5.7: no differing remediation -> pause and defer to the developer.
         stage = self.fsm.pause("remediation deferred to developer")
         event = self._emit_defer_event(failure)
-        return RemediationOutcome(
-            stage=stage, failure=failure, deferred=True, defer_event=event
-        )
+        return RemediationOutcome(stage=stage, failure=failure, deferred=True, defer_event=event)
 
     # -- helpers -----------------------------------------------------------
 

@@ -35,7 +35,7 @@ def test_triple_comes_from_rustc_print_host_tuple(monkeypatch) -> None:
     monkeypatch.delenv("ZOC_STUDIO_TARGET_TRIPLE", raising=False)
     calls: list[list[str]] = []
 
-    def fake_check_output(cmd, **kwargs):  # noqa: ANN001, ANN202
+    def fake_check_output(cmd, **kwargs):
         calls.append(list(cmd))
         if cmd[:3] == ["rustc", "--print", "host-tuple"]:
             return "x86_64-unknown-linux-gnu\n"
@@ -52,7 +52,7 @@ def test_falls_back_to_rustc_vv_on_an_older_toolchain(monkeypatch) -> None:
     # from musl.
     monkeypatch.delenv("ZOC_STUDIO_TARGET_TRIPLE", raising=False)
 
-    def fake_check_output(cmd, **kwargs):  # noqa: ANN001, ANN202
+    def fake_check_output(cmd, **kwargs):
         if cmd[:3] == ["rustc", "--print", "host-tuple"]:
             raise subprocess.CalledProcessError(1, cmd)
         if cmd == ["rustc", "-vV"]:

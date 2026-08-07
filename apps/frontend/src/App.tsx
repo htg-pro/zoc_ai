@@ -2,9 +2,8 @@ import { useEffect, useState } from "react";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { Shell } from "@/components/layout/Shell";
 import { OnboardingWizard } from "@/features/onboarding/OnboardingWizard";
-import { AgentStreamProvider } from "@/features/agent/AgentStreamContext";
-import { AgentPanel } from "@/features/agent/AgentPanel";
-import { currentViewerContext } from "@/features/agent/share-session";
+import { ChatPanelHost } from "@/features/chat/ChatPanelHost";
+import { currentViewerContext } from "@/lib/viewer-context";
 import { getAgentClient } from "@/lib/agent-client";
 import { useApp } from "@/lib/store";
 import { getPlugins } from "@/lib/plugins";
@@ -78,15 +77,21 @@ export function App() {
 
   return (
     <TooltipProvider delayDuration={150}>
-      <AgentStreamProvider>
-        {viewer.readOnly ? (
-          <main className="h-screen min-h-0 w-screen overflow-hidden bg-[#0C0C10]">
-            <AgentPanel />
-          </main>
-        ) : (
-          <Shell />
-        )}
-      </AgentStreamProvider>
+      {/*
+        No `AgentStreamProvider` (task 26.1). The legacy telemetry bus kept its server and lost its
+        producer: every writer of `trackedRuns` / `runId` sat behind a store action only the deleted
+        panel called, so the provider's `runIds` is provably `[]` and it would publish an empty,
+        closed feed for ever. Its two consumers already read `stream?.events ?? []` against a
+        null-safe context, so an absent provider is byte-for-byte their previous behaviour.
+        Re-pointing the context at the runtime's `MessagePart` stream is real work and its own task.
+      */}
+      {viewer.readOnly ? (
+        <main className="flex h-screen min-h-0 w-screen overflow-hidden bg-[#0C0C10]">
+          <ChatPanelHost />
+        </main>
+      ) : (
+        <Shell />
+      )}
       {!viewer.readOnly && needsOnboarding && (
         <OnboardingWizard onComplete={() => setNeedsOnboarding(false)} />
       )}

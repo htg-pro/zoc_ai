@@ -23,7 +23,11 @@ export function TerminalPanes({
   onFocusPane,
 }: TerminalPanesProps): ReactNode {
   if (node === null) {
-    return <div className="flex h-full items-center justify-center text-xs text-muted-foreground">No terminal panes</div>;
+    return (
+      <div className="flex h-full items-center justify-center text-xs text-muted-foreground">
+        No terminal panes
+      </div>
+    );
   }
   if (node.kind === "pane") {
     const focused = node.id === focusedPaneId;

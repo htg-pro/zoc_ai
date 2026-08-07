@@ -1,6 +1,8 @@
 /**
  * Approval registry — zoc-agent-chat-rebuild R11.7, R11.9, R32.9.
  *
+ * Feature: zoc-agent-chat-rebuild, R11.7, R11.9, R32.9.
+ *
  * The three outcomes the endpoint maps to 200 / 409 / 410 are what this suite is
  * for. The 409-versus-410 distinction is the one worth testing: both are "you
  * cannot decide this now", and conflating them tells a user their approval was

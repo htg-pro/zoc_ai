@@ -7,11 +7,7 @@
  */
 import { describe, expect, it } from "vitest";
 
-import {
-  normalizeRoot,
-  resolveTerminalCwd,
-  terminalMatchesWorkspace,
-} from "../terminal-cwd";
+import { normalizeRoot, resolveTerminalCwd, terminalMatchesWorkspace } from "../terminal-cwd";
 
 describe("resolveTerminalCwd", () => {
   it("uses the workspace root when a workspace is open", () => {

@@ -460,7 +460,12 @@ def message_parts_reexport_footer() -> list[str]:
             plain.append(name)
 
     lines = [
-        "// ── Wire_Protocol (Message_Part contract, Agent_Runtime ↔ Chat_Surface) ",
+        # No trailing space after the closing paren. `pnpm schema:check` compares the
+        # emitted bytes against the file on disk, and pre-commit's `trailing-whitespace`
+        # hook strips exactly this character from the checked-in copy — so a decorative
+        # space here is a build that fails on the next commit, in a generated file whose
+        # header says not to edit it by hand.
+        "// ── Wire_Protocol (Message_Part contract, Agent_Runtime ↔ Chat_Surface)",
         "",
         'export * as MessageParts from "./message-parts";',
         "",

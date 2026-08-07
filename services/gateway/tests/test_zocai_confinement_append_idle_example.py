@@ -65,9 +65,9 @@ def test_all_matrix_stores_are_confined_under_zocai(tmp_path: Path) -> None:
     # Every owned directory and sub-store resolves under ``.zocai/`` (R9.1).
     for path in (*matrix.directories(), *matrix.files()):
         resolved = path.resolve()
-        assert resolved == zocai or zocai in resolved.parents, (
-            f"{resolved} escaped the .zocai/ subtree"
-        )
+        assert (
+            resolved == zocai or zocai in resolved.parents
+        ), f"{resolved} escaped the .zocai/ subtree"
 
 
 def test_initialize_creates_nothing_outside_zocai(tmp_path: Path) -> None:
@@ -132,9 +132,7 @@ def test_append_returns_promptly_with_a_slow_write(tmp_path: Path) -> None:
 
     # After release, both entries land on disk in FIFO order.
     lines = [
-        line
-        for line in matrix.session_diary_path.read_text(encoding="utf-8").splitlines()
-        if line
+        line for line in matrix.session_diary_path.read_text(encoding="utf-8").splitlines() if line
     ]
     assert len(lines) == 2
 
@@ -151,9 +149,7 @@ def _seed_diary(matrix: MemoryMatrix, count: int, *, run_id: str = "r-1") -> Non
     with matrix.session_diary_path.open("a", encoding="utf-8") as handle:
         for i in range(count):
             handle.write(
-                json.dumps(
-                    {"seq": i, "runId": run_id, "type": "command", "payload": {"n": i}}
-                )
+                json.dumps({"seq": i, "runId": run_id, "type": "command", "payload": {"n": i}})
                 + "\n"
             )
 
@@ -215,9 +211,7 @@ def test_begin_run_does_not_block_on_an_in_progress_cycle(tmp_path: Path) -> Non
         return GepaResult(skill_md="# done\n", gepa_state={"generation": 1})
 
     # idle_seconds=0 so the background loop is immediately eligible to evolve.
-    hermes = HermesEvolution(
-        matrix, idle_seconds=0.0, poll_interval=0.01, gepa_step=_slow_gepa
-    )
+    hermes = HermesEvolution(matrix, idle_seconds=0.0, poll_interval=0.01, gepa_step=_slow_gepa)
     hermes.start()
     try:
         assert in_gepa.wait(timeout=2.0), "evolution cycle never started"

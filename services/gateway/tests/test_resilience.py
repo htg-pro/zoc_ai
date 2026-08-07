@@ -308,7 +308,12 @@ def test_reconstruct_recovers_stage_from_thinking_and_command(tmp_path: Path) ->
                 "runId": "r",
                 "type": "command",
                 "ts": "t",
-                "payload": {"type": "command", "command": "pytest", "exitCode": 1, "errorTag": "boom"},
+                "payload": {
+                    "type": "command",
+                    "command": "pytest",
+                    "exitCode": 1,
+                    "errorTag": "boom",
+                },
             },
         ],
     )

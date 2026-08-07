@@ -127,8 +127,7 @@ def test_load_within_deadline_upshifts(tmp_path: Path, duration_s: float) -> Non
     """
     kind = _trigger_with_duration(tmp_path, duration_s)
     assert kind is HotSwapOutcomeKind.UPSHIFTED, (
-        f"a {duration_s:.3f} s load is within the {_DEADLINE_S:.0f} s deadline and "
-        "must upshift"
+        f"a {duration_s:.3f} s load is within the {_DEADLINE_S:.0f} s deadline and " "must upshift"
     )
 
 

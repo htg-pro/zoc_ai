@@ -25,9 +25,7 @@ from zocai_gateway.workspace_context import workspace_context_from_path
 
 def _point_config_at(monkeypatch: pytest.MonkeyPatch, cfg: Path) -> None:
     # Override the conftest isolation so this test controls the desktop config.
-    monkeypatch.setattr(
-        "zocai_gateway.workspace_binder.default_desktop_config_path", lambda: cfg
-    )
+    monkeypatch.setattr("zocai_gateway.workspace_binder.default_desktop_config_path", lambda: cfg)
 
 
 def _write_root(cfg: Path, root: Path) -> None:

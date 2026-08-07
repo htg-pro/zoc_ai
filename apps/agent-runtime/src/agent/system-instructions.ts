@@ -1,6 +1,8 @@
 /**
  * System-instruction assembler — zoc-agent-chat-rebuild R30.1, R30.3, R30.4.
  *
+ * Feature: zoc-agent-chat-rebuild, R30.1, R30.3, R30.4.
+ *
  * Four steps, in this order, and the order is the contract:
  *
  *   1. **Discover.** Ask Workspace_Services for the rules sources it found and
@@ -103,6 +105,8 @@ export interface WorkspaceFacts {
 export interface AssembleInstructionsInput extends WorkspaceFacts {
   readonly sessionId: string;
   readonly discoverRules: DiscoverRules;
+  /** Per-source inclusion for this Run. An absent path defaults to enabled. */
+  readonly enabledSources?: Readonly<Record<string, boolean>>;
 }
 
 /** A source that was discovered but did not make it into the prompt. */
@@ -129,6 +133,43 @@ export interface AssembledInstructions {
  * and nothing under it, and listing it in `appliedSources` would tell the user a
  * rule applied when no rule text reached the model.
  */
+export interface RuleParseError {
+  readonly message: string;
+  readonly line: number;
+  readonly column: number;
+}
+
+function locationOf(text: string, index: number): Pick<RuleParseError, "line" | "column"> {
+  const before = text.slice(0, Math.max(0, index));
+  const lines = before.split("\n");
+  return { line: lines.length, column: (lines.at(-1)?.length ?? 0) + 1 };
+}
+
+/** Validate optional YAML-like frontmatter and report an actionable source location (R30.5). */
+export function parseRuleContent(content: string): RuleParseError | null {
+  const nul = content.indexOf("\u0000");
+  if (nul >= 0) {
+    return { message: "The source is not UTF-8 text.", ...locationOf(content, nul) };
+  }
+  const lines = content.split(/\r?\n/u);
+  if (lines[0]?.trim() !== "---") return null;
+  const close = lines.findIndex((line, index) => index > 0 && line.trim() === "---");
+  if (close < 0) {
+    return { message: "Frontmatter is missing its closing --- marker.", line: 1, column: 1 };
+  }
+  for (let index = 1; index < close; index += 1) {
+    const line = lines[index] ?? "";
+    if (line.trim().length === 0 || line.trimStart().startsWith("#")) continue;
+    if (/^\s*[A-Za-z0-9_.-]+\s*:/u.test(line)) continue;
+    return {
+      message: "Frontmatter entries must use key: value syntax.",
+      line: index + 1,
+      column: line.search(/\S/u) + 1,
+    };
+  }
+  return null;
+}
+
 function rejectionReason(document: RuleDocument): string | null {
   if (typeof document.path !== "string" || document.path.trim().length === 0) {
     return "The source has no path.";
@@ -143,9 +184,12 @@ function rejectionReason(document: RuleDocument): string | null {
     return "The source content was not text.";
   }
   if (document.content.trim().length === 0) return "The source is empty.";
-  // A NUL byte means a binary file matched a rules glob. Feeding it to a provider
-  // wastes context at best and trips a content filter at worst.
+  // Keep the established rejection stable; structured parse failures below add locations.
   if (document.content.includes("\u0000")) return "The source is not UTF-8 text.";
+  const parseError = parseRuleContent(document.content);
+  if (parseError !== null) {
+    return `Line ${String(parseError.line)}, column ${String(parseError.column)}: ${parseError.message}`;
+  }
   return null;
 }
 
@@ -185,6 +229,10 @@ export async function assembleInstructions(
   // contributing its text twice.
   const byPath = new Map<string, RuleDocument>();
   for (const document of discovered) {
+    if (input.enabledSources?.[document.path] === false) {
+      skipped.push({ path: document.path, reason: "Disabled for this Run." });
+      continue;
+    }
     const reason = rejectionReason(document);
     if (reason !== null) {
       skipped.push({ path: document?.path ?? "(unnamed)", reason });

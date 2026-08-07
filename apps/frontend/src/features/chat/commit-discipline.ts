@@ -2,6 +2,8 @@
  * Commit discipline for a streaming transcript — zoc-agent-chat-rebuild R8.1, R19.4, R20.3,
  * task 17.1.
  *
+ * Feature: zoc-agent-chat-rebuild, task 17.1 (R8.1, R19.4, R20.3).
+ *
  * Two hooks, and both exist for the same reason: a Run delivering 40 parts per second (R20.3)
  * must not produce 40 React commits per second, and the commits it does produce must not touch
  * a row that already settled (R8.1).
@@ -54,10 +56,7 @@ export function sameItems<T>(a: readonly T[], b: readonly T[]): boolean {
  * behind the latest one" — has to be asked after every render, including the renders where the
  * caller's props did not change but the value it derived did.
  */
-export function useFrameCoalesced<T>(
-  value: T,
-  isEqual: (a: T, b: T) => boolean = Object.is,
-): T {
+export function useFrameCoalesced<T>(value: T, isEqual: (a: T, b: T) => boolean = Object.is): T {
   const [committed, setCommitted] = useState<T>(value);
   const latest = useRef<T>(value);
   const frame = useRef<number | null>(null);

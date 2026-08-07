@@ -19,7 +19,10 @@ const storeArb: fc.Arbitrary<Record<string, Diagnostic[]>> = fc
         fc.constantFrom("typescript", "eslint", "ruff", "cargo"),
         fc.string({ minLength: 1 }).map((s) => `lsp:file:///${s}`),
       ),
-      diags: fc.array(severityArb.map((s) => diag(s)), { maxLength: 8 }),
+      diags: fc.array(
+        severityArb.map((s) => diag(s)),
+        { maxLength: 8 },
+      ),
     }),
     { maxLength: 10 },
   )

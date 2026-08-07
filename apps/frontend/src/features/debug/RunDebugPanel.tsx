@@ -77,12 +77,15 @@ export function RunDebugPanel() {
         <span className="inline-flex items-center gap-1 text-foreground/80">
           <Bug className="h-3 w-3" /> Debugging
         </span>{" "}
-        — set breakpoints in the editor gutter and pick a configuration. Live stepping
-        (variables, call stack, console) arrives with the debug-adapter runtime.
+        — set breakpoints in the editor gutter and pick a configuration. Live stepping (variables,
+        call stack, console) arrives with the debug-adapter runtime.
       </div>
 
       <ScrollArea className="min-h-0 flex-1">
-        <Section icon={CircleDot} title="Breakpoints" count={bpCount}
+        <Section
+          icon={CircleDot}
+          title="Breakpoints"
+          count={bpCount}
           action={
             bpCount > 0 ? (
               <button
@@ -129,7 +132,11 @@ export function RunDebugPanel() {
         </Section>
 
         <Section icon={Variable} title="Variables">
-          <Hint>{isTauri() ? "Available while paused at a breakpoint." : "Debugging runs in the desktop app."}</Hint>
+          <Hint>
+            {isTauri()
+              ? "Available while paused at a breakpoint."
+              : "Debugging runs in the desktop app."}
+          </Hint>
         </Section>
         <Section icon={ListTree} title="Watch">
           <Hint>Add expressions to watch during a debug session.</Hint>

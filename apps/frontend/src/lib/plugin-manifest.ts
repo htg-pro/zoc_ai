@@ -190,7 +190,8 @@ export function parsePluginManifest(input: string | object): ManifestParseResult
   else if (!ID_RE.test(id)) errors.push(`Invalid id "${id}" — use letters, digits, ".", "-", "_".`);
   if (!name) errors.push('Manifest requires a non-empty "name".');
   if (!version) errors.push('Manifest requires a "version".');
-  else if (!VERSION_RE.test(version)) errors.push(`Invalid version "${version}" — expected semver (e.g. 1.0.0).`);
+  else if (!VERSION_RE.test(version))
+    errors.push(`Invalid version "${version}" — expected semver (e.g. 1.0.0).`);
 
   // Contributions are parsed even on identity errors so we can surface all
   // problems at once; but a fatal identity error yields a null manifest.
@@ -204,7 +205,13 @@ export function parsePluginManifest(input: string | object): ManifestParseResult
     languages: parseLanguages(c.languages),
   };
 
-  if (!id || !name || !version || (id && !ID_RE.test(id)) || (version && !VERSION_RE.test(version))) {
+  if (
+    !id ||
+    !name ||
+    !version ||
+    (id && !ID_RE.test(id)) ||
+    (version && !VERSION_RE.test(version))
+  ) {
     return { manifest: null, errors };
   }
 

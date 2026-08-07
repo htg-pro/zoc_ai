@@ -92,7 +92,14 @@ test("an api-request yields exactly one api-response with the same reqId", async
       sandbox.load("p", "code");
       const w = created.get("p")!;
       w.posted.length = 0;
-      w.emit({ type: "api-request", pluginId: "p", reqId, api: "editor", method: "getText", args: [] });
+      w.emit({
+        type: "api-request",
+        pluginId: "p",
+        reqId,
+        api: "editor",
+        method: "getText",
+        args: [],
+      });
       await flush();
       const responses = w.posted.filter((m) => m.type === "api-response");
       expect(responses).toHaveLength(1);
@@ -118,7 +125,14 @@ test("terminal.run runs iff the decision is allow", async () => {
           },
         });
         const result = await resolveApiRequest(
-          { type: "api-request", pluginId: "p", reqId: 1, api: "terminal", method: "run", args: [cmd] },
+          {
+            type: "api-request",
+            pluginId: "p",
+            reqId: 1,
+            api: "terminal",
+            method: "run",
+            args: [cmd],
+          },
           deps,
         );
         if (effect === "allow") {
@@ -190,12 +204,18 @@ test("register-command and denied terminal are surfaced correctly", async () => 
   expect(registered).toContainEqual(["p", "p.hello"]);
 
   w.posted.length = 0;
-  w.emit({ type: "api-request", pluginId: "p", reqId: 5, api: "terminal", method: "run", args: ["ls"] });
+  w.emit({
+    type: "api-request",
+    pluginId: "p",
+    reqId: 5,
+    api: "terminal",
+    method: "run",
+    args: ["ls"],
+  });
   await flush();
   const responses = w.posted.filter((m) => m.type === "api-response");
   expect(responses[0]).toMatchObject({ reqId: 5, ok: false, error: "permission denied" });
 });
-
 
 test("storage requests use the worker owner rather than a spoofed message identity", async () => {
   const reads: Array<[string, string]> = [];
@@ -240,8 +260,8 @@ test("a rejected command handler terminates only its owning worker", () => {
   sandbox.invokeCommand("bad", "bad.run");
   const invocation = created
     .get("bad")!
-    .posted.find((message): message is Extract<HostMessage, { type: "invoke" }> =>
-      message.type === "invoke",
+    .posted.find(
+      (message): message is Extract<HostMessage, { type: "invoke" }> => message.type === "invoke",
     )!;
 
   created.get("bad")!.emit({
@@ -272,10 +292,7 @@ test("worker factory failures are reported without escaping or affecting peers",
   sandbox.load("peer", "code");
 
   expect(() => sandbox.load("broken", "code")).not.toThrow();
-  expect(base.errored).toContainEqual([
-    "broken",
-    "worker startup failed: constructor failed",
-  ]);
+  expect(base.errored).toContainEqual(["broken", "worker startup failed: constructor failed"]);
   expect(sandbox.running()).toEqual(new Set(["peer"]));
   expect(peer.terminated).toBe(false);
   sandbox.stopAll();

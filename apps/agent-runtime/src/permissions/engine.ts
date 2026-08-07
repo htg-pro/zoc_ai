@@ -1,6 +1,8 @@
 /**
  * Unified permission engine — the pure decision function behind Table B.
  *
+ * Feature: zoc-agent-chat-rebuild, task 8.1.
+ *
  * **A copy, not a move** — zoc-agent-chat-rebuild task 8.1.
  *
  * The `lib` original at `apps/frontend/src/lib/permissions-engine.ts` stays in place until

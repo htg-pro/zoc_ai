@@ -13,7 +13,9 @@ describe("agentStateLabel", () => {
       label: "Running",
       tone: "busy",
     });
-    expect(agentStateLabel({ streaming: false, isRunning: true, agentMode: "ask" }).tone).toBe("busy");
+    expect(agentStateLabel({ streaming: false, isRunning: true, agentMode: "ask" }).tone).toBe(
+      "busy",
+    );
   });
   it("reports the mode when idle", () => {
     expect(agentStateLabel({ streaming: false, isRunning: false, agentMode: "ask" })).toEqual({

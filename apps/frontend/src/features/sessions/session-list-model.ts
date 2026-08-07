@@ -28,7 +28,7 @@
 
 import type { Message, Session, SessionStatus } from "@zoc-studio/shared-types";
 
-import { rootBasename } from "@/features/agent/session-origin";
+import { rootBasename } from "@/lib/session-origin";
 
 /**
  * A Session as a row shows it. **No transcript** — see the header.
@@ -96,6 +96,29 @@ export function partitionByStatus(sessions: readonly Session[]): {
 }
 
 /**
+ * One Session as a row shows it (R15.3).
+ *
+ * Exported on its own because the two workspace sessions surfaces do their own scoping, grouping, and
+ * sorting through `lib/session-query.ts` — the panel groups by recency, the view has filter tabs and a
+ * sort toggle — so they need the *projection* without {@link sessionRows}' scope-partition-sort pipeline,
+ * which would filter their lists a second time (task 25.2).
+ */
+export function sessionRowModel(
+  session: Session,
+  pinned: Readonly<Record<string, true>> = {},
+): SessionRowModel {
+  return {
+    id: session.id,
+    title: session.title,
+    lastActivity: session.updated_at,
+    messageCount: session.messages.length,
+    rootBasename: rootBasename(session.workspace_root ?? ""),
+    status: session.status,
+    pinned: pinned[session.id] === true,
+  };
+}
+
+/**
  * The rows for one filter, newest first, pinned Sessions ahead of the rest.
  *
  * Sorting here rather than in the component so the list and its property agree on order, and so "newest
@@ -116,15 +139,7 @@ export function sessionRows(
   const pinned = options.pinned ?? {};
 
   return [...chosen]
-    .map((session) => ({
-      id: session.id,
-      title: session.title,
-      lastActivity: session.updated_at,
-      messageCount: session.messages.length,
-      rootBasename: rootBasename(session.workspace_root ?? ""),
-      status: session.status,
-      pinned: pinned[session.id] === true,
-    }))
+    .map((session) => sessionRowModel(session, pinned))
     .sort((a, b) => {
       if (a.pinned !== b.pinned) return a.pinned ? -1 : 1;
       const byTime = Date.parse(b.lastActivity) - Date.parse(a.lastActivity);
@@ -195,7 +210,9 @@ export const MAX_GENERATED_TITLE = 60;
  * pasted stack trace as a first message would otherwise make the row unreadable.
  */
 export function titleFromFirstMessage(messages: readonly Message[]): string {
-  const first = messages.find((message) => message.role === "user" && message.content.trim().length > 0);
+  const first = messages.find(
+    (message) => message.role === "user" && message.content.trim().length > 0,
+  );
   if (first === undefined) return "New session";
   const flattened = first.content.replace(/\s+/gu, " ").trim();
   return flattened.length <= MAX_GENERATED_TITLE

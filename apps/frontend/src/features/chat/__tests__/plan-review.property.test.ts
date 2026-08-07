@@ -89,11 +89,7 @@ function planOf(diffs: readonly DiffPart[]): PlanPart {
   };
 }
 
-const decision: fc.Arbitrary<HunkDecision> = fc.constantFrom(
-  "accepted",
-  "rejected",
-  "undecided",
-);
+const decision: fc.Arbitrary<HunkDecision> = fc.constantFrom("accepted", "rejected", "undecided");
 
 /** A decision per hunk, drawn independently, keyed the way the store keys them. */
 function decisionsFor(diffs: readonly DiffPart[]): fc.Arbitrary<HunkDecisions> {
@@ -117,10 +113,7 @@ function decisionsFor(diffs: readonly DiffPart[]): fc.Arbitrary<HunkDecisions> {
 }
 
 /** Which files the user's disk has moved under them, as the digest map the surface reads. */
-function digestsFor(
-  diffs: readonly DiffPart[],
-  changed: readonly boolean[],
-): Map<string, string> {
+function digestsFor(diffs: readonly DiffPart[], changed: readonly boolean[]): Map<string, string> {
   const map = new Map<string, string>();
   diffs.forEach((diff, index) => {
     // A file the surface measured and found unchanged is a different case from one it never measured,
@@ -135,18 +128,14 @@ describe("Feature: zoc-agent-chat-rebuild, Property 20: apply carries exactly th
   it("selects every accepted hunk from a fresh file, and nothing else (R10.2, R10.3)", () => {
     fc.assert(
       fc.property(
-        planDiffs.chain((diffs) =>
-          fc.tuple(fc.constant(diffs), decisionsFor(diffs)),
-        ),
+        planDiffs.chain((diffs) => fc.tuple(fc.constant(diffs), decisionsFor(diffs))),
         ([diffs, decisions]) => {
           const plan = planOf(diffs);
           const selection = applicableHunks(plan, diffs, decisions, new Map());
 
           // The expectation, computed by flattening rather than by the module's nested walk.
           const expected = diffs
-            .flatMap((diff) =>
-              diff.hunks.map((hunk) => ({ path: diff.path, hunkId: hunk.hunkId })),
-            )
+            .flatMap((diff) => diff.hunks.map((hunk) => ({ path: diff.path, hunkId: hunk.hunkId })))
             .filter((entry) => decisions[PLAN_ID]?.[entry.path]?.[entry.hunkId] === "accepted")
             .map((entry) => entry.hunkId);
 

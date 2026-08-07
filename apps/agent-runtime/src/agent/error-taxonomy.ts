@@ -1,6 +1,8 @@
 /**
  * The provider-failure mapping — zoc-agent-chat-rebuild R7.5, R13.7, R16.6, 9.8.
  *
+ * Feature: zoc-agent-chat-rebuild, task 9.8 (R7.5, R13.7, R16.6).
+ *
  * One function, called at one place: the Run's stream boundary. Every AI SDK error,
  * every provider HTTP status, and every network failure becomes one of the codes in
  * the design's runtime-owned table, with a human sentence and bounded developer

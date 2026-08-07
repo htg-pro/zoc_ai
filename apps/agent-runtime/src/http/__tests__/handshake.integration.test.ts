@@ -1,6 +1,8 @@
 /**
  * Port and token handshake — zoc-agent-chat-rebuild R3.2, R3.3, R3.4, R3.5, R3.6.
  *
+ * Feature: zoc-agent-chat-rebuild, R3.2, R3.3, R3.4, R3.5, R3.6.
+ *
  * Spawns the **real** runtime as a child process, reads the port line off its
  * stdout, and exercises admission over real HTTP. Not a unit test against
  * `admit()` — that is covered by Property 10 and 11 — but the end-to-end claim

@@ -1,6 +1,8 @@
 /**
  * The three Run routes — zoc-agent-chat-rebuild R5.1, R16.1, R16.3, R16.4, 9.7.
  *
+ * Feature: zoc-agent-chat-rebuild, task 9.7 (R5.1, R16.1, R16.3, R16.4).
+ *
  * ```
  * POST /v1/runs                        → 200 { runId, streamUrl, queuePosition }
  *                                      → 422 { code: "invalid_request" }
@@ -59,6 +61,19 @@ const mentionSchema = z.object({
 
 export type MentionRef = z.infer<typeof mentionSchema>;
 
+/** Must match the renderer's configured default; the route enforces it again at the boundary. */
+export const MAX_ATTACHMENT_BYTES = 10 * 1024 * 1024;
+
+const attachmentSchema = z.strictObject({
+  kind: z.enum(["image", "document"]),
+  name: z.string().min(1).max(512),
+  mediaType: z.string().min(1).max(255),
+  size: z.number().int().nonnegative().max(MAX_ATTACHMENT_BYTES),
+  dataUrl: z.string().max(15_000_000).optional(),
+  text: z.string().max(1_000_000).optional(),
+  estimatedTokens: z.number().int().nonnegative().max(1_000_000),
+});
+
 const modelRefSchema = z.object({
   provider: z.string().min(1).max(128),
   modelId: z.string().min(1).max(256),
@@ -75,8 +90,17 @@ const modelRefSchema = z.object({
  */
 const runBodySchema = z.strictObject({
   sessionId: z.string().min(1).max(256),
+  userMessageId: z.string().min(1).max(256).optional(),
   prompt: z.string().min(1).max(200_000),
   mentions: z.array(mentionSchema).max(200).default([]),
+  attachments: z.array(attachmentSchema).max(20).default([]),
+  rulesSelection: z
+    .record(z.string().min(1).max(4096), z.boolean())
+    .refine(
+      (value) => Object.keys(value).length <= 200,
+      "At most 200 rules sources may be selected.",
+    )
+    .optional(),
   mode: z.enum(["ask", "plan", "agent"]),
   permissionMode: z.enum(["ask", "auto", "deny"]),
   modelRef: modelRefSchema,

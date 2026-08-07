@@ -7,6 +7,7 @@ naming convention: ``<name>-<rust-target-triple>``.
 
 Falls back to a no-op shim warning if PyInstaller is unavailable.
 """
+
 from __future__ import annotations
 
 import argparse

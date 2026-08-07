@@ -1,6 +1,8 @@
 /**
  * Plan_Approval — zoc-agent-chat-rebuild R10.9, R32.5, R32.7, R32.8, R32.9.
  *
+ * Feature: zoc-agent-chat-rebuild, R10.9, R32.5, R32.7, R32.8, R32.9.
+ *
  * The coarse gate, beside the per-tool one. **It is not a second Run.**
  *
  * `planGated` wraps `propose_plan` in `Plan` mode only. It writes the plan part,

@@ -12,9 +12,7 @@ from zocai_gateway.context.steering_compiler import MAX_READ_FILES, select_map_f
 
 _NAME = st.text(alphabet="abcdefghijklmnopqrstuvwxyz0123456789", min_size=1, max_size=14)
 _ENTRY = st.tuples(
-    st.sampled_from(
-        ["relative", "normalized", "absolute-inside", "traversal", "absolute-outside"]
-    ),
+    st.sampled_from(["relative", "normalized", "absolute-inside", "traversal", "absolute-outside"]),
     _NAME,
 )
 

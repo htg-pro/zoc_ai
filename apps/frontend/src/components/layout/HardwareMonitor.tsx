@@ -7,7 +7,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { resolveAgentPort } from "@/lib/agent-port";
+import { resolveWorkspaceServicesEndpoint } from "@/lib/workspace-services-endpoint";
 import {
   cpuAlertLabel,
   ramGauge,
@@ -39,7 +39,7 @@ function useHardwareSnapshot(): HardwareSnapshot | null {
       if (cancelled) return;
       let base: string;
       try {
-        base = `http://127.0.0.1:${await resolveAgentPort()}`;
+        base = (await resolveWorkspaceServicesEndpoint()).baseUrl;
       } catch {
         retry = setTimeout(() => void connect(), RETRY_MS);
         return;
@@ -158,11 +158,7 @@ export function HardwareMonitor() {
             <Row
               icon={Activity}
               label="Inference"
-              value={
-                snapshot?.llm_inference_active
-                  ? (tps ?? "running")
-                  : "idle"
-              }
+              value={snapshot?.llm_inference_active ? (tps ?? "running") : "idle"}
             />
           </dl>
         </DialogContent>
@@ -171,15 +167,7 @@ export function HardwareMonitor() {
   );
 }
 
-function Row({
-  icon: Icon,
-  label,
-  value,
-}: {
-  icon: typeof Cpu;
-  label: string;
-  value: string;
-}) {
+function Row({ icon: Icon, label, value }: { icon: typeof Cpu; label: string; value: string }) {
   return (
     <>
       <dt className="flex items-center gap-1.5 text-muted-foreground">

@@ -88,7 +88,6 @@ describe("parsePluginManifest", () => {
   });
 });
 
-
 it("preserves an optional main entrypoint", () => {
   const parsed = parsePluginManifest({
     id: "entry.plugin",

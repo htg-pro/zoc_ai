@@ -90,8 +90,21 @@ _raw_documents = st.builds(
     title=st.text(max_size=40),
     html=st.lists(
         st.sampled_from(
-            ["<p>", "</p>", "<script>x()</script>", "<b>", "</b>",
-             "&amp;", "&nbsp;", " ", "\t", "\n", "hello", "world", "123"]
+            [
+                "<p>",
+                "</p>",
+                "<script>x()</script>",
+                "<b>",
+                "</b>",
+                "&amp;",
+                "&nbsp;",
+                " ",
+                "\t",
+                "\n",
+                "hello",
+                "world",
+                "123",
+            ]
         ),
         max_size=12,
     ).map("".join),
@@ -121,9 +134,7 @@ def test_web_search_success_is_bounded_and_structured(
     worker = _StubWorker(raw)
     gateway = MCPGateway(web_search_spawner=lambda q, n: worker)
 
-    outcome = gateway.web_search(
-        query, max_documents=requested_cap, timeout=timeout
-    )
+    outcome = gateway.web_search(query, max_documents=requested_cap, timeout=timeout)
 
     # A successful invocation yields a structured result naming the tool.
     assert isinstance(outcome, WebSearchResult)

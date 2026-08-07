@@ -104,8 +104,8 @@ def test_packaging_setup_smoke(tmp_path: Path) -> None:
 
     matrix.initialize()
 
-    assert matrix.zocai_dir.is_dir(), (
-        f"first run did not create the .zocai/ store at {matrix.zocai_dir}"
-    )
+    assert (
+        matrix.zocai_dir.is_dir()
+    ), f"first run did not create the .zocai/ store at {matrix.zocai_dir}"
     # Confinement: the store lives under the given workspace root.
     assert matrix.zocai_dir.resolve().parent == tmp_path.resolve()

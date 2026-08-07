@@ -71,7 +71,14 @@ describe("StatusBar", () => {
       layout: { ...initial.layout, bottomDockOpen: false },
       diagnostics: {
         typescript: [
-          { source: "typescript", file: "a.ts", line: 1, column: 1, severity: "error", message: "boom" },
+          {
+            source: "typescript",
+            file: "a.ts",
+            line: 1,
+            column: 1,
+            severity: "error",
+            message: "boom",
+          },
         ],
       },
     });

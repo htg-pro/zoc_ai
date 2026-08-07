@@ -1,6 +1,8 @@
 /**
  * The degraded-secrets strip — zoc-agent-chat-rebuild R14.8, task 22.8.
  *
+ * Feature: zoc-agent-chat-rebuild, task 22.8 (R14.8).
+ *
  * Degraded_Secret_Mode means keys are held in the runtime's memory for this launch and nothing was
  * written to disk (4.1's third tier). R14.8 asks for a persistent indication, and *persistent* is the
  * requirement rather than the styling: a toast would be the wrong shape twice over, because the condition

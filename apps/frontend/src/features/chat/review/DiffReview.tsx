@@ -1,6 +1,8 @@
 /**
  * One file's diff — zoc-agent-chat-rebuild R10.2, R10.8, R10.12, R10.13, R10.14, R21.5, task 18.2.
  *
+ * Feature: zoc-agent-chat-rebuild, task 18.2 (R10.2, R10.8, R10.12, R10.13, R10.14, R21.5).
+ *
  * The header states the action in words, the hunks are a `role="list"` of {@link HunkRow}s, and a stale
  * file gets a warning strip with `Regenerate` instead of an accept/reject pair on every hunk.
  *
@@ -55,6 +57,8 @@ export interface DiffReviewProps {
   onExpandedChange: (hunkId: string, expanded: boolean) => void;
   /** Absent means no regeneration is offered, which is only true outside a stale file. */
   onRegenerate?: () => void;
+  /** R1.4: a read-only viewer reads the diff and decides nothing, so the controls are absent. */
+  readOnly?: boolean;
   className?: string;
 }
 
@@ -67,6 +71,7 @@ export function DiffReview({
   onDecideFile,
   onExpandedChange,
   onRegenerate,
+  readOnly = false,
   className,
 }: DiffReviewProps) {
   const listRef = useRef<HTMLOListElement | null>(null);
@@ -158,7 +163,7 @@ export function DiffReview({
           <span style={{ color: "var(--zoc-text-muted)", fontSize: "var(--zoc-text-meta)" }}>
             No content change to review.
           </span>
-          {stale ? null : (
+          {stale || readOnly ? null : (
             <>
               <button
                 type="button"
@@ -169,7 +174,8 @@ export function DiffReview({
                 }}
                 className="rounded-[var(--zoc-radius-chip)] px-1.5 py-0.5 hover:bg-[var(--zoc-row-bg)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--zoc-agent-strong)]"
                 style={{
-                  color: fileDecision === "accepted" ? "var(--zoc-success)" : "var(--zoc-text-muted)",
+                  color:
+                    fileDecision === "accepted" ? "var(--zoc-success)" : "var(--zoc-text-muted)",
                   fontSize: "var(--zoc-text-label)",
                 }}
               >
@@ -209,7 +215,7 @@ export function DiffReview({
               action={diff.action}
               hunk={hunk}
               decision={decisions[hunk.hunkId] ?? "undecided"}
-              locked={stale}
+              locked={stale || readOnly}
               expanded={isExpanded(hunk.hunkId)}
               onExpandedChange={(open) => {
                 onExpandedChange(hunk.hunkId, open);

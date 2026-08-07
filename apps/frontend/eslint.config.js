@@ -61,10 +61,11 @@ const MOTION_RESTRICTED_PATHS = ["motion", "motion/react"].map((name) => ({
 // `rows.tsx`, `ToolCallCard.tsx`, and the Monaco rules precisely because nothing
 // stopped a literal being typed.
 //
-// Scoped to `features/chat/**` and not the whole tree, because `features/agent`
-// is full of the literals this rebuild is replacing and lives until 26.2 — a
-// repo-wide rule would fail the Build_Gate on code that is already scheduled for
-// deletion.
+// Scoped to `features/chat/**` and not the whole tree. It was scoped that way
+// because `features/agent` was full of the literals this rebuild replaces, and a
+// repo-wide rule would have failed the Build_Gate on code already scheduled for
+// deletion; that tree is gone as of 26.1, and the scope stays because the other
+// surviving features were never held to R17.1 and widening it is its own task.
 //
 // Matched on the *literal node* rather than on the file text, so it fires for a
 // hex in a `className`, in a style object, in a `fill`, and in a plain string
@@ -134,10 +135,7 @@ export default [
       "react-hooks/rules-of-hooks": "error",
       "react-hooks/exhaustive-deps": "warn",
       // Fast-refresh friendliness for Vite.
-      "react-refresh/only-export-components": [
-        "warn",
-        { allowConstantExport: true },
-      ],
+      "react-refresh/only-export-components": ["warn", { allowConstantExport: true }],
       // Preserve the original eslintrc override.
       "@typescript-eslint/no-unused-vars": ["warn", { argsIgnorePattern: "^_" }],
     },
@@ -152,44 +150,11 @@ export default [
       "no-restricted-imports": ["error", { paths: MOTION_RESTRICTED_PATHS }],
     },
   },
-  // Renderer seam (R9.6): the strict Chat_Renderer consumes `FeedRow` only.
-  // It must not import the SSE stream or the wire event types — the normalizer
-  // is the sole path an Agent_Event reaches the renderer.
-  {
-    files: ["src/features/agent/rows.tsx"],
-    rules: {
-      "no-restricted-imports": [
-        "error",
-        {
-          paths: [
-            // Restated from the motion-budget block above: flat-config rule
-            // options replace rather than merge, so omitting them here would
-            // exempt this file from the R5.6 budget.
-            ...MOTION_RESTRICTED_PATHS,
-            {
-              name: "@zoc-studio/shared-types",
-              message:
-                "Renderer modules must consume FeedRow, not wire event types (R9.6).",
-            },
-            {
-              name: "./useAgentStream",
-              message: "Renderer modules must not import the SSE stream; use FeedRow (R9.6).",
-            },
-            {
-              name: "@/features/agent/useAgentStream",
-              message: "Renderer modules must not import the SSE stream; use FeedRow (R9.6).",
-            },
-          ],
-          patterns: [
-            {
-              group: ["**/useAgentStream", "**/event-ingest"],
-              message: "Renderer modules must not import the stream/ingest layer (R9.6).",
-            },
-          ],
-        },
-      ],
-    },
-  },
+  // The renderer-seam override for `src/features/agent/rows.tsx` (R9.6) was
+  // removed at 26.1 with the tree it guarded. Its successor is the Chat_Surface's
+  // own seam: `features/chat` consumes `MessagePart` off the transport and has no
+  // SSE client to import, so there is no per-file `no-restricted-imports` block to
+  // replace it with.
   // Test files: relax a couple of rules that are noisy in test scaffolding.
   {
     files: ["**/*.test.{ts,tsx}", "**/__tests__/**/*.{ts,tsx}"],
@@ -233,10 +198,7 @@ export default [
   // stylesheet rather than asserted. Its own test reads the same literals for the
   // same reason.
   {
-    files: [
-      "src/features/chat/tokens.ts",
-      "src/features/chat/__tests__/tokens.property.test.ts",
-    ],
+    files: ["src/features/chat/tokens.ts", "src/features/chat/__tests__/tokens.property.test.ts"],
     rules: {
       "no-restricted-syntax": "off",
     },

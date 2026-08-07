@@ -43,9 +43,7 @@ from zocai_gateway.toolsets import FullToolset
 
 # Safe path segments: never "." / ".." / empty, so a path stays a real,
 # in-workspace relative location.
-_segment = st.text(
-    alphabet="abcdefghijklmnopqrstuvwxyz0123456789_-", min_size=1, max_size=8
-)
+_segment = st.text(alphabet="abcdefghijklmnopqrstuvwxyz0123456789_-", min_size=1, max_size=8)
 
 
 def _is_ancestor(a: tuple[str, ...], b: tuple[str, ...]) -> bool:
@@ -72,9 +70,7 @@ def _plans(draw: st.DrawFn) -> EditPlan:
     for segs in raw_paths:
         candidate = tuple(segs)
         if any(
-            candidate == other
-            or _is_ancestor(candidate, other)
-            or _is_ancestor(other, candidate)
+            candidate == other or _is_ancestor(candidate, other) or _is_ancestor(other, candidate)
             for other in accepted
         ):
             continue

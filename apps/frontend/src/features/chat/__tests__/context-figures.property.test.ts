@@ -175,22 +175,25 @@ describe("Feature: zoc-agent-chat-rebuild, Property 29: unresolved mentions are 
 
   it("counts an unresolved chip as free, so resolving one raises the cost", () => {
     fc.assert(
-      fc.property(mention.filter((entry) => entry.estimatedTokens > 0), (entry) => {
-        // The direction that catches the bug: a cost that counted unresolved chips would *fall* when a
-        // chip resolved, which is the opposite of what a user would expect and impossible to notice in a
-        // single reading.
-        const unresolved = contextFigures({
-          model: MODEL,
-          census: censusOf(),
-          mentions: [{ ...entry, resolved: false }],
-        });
-        const resolved = contextFigures({
-          model: MODEL,
-          census: censusOf(),
-          mentions: [{ ...entry, resolved: true }],
-        });
-        expect(resolved.usage.consumed).toBeGreaterThan(unresolved.usage.consumed);
-      }),
+      fc.property(
+        mention.filter((entry) => entry.estimatedTokens > 0),
+        (entry) => {
+          // The direction that catches the bug: a cost that counted unresolved chips would *fall* when a
+          // chip resolved, which is the opposite of what a user would expect and impossible to notice in a
+          // single reading.
+          const unresolved = contextFigures({
+            model: MODEL,
+            census: censusOf(),
+            mentions: [{ ...entry, resolved: false }],
+          });
+          const resolved = contextFigures({
+            model: MODEL,
+            census: censusOf(),
+            mentions: [{ ...entry, resolved: true }],
+          });
+          expect(resolved.usage.consumed).toBeGreaterThan(unresolved.usage.consumed);
+        },
+      ),
       RUNS,
     );
   });
@@ -218,7 +221,9 @@ describe("Feature: zoc-agent-chat-rebuild, Property 82: the three context facts 
 
           const sentence = censusSentence(figures);
           // Fact one: in context out of the total.
-          expect(sentence).toContain(`${String(inContext)} of ${String(total)} messages in context`);
+          expect(sentence).toContain(
+            `${String(inContext)} of ${String(total)} messages in context`,
+          );
           // Fact two: what falls outside.
           expect(sentence).toContain(`${String(total - inContext)} message`);
           // Fact three, stated rather than omitted: "no summary" and "the surface does not know" are

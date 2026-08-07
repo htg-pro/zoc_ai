@@ -1,6 +1,8 @@
 /**
  * Streaming-markdown repair — zoc-agent-chat-rebuild R8.1, R8.5, task 15.2.
  *
+ * Feature: zoc-agent-chat-rebuild, task 15.2 (R8.1, R8.5).
+ *
  * A pure function that closes the delimiters a truncated markdown document left open, so a
  * half-arrived fence renders as a code block rather than flashing three literal backticks
  * and then reflowing when the rest arrives.

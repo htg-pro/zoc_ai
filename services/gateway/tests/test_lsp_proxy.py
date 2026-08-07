@@ -399,9 +399,7 @@ def test_property_12_abnormal_termination_while_connected(server: str, mode: str
         else:
             proc = _DyingProcess()
             spawn, _calls = _make_spawn(proc)
-            task = asyncio.create_task(
-                proxy_lsp(ws, server, workspace_root=Path("."), spawn=spawn)
-            )
+            task = asyncio.create_task(proxy_lsp(ws, server, workspace_root=Path("."), spawn=spawn))
             proc.simulate_exit(1)  # subprocess exits while the client is held open
             await asyncio.wait_for(task, timeout=2.0)
         return ws, proc
@@ -566,7 +564,5 @@ def test_property_15_rooturi_injection(parts: list[str]) -> None:
     patched = json.loads(inject_root_uri(request, root))
     assert patched["params"]["rootUri"] == root.as_uri()
     assert patched["params"]["rootPath"] == str(root)
-    assert patched["params"]["workspaceFolders"] == [
-        {"uri": root.as_uri(), "name": root.name}
-    ]
+    assert patched["params"]["workspaceFolders"] == [{"uri": root.as_uri(), "name": root.name}]
     assert patched["params"]["processId"] == 1  # existing params preserved

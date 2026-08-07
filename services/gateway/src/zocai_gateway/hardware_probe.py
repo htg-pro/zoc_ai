@@ -238,7 +238,7 @@ def _coerce_gb(value: object) -> float | None:
     """
     if value is None or isinstance(value, bool):
         return None
-    if not isinstance(value, (int, float)):
+    if not isinstance(value, int | float):
         return None
     number = float(value)
     if number <= 0.0 or number != number or number in (float("inf"), float("-inf")):

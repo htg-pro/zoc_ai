@@ -1,6 +1,8 @@
 /**
  * Agent_Runtime process entrypoint — zoc-agent-chat-rebuild R3.1, R3.2.
  *
+ * Feature: zoc-agent-chat-rebuild, R3.1, R3.2.
+ *
  * Deliberately three lines. Being a separate module is what makes "this file is
  * the entrypoint" a structural fact rather than a runtime guess: `main.ts` is
  * importable by tests without starting a server, and the esbuild + pkg pipeline

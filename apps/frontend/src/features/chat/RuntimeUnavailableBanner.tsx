@@ -1,6 +1,8 @@
 /**
  * The runtime-unavailable banner — zoc-agent-chat-rebuild R3.8, task 22.8.
  *
+ * Feature: zoc-agent-chat-rebuild, task 22.8 (R3.8).
+ *
  * The Agent_Runtime did not come up, or came up and died. R3.8 asks for the reason and a retry, and this
  * sits **above a still-rendered transcript** rather than replacing it: the Session's history is on disk
  * and unaffected by a supervisor failure, so blanking it would hide readable content to report a problem

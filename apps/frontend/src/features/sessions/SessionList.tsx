@@ -13,12 +13,13 @@
  * reconcile, not three, and the chat panel's obligation is to *gain* a list it never had. This component is
  * therefore new work rather than a deletion, which is the opposite of how the note reads.
  *
- * ## Why the delete confirmation lives here rather than in the row
+ * ## Why the delete confirmation lives outside the row
  *
  * One dialog, whichever row asked for it. A dialog per row would mount one Radix `Dialog` per Session — 500
  * of them in the 22.5 search fixture — and the confirmation is about a decision rather than about a row.
- * It also replaces `SessionsPanel`'s and `SessionsView`'s `window.confirm` calls, which are untrappable,
- * unstylable, and impossible to assert through the accessibility tree (R15.4, R21.6).
+ * 25.2 moved the markup out to {@link SessionDeleteDialog}, because the two workspace sessions surfaces
+ * replace their `window.confirm` calls with the same dialog and three copies of it would be the divergence
+ * R35.2 asks us to stop.
  *
  * ## Why search filters the rows rather than the Sessions
  *
@@ -29,16 +30,9 @@
 import { useMemo, useState } from "react";
 import { Search } from "lucide-react";
 
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
 import { cn } from "@/lib/utils";
 import type { Session } from "@zoc-studio/shared-types";
+import { SessionDeleteDialog } from "./SessionDeleteDialog";
 import { SessionRow } from "./SessionRow";
 import { searchSessions, sessionRows, type SessionFilter } from "./session-list-model";
 
@@ -98,7 +92,11 @@ export function SessionList({
   return (
     <div className={cn("flex min-h-0 flex-col", className)} data-zoc-session-list="">
       <div className="flex items-center gap-2 px-2 py-1">
-        <Search aria-hidden className="size-3.5 shrink-0" style={{ color: "var(--zoc-text-faint)" }} />
+        <Search
+          aria-hidden
+          className="size-3.5 shrink-0"
+          style={{ color: "var(--zoc-text-faint)" }}
+        />
         <input
           value={query}
           data-zoc-session-search=""
@@ -219,55 +217,16 @@ export function SessionList({
         </ul>
       )}
 
-      <Dialog
-        open={pendingDelete !== null}
-        onOpenChange={(open) => {
-          if (!open) setPendingDelete(null);
+      <SessionDeleteDialog
+        session={pendingDelete}
+        onCancel={() => {
+          setPendingDelete(null);
         }}
-      >
-        <DialogContent data-zoc-session-delete-dialog="">
-          <DialogHeader>
-            <DialogTitle>Delete this session?</DialogTitle>
-            <DialogDescription>
-              {pendingDelete === null
-                ? ""
-                : `“${pendingDelete.title}” and its ${String(pendingDelete.messages.length)} ${
-                    pendingDelete.messages.length === 1 ? "message" : "messages"
-                  } are removed. This cannot be undone — archive it instead to keep the transcript.`}
-            </DialogDescription>
-          </DialogHeader>
-          <DialogFooter>
-            <button
-              type="button"
-              data-zoc-session-delete-cancel=""
-              onClick={() => {
-                setPendingDelete(null);
-              }}
-              className="rounded-[var(--zoc-radius-chip)] px-2 py-1 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--zoc-agent-strong)]"
-              style={{ color: "var(--zoc-text-muted)", fontSize: "var(--zoc-text-label)" }}
-            >
-              Keep it
-            </button>
-            <button
-              type="button"
-              data-zoc-session-delete-confirm=""
-              onClick={() => {
-                const target = pendingDelete;
-                setPendingDelete(null);
-                if (target !== null) onDelete?.(target.id);
-              }}
-              className="rounded-[var(--zoc-radius-chip)] border px-2 py-1 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--zoc-agent-strong)]"
-              style={{
-                borderColor: "var(--zoc-error)",
-                color: "var(--zoc-error)",
-                fontSize: "var(--zoc-text-label)",
-              }}
-            >
-              Delete
-            </button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+        onConfirm={(sessionId) => {
+          setPendingDelete(null);
+          onDelete?.(sessionId);
+        }}
+      />
     </div>
   );
 }

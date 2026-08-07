@@ -65,9 +65,7 @@ def _guard(
     importable_set = importable if importable is not None else set()
     filesystem = fs if fs is not None else FakeFileSystem(existing)
     guard = DeletionGuard(
-        branch_inspector=FakeBranchInspector(
-            exists=branch_ready, has_commit=branch_ready
-        ),
+        branch_inspector=FakeBranchInspector(exists=branch_ready, has_commit=branch_ready),
         filesystem=filesystem,
         importable=lambda name: name in importable_set,
     )
@@ -113,9 +111,7 @@ def test_inspector_raising_is_treated_as_no_branch() -> None:
         def branch_has_commit(self, name: str) -> bool:
             return True
 
-    guard = DeletionGuard(
-        branch_inspector=RaisingInspector(), filesystem=FakeFileSystem(())
-    )
+    guard = DeletionGuard(branch_inspector=RaisingInspector(), filesystem=FakeFileSystem(()))
     assert guard.preservation_branch_ready() is False
 
 

@@ -144,9 +144,7 @@ def test_concurrent_producers_keep_unique_ordered_seqs(tmp_path: Path) -> None:
     assert set(seqs) == set(range(per_thread * threads_count))
 
 
-def test_stop_without_drain_skips_pending(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_stop_without_drain_skips_pending(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     diary = tmp_path / "session_diary.jsonl"
     release = threading.Event()
     worker = DiaryWorker(diary)

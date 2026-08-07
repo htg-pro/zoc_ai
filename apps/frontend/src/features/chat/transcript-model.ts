@@ -2,6 +2,8 @@
  * The transcript row factory — zoc-agent-chat-rebuild R7.6, R8.1–R8.4, R9.x, R16.6, R34.3, R34.6,
  * task 17.1.
  *
+ * Feature: zoc-agent-chat-rebuild, task 17.1 (R7.6, R8.1, R8.4, R16.6, R34.3, R34.6).
+ *
  * One `useChat` message reduced to the ordered rows the transcript draws. This is the single
  * `switch` over a part's discriminant that the design puts at the top of the Chat_Surface, and it
  * is a pure function over `ZocUIMessage.parts` rather than a component tree so that three things
@@ -68,15 +70,28 @@ import type { ToolEntryModel, ToolEntryState } from "./timeline/tool-entry-model
 import type { HistoricalItem } from "./historical-rows";
 import type { ZocUIMessage } from "./wire/ui-message";
 import { logUnknownPart } from "./unknown-parts";
+import { attachmentsFromParts, type ComposerAttachment } from "./composer/attachment-model";
 
 /** One row of the transcript. `id` is stable across renders and is the virtualiser's item key. */
-export type TranscriptRow =
-  | { readonly kind: "user"; readonly id: string; readonly text: string }
+interface AttributedRow {
+  /** The sub-agent that produced this row; absent means the parent Run (R25.5). */
+  readonly agentName?: string;
+}
+
+export type TranscriptRow = (
+  | {
+      readonly kind: "user";
+      readonly id: string;
+      readonly text: string;
+      readonly attachments?: readonly ComposerAttachment[];
+    }
   | {
       readonly kind: "answer";
       readonly id: string;
       readonly text: string;
       readonly streaming: boolean;
+      readonly citations?: SourcePart["citations"];
+      readonly sources?: SourcePart["sources"];
     }
   | {
       readonly kind: "reasoning";
@@ -118,10 +133,12 @@ export type TranscriptRow =
       readonly request: PermissionRequestPart;
     }
   | { readonly kind: "sources"; readonly id: string; readonly source: SourcePart }
-  | { readonly kind: "unknown"; readonly id: string; readonly discriminant: string };
+  | { readonly kind: "unknown"; readonly id: string; readonly discriminant: string }
+) &
+  AttributedRow;
 
 /** The `TranscriptRow` kinds that have no renderer yet, named so the gap is a checked fact. */
-export const ROWS_AWAITING_A_RENDERER: readonly TranscriptRow["kind"][] = ["sources"];
+export const ROWS_AWAITING_A_RENDERER: readonly TranscriptRow["kind"][] = [];
 
 /** Run states past which nothing more arrives, which is what R8.4's collapse keys on. */
 const TERMINAL_RUN_STATES: ReadonlySet<RunLifecyclePart["state"]> = new Set([
@@ -170,6 +187,14 @@ function pathsOf(value: unknown): readonly string[] | undefined {
   return paths.length > 0 ? paths : undefined;
 }
 
+function agentNameOf(part: MessagePartOf): string | undefined {
+  if (part.type.startsWith("data-zoc-")) {
+    const data = (part as { data?: { agentName?: unknown } }).data;
+    if (typeof data?.agentName === "string" && data.agentName.length > 0) return data.agentName;
+  }
+  return stringOf(zocMetaOf(part).agentName);
+}
+
 /** The `ToolKind` values, for validating one that arrived over the wire. */
 const TOOL_KINDS: ReadonlySet<string> = new Set([
   "read",
@@ -196,7 +221,13 @@ const TOOL_KINDS: ReadonlySet<string> = new Set([
  */
 export function inferToolKind(toolName: string): ToolKind {
   if (toolName.startsWith("mcp__")) return "mcp";
-  if (toolName.includes("web_search") || toolName.includes("fetch")) return "network";
+  if (
+    toolName.includes("web_search") ||
+    toolName.includes("google_search") ||
+    toolName.includes("fetch")
+  ) {
+    return "network";
+  }
   if (toolName.includes("search") || toolName.includes("grep")) return "search";
   if (toolName.includes("apply_hunks") || toolName.includes("restore")) return "write";
   if (toolName.includes("run_command") || toolName.includes("run_tests")) return "execute";
@@ -262,6 +293,7 @@ export function toolEntryOf(
   const output = detailOf(raw.output);
   const summary = stringOf(meta.summary);
   const metric = stringOf(meta.metric);
+  const agentName = stringOf(meta.agentName);
   const readPaths = pathsOf(meta.readPaths);
   const writtenPaths = pathsOf(meta.writtenPaths);
 
@@ -279,6 +311,7 @@ export function toolEntryOf(
     ...(readPaths === undefined ? {} : { readPaths }),
     ...(writtenPaths === undefined ? {} : { writtenPaths }),
     ...(metric === undefined ? {} : { metric }),
+    ...(agentName === undefined ? {} : { agentName }),
     ...(state === "failed" || state === "denied"
       ? {
           error: {
@@ -337,6 +370,17 @@ export function rowsOfMessage(
   // reason twice; without the lifecycle fallback, the transport's interrupted terminal — which is a
   // `data-zoc-run` part and never an error part (11.1) — renders not at all.
   const hasErrorPart = message.parts.some((part) => part.type === "data-zoc-error");
+  const sourcePart = message.parts
+    .filter(
+      (part): part is Extract<MessagePartOf, { type: "data-zoc-source" }> =>
+        part.type === "data-zoc-source",
+    )
+    .at(-1)?.data;
+  const assistantTextPartCount =
+    message.role === "assistant" ? message.parts.filter((part) => part.type === "text").length : 0;
+  const userAttachments =
+    message.role === "user" ? attachmentsFromParts(message.parts as readonly unknown[]) : [];
+  let userAttachmentsClaimed = false;
 
   // A pre-pass, because a plan's card renders its own diffs (18.2) and the parts arrive in whatever
   // order the runtime emitted them. Collecting first means the plan row is complete when it is built
@@ -396,6 +440,9 @@ export function rowsOfMessage(
     // Row ids are index-based, and that is safe because `useChat` only ever appends parts and
     // reconciles a data part in place by its id — a part's index does not move once assigned.
     const id = `${message.id}:${String(index)}`;
+    const agentName = agentNameOf(part);
+    const attributed = <T extends TranscriptRow>(row: T): T =>
+      (agentName === undefined ? row : { ...row, agentName }) as T;
 
     // Parts that draw nothing must also *break* nothing. The SDK emits `step-start` before every
     // step, so flushing on one would give a Run with a tool call per step one timeline per call and
@@ -422,60 +469,97 @@ export function rowsOfMessage(
     }
 
     switch (part.type) {
-      case "text":
+      case "text": {
+        const partId = stringOf(zocMetaOf(part).partId);
+        const citations =
+          sourcePart === undefined
+            ? []
+            : partId === undefined
+              ? assistantTextPartCount === 1
+                ? sourcePart.citations
+                : []
+              : sourcePart.citations.filter((citation) => citation.partId === partId);
         push(
           message.role === "user"
-            ? { kind: "user", id, text: part.text }
-            : { kind: "answer", id, text: part.text, streaming: part.state === "streaming" },
+            ? {
+                kind: "user",
+                id,
+                text: part.text,
+                ...(userAttachmentsClaimed || userAttachments.length === 0
+                  ? {}
+                  : { attachments: userAttachments }),
+              }
+            : attributed({
+                kind: "answer",
+                id,
+                text: part.text,
+                streaming: part.state === "streaming",
+                ...(citations.length === 0 || sourcePart === undefined
+                  ? {}
+                  : { citations, sources: sourcePart.sources }),
+              }),
         );
+        if (message.role === "user") userAttachmentsClaimed = true;
         return;
+      }
 
       case "reasoning": {
         const meta = zocMetaOf(part);
-        push({
-          kind: "reasoning",
-          id,
-          text: part.text,
-          streaming: part.state === "streaming",
-          terminal,
-          // R8.3's duration and R8.4's redaction flag ride as part-level provider metadata, per the
-          // design's mapping table. The runtime does not populate them yet; when it does, this is
-          // the only line that has to change.
-          elapsedMs: numberOf(meta.elapsedMs) ?? 0,
-          redacted: meta.redacted === true,
-        });
+        push(
+          attributed({
+            kind: "reasoning",
+            id,
+            text: part.text,
+            streaming: part.state === "streaming",
+            terminal,
+            // R8.3's duration and R8.4's redaction flag ride as part-level provider metadata, per the
+            // design's mapping table. The runtime does not populate them yet; when it does, this is
+            // the only line that has to change.
+            elapsedMs: numberOf(meta.elapsedMs) ?? 0,
+            redacted: meta.redacted === true,
+          }),
+        );
         return;
       }
 
       case "data-zoc-plan":
-        push({
-          kind: "plan",
-          id,
-          plan: part.data,
-          diffs: diffsByPlan.get(part.data.planId) ?? [],
-        });
+        push(
+          attributed({
+            kind: "plan",
+            id,
+            plan: part.data,
+            diffs: diffsByPlan.get(part.data.planId) ?? [],
+          }),
+        );
         return;
       case "data-zoc-diff":
         // Already inside its plan's card. A diff whose plan is *not* in this message still gets a row
         // of its own: a transcript restored from a persisted Session whose plan part was dropped is
         // rare and recoverable, and silently rendering nothing would lose a proposed change.
         if (plannedIds.has(part.data.planId)) return;
-        push({ kind: "diff", id, diff: part.data });
+        push(attributed({ kind: "diff", id, diff: part.data }));
         return;
       case "data-zoc-permission":
-        push({ kind: "permission", id, request: part.data });
+        push(attributed({ kind: "permission", id, request: part.data }));
         return;
       case "data-zoc-usage":
-        push({ kind: "usage", id, usage: part.data, ...(model === undefined ? {} : { model }) });
+        push(
+          attributed({
+            kind: "usage",
+            id,
+            usage: part.data,
+            ...(model === undefined ? {} : { model }),
+          }),
+        );
         return;
       case "data-zoc-error":
-        push({ kind: "error", id, error: part.data });
+        push(attributed({ kind: "error", id, error: part.data }));
         return;
       case "data-zoc-compaction":
-        push({ kind: "compaction", id, compaction: part.data });
+        push(attributed({ kind: "compaction", id, compaction: part.data }));
         return;
       case "data-zoc-source":
-        push({ kind: "sources", id, source: part.data });
+        push(attributed({ kind: "sources", id, source: part.data }));
         return;
 
       case "data-zoc-run":
@@ -488,7 +572,7 @@ export function rowsOfMessage(
           typeof part.data.code === "string" &&
           part.data.code.length > 0
         ) {
-          push({ kind: "error", id, error: part.data });
+          push(attributed({ kind: "error", id, error: part.data }));
         }
         return;
 

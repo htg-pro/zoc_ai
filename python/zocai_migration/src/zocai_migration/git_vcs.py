@@ -86,12 +86,7 @@ class GitVersionControl:
 
     def branch_exists(self, name: str) -> bool:
         """Return ``True`` when a local branch ``name`` exists."""
-        return (
-            self._run(
-                "show-ref", "--verify", "--quiet", f"refs/heads/{name}"
-            ).returncode
-            == 0
-        )
+        return self._run("show-ref", "--verify", "--quiet", f"refs/heads/{name}").returncode == 0
 
     def branch_has_commit(self, name: str) -> bool:
         """Return ``True`` when ``name`` resolves to at least one commit."""

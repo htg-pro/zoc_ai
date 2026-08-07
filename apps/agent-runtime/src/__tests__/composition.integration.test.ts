@@ -1,6 +1,8 @@
 /**
  * The composition root, end to end — zoc-agent-chat-rebuild §10's checkpoint.
  *
+ * Feature: zoc-agent-chat-rebuild, task 10.
+ *
  * §10 is "runtime tool loop end to end", and the gap the earlier tasks left is that every
  * module was tested against its own ports while nothing tested that they compose. These
  * tests drive `defaultRoute` — the exact function `main.ts` calls in production — through
@@ -189,7 +191,7 @@ describe("a Run reaches model resolution (§10)", () => {
       mode: "agent",
       permissionMode: "ask",
       modelRef: { provider: "openai", modelId: "gpt-4o" },
-      apiKey: "sk-must-never-reach-a-run",
+      apiKey: "sk-must-never-CANARY-run",
     });
     expect(status).toBe(422);
     expect(JSON.stringify(body)).not.toContain("sk-must-never");

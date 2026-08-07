@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen } from "@testing-library/react";
 import { ProblemsPanel } from "../ProblemsPanel";
 import { useApp } from "@/lib/store";
+import { useChatSurface } from "@/features/chat/store";
 import { revealPosition, requestReveal } from "@/lib/editor-actions";
 
 vi.mock("@/lib/editor-actions", () => ({
@@ -23,10 +24,25 @@ describe("ProblemsPanel coexistence (R2.6)", () => {
       openFile: vi.fn(async () => {}),
       diagnostics: {
         "lsp:file:///ws/src/app.ts": [
-          { source: "pyright", file: "/ws/src/app.ts", line: 3, column: 1, severity: "warning", message: "lsp warning here" },
+          {
+            source: "pyright",
+            file: "/ws/src/app.ts",
+            line: 3,
+            column: 1,
+            severity: "warning",
+            message: "lsp warning here",
+          },
         ],
         typescript: [
-          { source: "typescript", file: "/ws/src/app.ts", line: 12, column: 5, severity: "error", message: "checker error here", code: "TS2322" },
+          {
+            source: "typescript",
+            file: "/ws/src/app.ts",
+            line: 12,
+            column: 5,
+            severity: "error",
+            message: "checker error here",
+            code: "TS2322",
+          },
         ],
       },
     });
@@ -47,10 +63,38 @@ describe("ProblemsPanel coexistence (R2.6)", () => {
       openFile: vi.fn(async () => {}),
       diagnostics: {
         mixed: [
-          { source: "lint", file: "/ws/src/app.ts", line: 1, column: 1, severity: "hint", message: "hint item" },
-          { source: "lint", file: "/ws/src/app.ts", line: 2, column: 1, severity: "warning", message: "warning item" },
-          { source: "lint", file: "/ws/src/app.ts", line: 3, column: 1, severity: "info", message: "info item" },
-          { source: "lint", file: "/ws/src/app.ts", line: 4, column: 1, severity: "error", message: "error item" },
+          {
+            source: "lint",
+            file: "/ws/src/app.ts",
+            line: 1,
+            column: 1,
+            severity: "hint",
+            message: "hint item",
+          },
+          {
+            source: "lint",
+            file: "/ws/src/app.ts",
+            line: 2,
+            column: 1,
+            severity: "warning",
+            message: "warning item",
+          },
+          {
+            source: "lint",
+            file: "/ws/src/app.ts",
+            line: 3,
+            column: 1,
+            severity: "info",
+            message: "info item",
+          },
+          {
+            source: "lint",
+            file: "/ws/src/app.ts",
+            line: 4,
+            column: 1,
+            severity: "error",
+            message: "error item",
+          },
         ],
       },
     });
@@ -79,7 +123,14 @@ describe("ProblemsPanel navigation (R3.1–R3.4)", () => {
       activeFile: null,
       diagnostics: {
         typescript: [
-          { source: "typescript", file: "/ws/src/app.ts", line: 12, column: 5, severity: "error", message: "boom" },
+          {
+            source: "typescript",
+            file: "/ws/src/app.ts",
+            line: 12,
+            column: 5,
+            severity: "error",
+            message: "boom",
+          },
         ],
       },
     });
@@ -99,7 +150,14 @@ describe("ProblemsPanel navigation (R3.1–R3.4)", () => {
       activeFile: "/ws/src/app.ts",
       diagnostics: {
         typescript: [
-          { source: "typescript", file: "/ws/src/app.ts", line: 8, column: 2, severity: "error", message: "boom" },
+          {
+            source: "typescript",
+            file: "/ws/src/app.ts",
+            line: 8,
+            column: 2,
+            severity: "error",
+            message: "boom",
+          },
         ],
       },
     });
@@ -116,26 +174,39 @@ describe("ProblemsPanel navigation (R3.1–R3.4)", () => {
 
 describe("ProblemsPanel fix action (R6.4–R6.6)", () => {
   it("prefills the Composer in Agent mode and dispatches no run", () => {
-    const setInput = vi.fn();
-    const setAgentMode = vi.fn();
+    // Asserted against the Chat_Surface's store, not mocked app-store actions: task 24.2 repointed the
+    // write there, because since 25.6 the mounted composer is `features/chat`'s and the app store's
+    // `input` reached no rendered textarea. A mocked `setInput` would still pass against that bug.
+    useChatSurface.setState({ draft: "", conversationMode: "ask" });
     useApp.setState({
       workspaceRoot: "/ws",
       openFile: vi.fn(async () => {}),
-      setInput,
-      setAgentMode,
       diagnostics: {
         typescript: [
-          { source: "typescript", file: "/ws/src/app.ts", line: 12, column: 5, severity: "error", message: "type error" },
-          { source: "typescript", file: "/ws/src/app.ts", line: 20, column: 1, severity: "warning", message: "a warning" },
+          {
+            source: "typescript",
+            file: "/ws/src/app.ts",
+            line: 12,
+            column: 5,
+            severity: "error",
+            message: "type error",
+          },
+          {
+            source: "typescript",
+            file: "/ws/src/app.ts",
+            line: 20,
+            column: 1,
+            severity: "warning",
+            message: "a warning",
+          },
         ],
       },
     });
     render(<ProblemsPanel />);
 
     fireEvent.click(screen.getByRole("button", { name: /Run agent to fix 1 error/i }));
-    expect(setAgentMode).toHaveBeenCalledWith("agent");
-    expect(setInput).toHaveBeenCalledTimes(1);
-    const prompt = setInput.mock.calls[0][0] as string;
+    expect(useChatSurface.getState().conversationMode).toBe("agent");
+    const prompt = useChatSurface.getState().draft;
     expect(prompt).toContain("/ws/src/app.ts");
     expect(prompt).toContain("type error");
     // R6.3: warnings are omitted from the prompt.
@@ -148,7 +219,14 @@ describe("ProblemsPanel fix action (R6.4–R6.6)", () => {
       openFile: vi.fn(async () => {}),
       diagnostics: {
         eslint: [
-          { source: "eslint", file: "/ws/a.ts", line: 1, column: 1, severity: "warning", message: "w" },
+          {
+            source: "eslint",
+            file: "/ws/a.ts",
+            line: 1,
+            column: 1,
+            severity: "warning",
+            message: "w",
+          },
         ],
       },
     });
@@ -163,7 +241,16 @@ describe("ProblemsPanel no-server behavior (R7.3, R7.4)", () => {
       workspaceRoot: "/ws",
       openFile: vi.fn(async () => {}),
       diagnostics: {
-        ruff: [{ source: "ruff", file: "/ws/a.py", line: 1, column: 1, severity: "error", message: "F401 unused" }],
+        ruff: [
+          {
+            source: "ruff",
+            file: "/ws/a.py",
+            line: 1,
+            column: 1,
+            severity: "error",
+            message: "F401 unused",
+          },
+        ],
       },
     });
     render(<ProblemsPanel />);

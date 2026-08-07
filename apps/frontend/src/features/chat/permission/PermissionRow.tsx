@@ -1,6 +1,8 @@
 /**
  * One pending approval — zoc-agent-chat-rebuild R11.7, R11.8, R11.9, R21.3, task 19.1.
  *
+ * Feature: zoc-agent-chat-rebuild, task 19.1 (R11.7, R11.8, R11.9, R21.3).
+ *
  * The request, the scope chips, the countdown, and the two decisions. Rendered by `PermissionDock`,
  * which owns *where* it sits; this component owns what it says.
  *
@@ -261,7 +263,6 @@ export function PermissionRow({
           Approve
         </button>
       </div>
-
     </div>
   );
 }

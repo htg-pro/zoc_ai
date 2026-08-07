@@ -83,9 +83,7 @@ def test_scan_respects_relevance_and_count_limits(
     buffers = [buffer for buffer, _ in scored]
     raw_by_path = {buffer.path: raw for buffer, raw in scored}
 
-    def scan_hook(
-        _query: str, candidates: Sequence[tuple[str, str]]
-    ) -> list[float]:
+    def scan_hook(_query: str, candidates: Sequence[tuple[str, str]]) -> list[float]:
         # Return the controlled raw score for each candidate, in order.
         return [raw_by_path[path] for path, _content in candidates]
 
@@ -105,9 +103,7 @@ def test_scan_respects_relevance_and_count_limits(
     assert scores == sorted(scores, reverse=True)
 
     # Count correctness: exactly the qualifying candidates, capped at the limit.
-    qualifying = sum(
-        1 for raw in raw_by_path.values() if _clamp_unit(raw) >= RELEVANCE_THRESHOLD
-    )
+    qualifying = sum(1 for raw in raw_by_path.values() if _clamp_unit(raw) >= RELEVANCE_THRESHOLD)
     assert len(fragments) == min(qualifying, MAX_FRAGMENTS)
 
 

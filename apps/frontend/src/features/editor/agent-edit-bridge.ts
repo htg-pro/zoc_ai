@@ -12,9 +12,7 @@ export interface AgentEditApplication extends AgentReviewEdit {
   edits: SearchReplaceEdit[];
 }
 
-export type AgentEditTarget = (
-  application: AgentEditApplication,
-) => void | Promise<void>;
+export type AgentEditTarget = (application: AgentEditApplication) => void | Promise<void>;
 
 const staged = new Map<string, AgentReviewEdit[]>();
 const targets = new Map<number, { path: string; apply: AgentEditTarget }>();
@@ -138,7 +136,11 @@ function stripFinalNewline(parts: string[]): void {
 }
 
 function normalizePath(path: string): string {
-  return path.trim().replace(/^file:\/\//, "").replace(/\\/g, "/").replace(/\/+$/, "");
+  return path
+    .trim()
+    .replace(/^file:\/\//, "")
+    .replace(/\\/g, "/")
+    .replace(/\/+$/, "");
 }
 
 function sameWorkspacePath(openPath: string, eventPath: string): boolean {

@@ -1,6 +1,8 @@
 /**
  * The provider-failure mapping — zoc-agent-chat-rebuild R7.5, R13.7, R16.6, 9.8.
  *
+ * Feature: zoc-agent-chat-rebuild, task 9.8 (R7.5, R13.7, R16.6).
+ *
  * design.md:3630 asks for **every row of the provider-failure mapping table**, so the
  * first block below is exactly that table, row for row, in its order. The blocks after
  * it cover the arms the table does not enumerate but the taxonomy table does — the
@@ -282,7 +284,7 @@ describe("the remaining arms", () => {
 
 describe("the two invariants (R9.8)", () => {
   const bodyWithKey =
-    '{"error":{"message":"Incorrect API key provided: sk-live-abcdefghijklmnopqrstuvwxyz012345",' +
+    '{"error":{"message":"Incorrect API key provided: sk-live-CANARY-abcdefghijklmnopqrstuvwxyz",' +
     '"param":"/home/user/project/src/secret.ts"}}';
 
   const everyFailure = [

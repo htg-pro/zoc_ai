@@ -36,25 +36,30 @@ const pluginArb = fc.record({
 // Feature: plugin-system, Property 6: Registry filtering
 test("filterPlugins keeps exactly the name/tag matches; empty query keeps all", () => {
   fc.assert(
-    fc.property(fc.array(pluginArb, { maxLength: 10 }), fc.string({ maxLength: 4 }), (raw, query) => {
-      const list = raw.map((r) => plugin(r));
-      const result = filterPlugins(list, query);
-      const q = query.trim().toLowerCase();
+    fc.property(
+      fc.array(pluginArb, { maxLength: 10 }),
+      fc.string({ maxLength: 4 }),
+      (raw, query) => {
+        const list = raw.map((r) => plugin(r));
+        const result = filterPlugins(list, query);
+        const q = query.trim().toLowerCase();
 
-      if (q === "") {
-        expect(result).toEqual(list); // empty query returns all, order preserved
-        return;
-      }
-      const expected = list.filter(
-        (p) => p.name.toLowerCase().includes(q) || p.tags.some((t) => t.toLowerCase().includes(q)),
-      );
-      expect(result).toEqual(expected);
-      for (const p of result) {
-        expect(p.name.toLowerCase().includes(q) || p.tags.some((t) => t.toLowerCase().includes(q))).toBe(
-          true,
+        if (q === "") {
+          expect(result).toEqual(list); // empty query returns all, order preserved
+          return;
+        }
+        const expected = list.filter(
+          (p) =>
+            p.name.toLowerCase().includes(q) || p.tags.some((t) => t.toLowerCase().includes(q)),
         );
-      }
-    }),
+        expect(result).toEqual(expected);
+        for (const p of result) {
+          expect(
+            p.name.toLowerCase().includes(q) || p.tags.some((t) => t.toLowerCase().includes(q)),
+          ).toBe(true);
+        }
+      },
+    ),
     { numRuns: 200 },
   );
 });
@@ -63,10 +68,15 @@ test("filterPlugins keeps exactly the name/tag matches; empty query keeps all", 
 test("manifestFromArtifact returns a plugin only for a valid extracted manifest", async () => {
   await fc.assert(
     fc.asyncProperty(
-      fc.record({ id: fc.constantFrom("a.b", "my-plugin", "x1"), name: nameArb, version: fc.constant("1.0.0") }),
+      fc.record({
+        id: fc.constantFrom("a.b", "my-plugin", "x1"),
+        name: nameArb,
+        version: fc.constant("1.0.0"),
+      }),
       fc.boolean(),
       async (manifestObj, present) => {
-        const extract = async () => (present ? JSON.stringify({ ...manifestObj, contributes: {} }) : null);
+        const extract = async () =>
+          present ? JSON.stringify({ ...manifestObj, contributes: {} }) : null;
         const result = await manifestFromArtifact("artifact-bytes", extract);
         if (present) {
           expect(result.manifest).not.toBeNull();
@@ -104,7 +114,6 @@ test("parseRegistry drops invalid entries and tolerates junk", () => {
   expect(parseRegistry('{"not":"array"}')).toEqual([]);
 });
 
-
 test("extracts a validated manifest and its declared JavaScript entry from a real zip", async () => {
   const manifest = {
     id: "zoc.example",
@@ -134,7 +143,9 @@ test("rejects unsafe, ambiguous, or missing zip entrypoints", async () => {
     "escape.js": strToU8("bad"),
   });
   await expect(manifestFromArtifact(unsafe)).resolves.toMatchObject({ manifest: null });
-  expect((await manifestFromArtifact(unsafe)).errors.join(" ")).toContain("Unsafe plugin main entry");
+  expect((await manifestFromArtifact(unsafe)).errors.join(" ")).toContain(
+    "Unsafe plugin main entry",
+  );
 
   const ambiguous = zipSync({
     "a/manifest.json": strToU8(JSON.stringify(base)),
@@ -174,7 +185,6 @@ test("rejects oversized downloads, excessive entries, and high-expansion archive
   );
   expect((await manifestFromArtifact(bomb)).errors.join(" ")).toContain("expands beyond");
 });
-
 
 test("uses index.js when a zip manifest omits main", async () => {
   const code = "zoc.ui.showMessage('loaded');";

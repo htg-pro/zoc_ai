@@ -52,14 +52,12 @@ import type { Session } from "@zoc-studio/shared-types";
 const RUNS = { numRuns: 200 } as const;
 
 /** A Session set drawn from the shared fixture, ids made unique. */
-const sessions = fc
-  .array(sessionHistory, { minLength: 1, maxLength: 8 })
-  .map((fixtures) =>
-    fixtures.map((fixture, index) => ({
-      ...fixture.session,
-      id: `${fixture.session.id}_${String(index)}`,
-    })),
-  );
+const sessions = fc.array(sessionHistory, { minLength: 1, maxLength: 8 }).map((fixtures) =>
+  fixtures.map((fixture, index) => ({
+    ...fixture.session,
+    id: `${fixture.session.id}_${String(index)}`,
+  })),
+);
 
 const NOW = "2026-07-31T10:00:00.000Z";
 

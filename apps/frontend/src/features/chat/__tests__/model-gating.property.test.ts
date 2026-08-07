@@ -66,8 +66,14 @@ describe("Feature: zoc-agent-chat-rebuild, Property 30: submission gating is a f
         fc.boolean(),
         (requiresKey, hasKey, seedA, seedB) => {
           // Two arbitrary models sharing only the gating pair. Their verdicts must agree.
-          const first = fc.sample(choiceWith(requiresKey, hasKey), { numRuns: 1, seed: Number(seedA) })[0];
-          const second = fc.sample(choiceWith(requiresKey, hasKey), { numRuns: 1, seed: Number(seedB) })[0];
+          const first = fc.sample(choiceWith(requiresKey, hasKey), {
+            numRuns: 1,
+            seed: Number(seedA),
+          })[0];
+          const second = fc.sample(choiceWith(requiresKey, hasKey), {
+            numRuns: 1,
+            seed: Number(seedB),
+          })[0];
           expect(first).toBeDefined();
           expect(second).toBeDefined();
           if (first === undefined || second === undefined) return;
@@ -153,10 +159,16 @@ describe("the picker's other three facts (R13.6, R13.11, R13.12, R13.13)", () =>
   it("groups by provider in the catalogue's own order", () => {
     fc.assert(
       fc.property(
-        fc.array(fc.tuple(fc.constantFrom("b-provider", "a-provider", "c-provider"), fc.hexaString({ minLength: 2, maxLength: 6 })), {
-          minLength: 1,
-          maxLength: 12,
-        }),
+        fc.array(
+          fc.tuple(
+            fc.constantFrom("b-provider", "a-provider", "c-provider"),
+            fc.hexaString({ minLength: 2, maxLength: 6 }),
+          ),
+          {
+            minLength: 1,
+            maxLength: 12,
+          },
+        ),
         (entries) => {
           const models = entries.map(([provider, id], index) =>
             modelChoice({
@@ -176,7 +188,9 @@ describe("the picker's other three facts (R13.6, R13.11, R13.12, R13.13)", () =>
           const firstAppearance = [...new Set(models.map((model) => model.provider))];
           expect(groups.map((group) => group.provider)).toEqual(firstAppearance);
           expect(groups.every((group) => group.models.length > 0)).toBe(true);
-          expect(groups.reduce((total, group) => total + group.models.length, 0)).toBe(models.length);
+          expect(groups.reduce((total, group) => total + group.models.length, 0)).toBe(
+            models.length,
+          );
         },
       ),
       RUNS,

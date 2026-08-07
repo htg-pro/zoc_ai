@@ -81,9 +81,7 @@ EVOLUTION_ENGINE_MANIFEST = "python/zocai_evolution/pyproject.toml"
 # ---------------------------------------------------------------------------
 
 
-def migration_complete(
-    *, python_exists: bool, rust_exists: bool, ts_exists: bool
-) -> bool:
+def migration_complete(*, python_exists: bool, rust_exists: bool, ts_exists: bool) -> bool:
     """Return whether the migration is complete per R13.1.
 
     The Migration is considered complete *only when all three* language
@@ -109,9 +107,9 @@ def test_python_sidecar_exists_and_manifest_parses() -> None:
 
     data = tomllib.loads(manifest.read_text(encoding="utf-8"))
     # A buildable Python project declares either [project] or a [build-system].
-    assert "project" in data or "build-system" in data, (
-        "services/gateway/pyproject.toml does not declare a buildable project"
-    )
+    assert (
+        "project" in data or "build-system" in data
+    ), "services/gateway/pyproject.toml does not declare a buildable project"
 
 
 def test_rust_crate_exists_and_manifest_parses() -> None:
@@ -138,9 +136,7 @@ def test_ts_frontend_exists_and_manifest_parses() -> None:
     data = json.loads(manifest.read_text(encoding="utf-8"))
     assert data.get("name"), "apps/frontend/package.json declares no package name"
     # A buildable frontend exposes a build script.
-    assert "build" in data.get("scripts", {}), (
-        "apps/frontend/package.json defines no build script"
-    )
+    assert "build" in data.get("scripts", {}), "apps/frontend/package.json defines no build script"
 
 
 def test_all_three_language_deliverables_present() -> None:
@@ -241,9 +237,9 @@ def test_zocai_stores_created_on_first_run(tmp_path: Path) -> None:
     zocai_dir = matrix.zocai_dir.resolve()
     for path in (*matrix.directories(), *matrix.files()):
         resolved = path.resolve()
-        assert resolved == zocai_dir or zocai_dir in resolved.parents, (
-            f"store escaped .zocai/ confinement: {resolved}"
-        )
+        assert (
+            resolved == zocai_dir or zocai_dir in resolved.parents
+        ), f"store escaped .zocai/ confinement: {resolved}"
 
 
 def test_zocai_initialization_is_idempotent(tmp_path: Path) -> None:

@@ -58,9 +58,7 @@ function renderSegment(event: AgentTerminalEvent): string {
   }
 }
 
-export function useAgentTerminal(
-  options: UseAgentTerminalOptions,
-): UseAgentTerminalResult {
+export function useAgentTerminal(options: UseAgentTerminalOptions): UseAgentTerminalResult {
   const {
     commandEvents,
     focusedPaneId,
@@ -139,10 +137,7 @@ export function useAgentTerminal(
     (value: boolean) => dispatch({ kind: "set-follow-agent", value }),
     [],
   );
-  const focusPane = useCallback(
-    (paneId: string) => dispatch({ kind: "focus-pane", paneId }),
-    [],
-  );
+  const focusPane = useCallback((paneId: string) => dispatch({ kind: "focus-pane", paneId }), []);
 
   return { state, setFollowAgent, focusPane };
 }

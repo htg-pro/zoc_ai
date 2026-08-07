@@ -15,8 +15,9 @@ describe("ShowcaseView", () => {
     expect(screen.getByText("Inputs")).toBeInTheDocument();
     expect(screen.getByText("Messages")).toBeInTheDocument();
     expect(screen.getByText("Tool calls (all states)")).toBeInTheDocument();
-    expect(screen.getByText("Diff card")).toBeInTheDocument();
-    expect(screen.getByText("Agent workflow timeline")).toBeInTheDocument();
+    // The Chat_Surface stories 25.6 put in place of the legacy cards. There is no run-card story: the
+    // transcript *is* the run timeline, so "Messages" above covers what "Agent workflow timeline" did.
+    expect(screen.getByText("Diff review")).toBeInTheDocument();
     expect(screen.getByText("States: loading / empty / error")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Primary" })).toBeInTheDocument();
   });

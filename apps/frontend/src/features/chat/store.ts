@@ -1,6 +1,8 @@
 /**
  * The chat-local store — zoc-agent-chat-rebuild R2.3, R2.4, R10.3, R16.4, R20.7, R32.1.
  *
+ * Feature: zoc-agent-chat-rebuild, R2.3, R2.4, R10.3, R16.4, R20.7, R32.1.
+ *
  * The Chat_Surface's UI state, and **only** its UI state. Three stores exist and the
  * boundary between them is a requirement rather than a preference:
  *

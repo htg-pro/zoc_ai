@@ -309,7 +309,7 @@ def _parse_quality_score(text: str) -> float:
     try:
         parsed: object = json.loads(fenced)
         value = parsed.get("score") if isinstance(parsed, dict) else None
-        if isinstance(value, bool) or not isinstance(value, (str, int, float)):
+        if isinstance(value, bool) or not isinstance(value, str | int | float):
             raise TypeError("score must be numeric")
         score = float(value)
     except (ValueError, TypeError, json.JSONDecodeError, AttributeError):

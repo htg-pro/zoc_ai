@@ -9,11 +9,22 @@
  */
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-vi.mock("@/features/agent/gateway-client", () => ({
+vi.mock("@/lib/gateway-client", () => ({
   postAgentRun: vi.fn(),
   postAgentDecision: vi.fn(),
   postAgentCancel: vi.fn(),
 }));
+
+// Agent mode takes a pre-run Git checkpoint, which refuses outside the desktop app — so the submit
+// test below would fail on the checkpoint before it ever reached the transport.
+const tauriBridgeMock = vi.hoisted(() => ({
+  isTauri: vi.fn(() => true),
+  gitCheckpointCommit: vi.fn(async () => "checkpointsha"),
+}));
+vi.mock("@/lib/tauri-bridge", async () => {
+  const actual = await vi.importActual<typeof import("@/lib/tauri-bridge")>("@/lib/tauri-bridge");
+  return { ...actual, ...tauriBridgeMock };
+});
 
 vi.mock("@/lib/telemetry", () => ({
   track: vi.fn(async () => undefined),
@@ -21,11 +32,12 @@ vi.mock("@/lib/telemetry", () => ({
   initTelemetry: vi.fn(async () => undefined),
 }));
 
-import { postAgentCancel } from "@/features/agent/gateway-client";
-import { isTerminal, canStopRun, isStopPending, runStatusLabel } from "@/features/agent/agent-runs";
-import type { TrackedRun } from "@/features/agent/agent-runs";
-import { validateRunRequest, routeModeForPrompt } from "@/features/agent/prepare-agent-run";
+import { postAgentCancel, postAgentRun } from "@/lib/gateway-client";
+import { isTerminal, canStopRun, isStopPending, runStatusLabel } from "@/lib/agent-runs";
+import type { TrackedRun } from "@/lib/agent-runs";
+import { validateRunRequest } from "@/lib/prepare-agent-run";
 import { useApp } from "@/lib/store";
+import type { AgentMode } from "@/lib/store";
 
 function trackedRun(overrides: Partial<TrackedRun> = {}): TrackedRun {
   return {
@@ -38,14 +50,18 @@ function trackedRun(overrides: Partial<TrackedRun> = {}): TrackedRun {
   };
 }
 
+/**
+ * The system-role lines `appendSystemChat` emits, read off `agentItems`.
+ *
+ * It used to read the `chat` array, which task 26.6 deleted. Not a weaker
+ * oracle: `appendSystemChat` always wrote both halves from the same string, and
+ * `agentItems` is the half that survived — so this still fails if the message
+ * stops being appended, which is what the three tests below are about.
+ */
 function systemMessages(): string[] {
   return useApp
     .getState()
-    .chat.flatMap((entry) =>
-      entry.kind === "message" && entry.message?.role === "system"
-        ? [entry.message.content]
-        : [],
-    );
+    .agentItems.flatMap((item) => (item.type === "error" ? [item.error] : []));
 }
 
 describe("cancelRunById", () => {
@@ -53,7 +69,6 @@ describe("cancelRunById", () => {
     vi.clearAllMocks();
     useApp.setState({
       liveMode: true,
-      chat: [],
       agentItems: [],
       messageQueue: [],
       trackedRuns: [trackedRun()],
@@ -199,11 +214,48 @@ describe("stop affordance", () => {
 });
 
 describe("mode isolation at the submit boundary", () => {
-  it("never promotes Ask or Plan to Agent", () => {
-    // Whatever the prompt says, a read-only mode stays read-only.
-    for (const prompt of ["create a file", "delete everything", "implement login"]) {
-      expect(routeModeForPrompt(prompt, "ask")).toBe("ask");
-      expect(routeModeForPrompt(prompt, "plan")).toBe("plan");
+  /** Enough state for `sendUserMessage` to reach the transport in any of the three modes. */
+  function submitReady(mode: AgentMode) {
+    return {
+      liveMode: true,
+      agentMode: mode,
+      agentItems: [],
+      messageQueue: [],
+      trackedRuns: [],
+      selectedModel: { provider: "mock", model: "mock-model" },
+      llamaCppStatus: null,
+      workspaceRoot: "/ws",
+      activeSessionId: "",
+    };
+  }
+
+  it("sends the mode the user selected, even when the prompt reads like a question", async () => {
+    // Task 25.5 removed `routeModeForPrompt` from the store's send path: it used to rewrite an Agent
+    // submit to Ask whenever the text looked like a question, which is the silent downgrade
+    // Amendment 1 / R7.11 forbids. A question-shaped prompt is the case that used to be rewritten, so
+    // it is the case worth pinning.
+    vi.mocked(postAgentRun).mockResolvedValue({ runId: "run-verbatim" });
+    useApp.setState(submitReady("agent"));
+
+    await useApp.getState().sendUserMessage("what does this do?");
+
+    expect(postAgentRun).toHaveBeenCalledWith(expect.objectContaining({ mode: "agent" }));
+  });
+
+  it("never promotes Ask or Plan to Agent", async () => {
+    // Asserted through the store rather than through `routeModeForPrompt`: task 25.6 repointed this
+    // file off `features/agent`, and that router dies with the folder at 26.1. The guarantee it stood
+    // for — a read-only mode stays read-only whatever the prompt says — now has exactly one path that
+    // could break it, so that is where it is pinned. An edit-intent prompt is the input the old router
+    // would have reacted to.
+    for (const mode of ["ask", "plan"] as const) {
+      vi.mocked(postAgentRun).mockClear();
+      vi.mocked(postAgentRun).mockResolvedValue({ runId: `run-${mode}` });
+      useApp.setState(submitReady(mode));
+
+      await useApp.getState().sendUserMessage("create a file and delete everything");
+
+      expect(postAgentRun).toHaveBeenCalledWith(expect.objectContaining({ mode }));
     }
   });
 
@@ -218,12 +270,16 @@ describe("mode isolation at the submit boundary", () => {
 
   it("allows Ask, refuses Plan without a workspace", () => {
     // R1.7 — Ask is the one rootless mode.
-    expect(validateRunRequest({ input: "what is this?", mode: "ask", workspaceRoot: null }).ok).toBe(
-      true,
-    );
+    expect(
+      validateRunRequest({ input: "what is this?", mode: "ask", workspaceRoot: null }).ok,
+    ).toBe(true);
     // R1.4 — Plan reads files and stages diffs against real paths, so it now
     // requires an open folder like Agent.
-    const plan = validateRunRequest({ input: "plan the change", mode: "plan", workspaceRoot: null });
+    const plan = validateRunRequest({
+      input: "plan the change",
+      mode: "plan",
+      workspaceRoot: null,
+    });
     expect(plan.ok).toBe(false);
     if (!plan.ok) {
       expect(plan.code).toBe("no_workspace");
@@ -232,6 +288,8 @@ describe("mode isolation at the submit boundary", () => {
 
   it("rejects an unrecognised mode and an empty message", () => {
     expect(validateRunRequest({ input: "hi", mode: "sudo", workspaceRoot: "/ws" }).ok).toBe(false);
-    expect(validateRunRequest({ input: "   ", mode: "agent", workspaceRoot: "/ws" }).ok).toBe(false);
+    expect(validateRunRequest({ input: "   ", mode: "agent", workspaceRoot: "/ws" }).ok).toBe(
+      false,
+    );
   });
 });

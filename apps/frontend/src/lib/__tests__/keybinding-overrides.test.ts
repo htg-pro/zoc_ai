@@ -51,9 +51,10 @@ describe("keybinding-overrides", () => {
   });
 
   it("sanitizeOverrides keeps valid chords and explicit unbinds only", () => {
-    expect(
-      sanitizeOverrides({ a: "mod+k", b: null, c: "bad+", d: 42 }),
-    ).toEqual({ a: "mod+k", b: null });
+    expect(sanitizeOverrides({ a: "mod+k", b: null, c: "bad+", d: 42 })).toEqual({
+      a: "mod+k",
+      b: null,
+    });
   });
 
   it("effectiveKeybinding prefers an override and honors explicit unbind", () => {

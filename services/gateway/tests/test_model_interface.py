@@ -97,9 +97,10 @@ def test_request_shape_is_tier_independent() -> None:
 
 def test_response_shape_is_identical_across_tiers() -> None:
     shapes = {
-        frozenset(f.name for f in fields(m.generate(
-            ModelRequest(prompt="x", context_window=m.context_window)
-        )))
+        frozenset(
+            f.name
+            for f in fields(m.generate(ModelRequest(prompt="x", context_window=m.context_window)))
+        )
         for m in ALL_TIERS
     }
     assert len(shapes) == 1  # one common shape, no tier branching

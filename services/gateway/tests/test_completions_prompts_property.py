@@ -26,7 +26,13 @@ from zocai_gateway.routes.completions import (
 )
 
 # Models known to support FIM and models that do not (→ fallback).
-_FIM_MODELS = ["codellama-7b", "starcoder2-3b", "deepseek-coder-6.7b", "qwen2.5-coder", "codestral-latest"]
+_FIM_MODELS = [
+    "codellama-7b",
+    "starcoder2-3b",
+    "deepseek-coder-6.7b",
+    "qwen2.5-coder",
+    "codestral-latest",
+]
 _NON_FIM_MODELS = ["gpt-4o-mini", "claude-3-5-sonnet", "llama-3-8b", "mistral-small", ""]
 
 _text = st.text(max_size=60)

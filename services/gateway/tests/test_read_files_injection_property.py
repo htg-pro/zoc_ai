@@ -30,15 +30,8 @@ def test_read_files_is_framed_capped_and_skips_unreadable(
     **Validates: Requirements 15.2, 15.3, 15.4**
     """
     paths = [f"src/{name}.py" for name, _length, _unreadable in cases]
-    contents = {
-        f"src/{name}.py": "x" * length
-        for name, length, _unreadable in cases
-    }
-    unreadable = {
-        f"src/{name}.py"
-        for name, _length, is_unreadable in cases
-        if is_unreadable
-    }
+    contents = {f"src/{name}.py": "x" * length for name, length, _unreadable in cases}
+    unreadable = {f"src/{name}.py" for name, _length, is_unreadable in cases if is_unreadable}
 
     def read_file(path: str) -> str:
         if path in unreadable:

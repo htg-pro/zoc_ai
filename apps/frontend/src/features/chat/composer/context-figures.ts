@@ -2,6 +2,8 @@
  * The context meter's figures — zoc-agent-chat-rebuild R12.5, R12.6, R12.8, R12.9, R12.10, R34.4,
  * task 20.3.
  *
+ * Feature: zoc-agent-chat-rebuild, task 20.3 (R12.5, R12.6, R12.8, R12.9, R12.10, R34.4).
+ *
  * Everything the meter displays, as one value derived in one place. The reason it is one function rather
  * than five is R12.10: a figure computed for one model must never be shown against another's window, and
  * the way that goes wrong is a component that reads a limit from one source and a count from another.
@@ -34,6 +36,8 @@ export interface ModelReference {
   readonly modelId: string;
   /** The model's context window, in tokens. */
   readonly contextLimit: number;
+  /** Whether the selected model accepts image input (R29.3). */
+  readonly supportsImages?: boolean;
 }
 
 /** Two model references name the same model. */

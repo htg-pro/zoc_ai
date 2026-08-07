@@ -1,6 +1,8 @@
 /**
  * Tool registry guards and Property 15 — zoc-agent-chat-rebuild.
  *
+ * Feature: zoc-agent-chat-rebuild, Property 15.
+ *
  * Property 15: Workspace failure is retryable and non-fatal (validates R6.6)
  *
  * Plus the R10.16 guard, which is the assertion that pins the single-mutation-path

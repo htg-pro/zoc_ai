@@ -1,6 +1,8 @@
 /**
  * The model picker — zoc-agent-chat-rebuild R13.1, R13.2, R13.3, R13.6, R13.11, R13.12, R13.13, task 22.2.
  *
+ * Feature: zoc-agent-chat-rebuild, task 22.2 (R13.1, R13.2, R13.3, R13.6, R13.11, R13.12).
+ *
  * Radix `Popover` plus `cmdk`, models grouped by provider, one row per model carrying three facts and no
  * more: whether its provider has a key, how fast it has been, and — for a local model — whether it fits this
  * machine.
@@ -12,6 +14,13 @@
  * and it is the send path that blocks, with the reason and a direct route to key entry. Refusing the
  * selection instead would leave a user unable to see which models they could use if they added a key.
  *
+ * ## Why the badge and the route are two elements
+ *
+ * R13.2 is a report and R13.3 is an affordance, and one button doing both is only correct while every host
+ * can act on it. A read-only viewer cannot: `ChatPanel` withholds `onAddKey` from a viewer, so the row
+ * renders the badge as inert text instead. Rendering the button with an optional handler was the shape
+ * that hid this — it produced a control that looked live to the one user who can never use it.
+ *
  * ## What the picker does not show
  *
  * Resident memory, video memory, layer counts. R13.13 keeps those in the status bar, and the fit state is the
@@ -20,7 +29,14 @@
  */
 import { Check, HardDrive, KeyRound } from "lucide-react";
 
-import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command";
+import {
+  Command,
+  CommandEmpty,
+  CommandGroup,
+  CommandInput,
+  CommandItem,
+  CommandList,
+} from "@/components/ui/command";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { cn } from "@/lib/utils";
 import {
@@ -45,7 +61,11 @@ export function ModelPicker({ models, selected, onSelect, onAddKey, className }:
   const groups = groupByProvider(models);
 
   return (
-    <Popover>
+    // `modal` is what makes R21.6 true rather than half true. A Radix Popover left at its default is
+    // non-modal: it moves focus in on open and returns it to the trigger on dismissal, but Tab walks
+    // straight out of it into the page behind. R21.6 asks for a trap, and the picker is a list the user
+    // arrows through — leaving it mid-list lands focus somewhere with no relationship to the task.
+    <Popover modal>
       <PopoverTrigger asChild>
         <button
           type="button"
@@ -64,9 +84,15 @@ export function ModelPicker({ models, selected, onSelect, onAddKey, className }:
           style={{ color: "var(--zoc-text-secondary)", fontSize: "var(--zoc-text-label)" }}
         >
           {/* Truncated first under the header's container query — see `ChatHeader`. */}
-          <span className="zoc-header-model-name truncate">{selected?.label ?? "Choose a model"}</span>
+          <span className="zoc-header-model-name truncate">
+            {selected?.label ?? "Choose a model"}
+          </span>
           {selected !== null && keyBadgeOf(selected) !== null ? (
-            <KeyRound aria-hidden className="size-3 shrink-0" style={{ color: "var(--zoc-ember)" }} />
+            <KeyRound
+              aria-hidden
+              className="size-3 shrink-0"
+              style={{ color: "var(--zoc-ember)" }}
+            />
           ) : null}
         </button>
       </PopoverTrigger>
@@ -102,7 +128,11 @@ export function ModelPicker({ models, selected, onSelect, onAddKey, className }:
                     >
                       {selected?.modelId === model.modelId &&
                       selected.provider === model.provider ? (
-                        <Check aria-hidden className="size-3 shrink-0" style={{ color: "var(--zoc-agent)" }} />
+                        <Check
+                          aria-hidden
+                          className="size-3 shrink-0"
+                          style={{ color: "var(--zoc-agent)" }}
+                        />
                       ) : (
                         <span className="size-3 shrink-0" />
                       )}
@@ -141,13 +171,33 @@ export function ModelPicker({ models, selected, onSelect, onAddKey, className }:
                         <span
                           className="shrink-0 tabular-nums"
                           data-zoc-model-rate=""
-                          style={{ color: "var(--zoc-text-faint)", fontSize: "var(--zoc-text-label)" }}
+                          style={{
+                            color: "var(--zoc-text-faint)",
+                            fontSize: "var(--zoc-text-label)",
+                          }}
                         >
                           {rate}
                         </span>
                       )}
 
-                      {badge === null ? null : (
+                      {badge === null ? null : onAddKey === undefined ? (
+                        /*
+                          The report without the route: R13.2 without R13.3, which is the read-only
+                          viewer's case. `ChatPanel` withholds `onAddKey` from a viewer deliberately —
+                          nobody opens Settings on someone else's machine — and a button that calls
+                          nothing is an invitation to press it twice and conclude the app is broken. The
+                          badge stays, because which providers lack a key is what the picker is for.
+                        */
+                        <span
+                          className="flex shrink-0 items-center gap-1"
+                          data-zoc-model-key-missing=""
+                          style={{ color: "var(--zoc-ember)", fontSize: "var(--zoc-text-label)" }}
+                        >
+                          <KeyRound aria-hidden className="size-3" />
+                          {/* Said in a word as well as a colour and a glyph (R21.7). */}
+                          No key
+                        </span>
+                      ) : (
                         <button
                           type="button"
                           data-zoc-model-add-key={model.provider}
@@ -156,7 +206,7 @@ export function ModelPicker({ models, selected, onSelect, onAddKey, className }:
                           aria-label={`Add an API key for ${model.providerLabel}`}
                           onClick={(event) => {
                             event.stopPropagation();
-                            onAddKey?.(model.provider);
+                            onAddKey(model.provider);
                           }}
                           className="shrink-0 rounded-[var(--zoc-radius-chip)] px-1 py-0.5 underline decoration-dotted"
                           style={{ color: "var(--zoc-ember)", fontSize: "var(--zoc-text-label)" }}

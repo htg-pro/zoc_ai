@@ -24,11 +24,17 @@ function formatClock(iso: string | undefined): string | null {
   if (!iso) return null;
   const t = Date.parse(iso);
   if (Number.isNaN(t)) return null;
-  return new Intl.DateTimeFormat(undefined, { hour: "2-digit", minute: "2-digit" }).format(new Date(t));
+  return new Intl.DateTimeFormat(undefined, { hour: "2-digit", minute: "2-digit" }).format(
+    new Date(t),
+  );
 }
 
 export function ProvidersSection() {
-  const providers = useSyncExternalStore(subscribeProviders, getProvidersSnapshot, getProvidersSnapshot);
+  const providers = useSyncExternalStore(
+    subscribeProviders,
+    getProvidersSnapshot,
+    getProvidersSnapshot,
+  );
   const [adding, setAdding] = useState(false);
 
   return (
@@ -90,15 +96,32 @@ function AddProviderCard({ onDone }: { onDone: () => void }) {
       <CardContent className="space-y-3">
         <div className="grid gap-1.5">
           <Label htmlFor="new-name">Name</Label>
-          <Input id="new-name" value={name} onChange={(e) => setName(e.target.value)} placeholder="My Provider" />
+          <Input
+            id="new-name"
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            placeholder="My Provider"
+          />
         </div>
         <div className="grid gap-1.5">
           <Label htmlFor="new-url">Base URL</Label>
-          <Input id="new-url" value={baseUrl} onChange={(e) => setBaseUrl(e.target.value)} placeholder="https://api.example.com/v1" className="font-mono" />
+          <Input
+            id="new-url"
+            value={baseUrl}
+            onChange={(e) => setBaseUrl(e.target.value)}
+            placeholder="https://api.example.com/v1"
+            className="font-mono"
+          />
         </div>
         <div className="grid gap-1.5">
           <Label htmlFor="new-models">Models (comma or newline separated)</Label>
-          <Input id="new-models" value={models} onChange={(e) => setModels(e.target.value)} placeholder="model-a, model-b" className="font-mono" />
+          <Input
+            id="new-models"
+            value={models}
+            onChange={(e) => setModels(e.target.value)}
+            placeholder="model-a, model-b"
+            className="font-mono"
+          />
         </div>
         <div className="flex justify-end gap-2">
           <Button size="sm" variant="ghost" onClick={onDone}>
@@ -113,8 +136,16 @@ function AddProviderCard({ onDone }: { onDone: () => void }) {
   );
 }
 
+/**
+ * The API-key field is **write-only** (R14.2). The renderer asks whether a key
+ * exists, never what it is, so this card can show a saved key's presence but
+ * cannot populate the input with it. Two consequences are load-bearing:
+ * "Fetch live models" needs a typed key because it sends one, and Save treats a
+ * blank field as *unchanged* rather than as a clear — see `save` / `removeKey`.
+ */
 function ProviderCard({ provider }: { provider: ProviderConfig }) {
   const [key, setKey] = useState("");
+  const [hasKey, setHasKey] = useState(false);
   const [url, setUrl] = useState(provider.baseUrl);
   const [modelsText, setModelsText] = useState(provider.models.map((m) => m.id).join(", "));
   const [reveal, setReveal] = useState(false);
@@ -125,9 +156,9 @@ function ProviderCard({ provider }: { provider: ProviderConfig }) {
   useEffect(() => {
     let cancelled = false;
     void (async () => {
-      const stored = await secureStore.get(apiKeyName(provider.id));
+      const stored = await secureStore.has(apiKeyName(provider.id));
       if (!cancelled) {
-        if (stored) setKey(stored);
+        setHasKey(stored);
         setLoaded(true);
       }
     })();
@@ -142,19 +173,31 @@ function ProviderCard({ provider }: { provider: ProviderConfig }) {
       toast.error("Set a base URL first");
       return;
     }
+    if (!key.trim() && provider.requiresKey) {
+      toast.error("Enter your API key to fetch models", {
+        description:
+          "A saved key stays in the keychain and can't be read back, so type it again here.",
+      });
+      return;
+    }
     setFetching(true);
     try {
       const client = await getAgentClient();
       const models = await client.discoverModels(baseUrl, key.trim() || null);
       if (!models.length) {
-        toast.message("No models returned", { description: "The provider returned an empty list." });
+        toast.message("No models returned", {
+          description: "The provider returned an empty list.",
+        });
         return;
       }
       const now = new Date().toISOString();
       setModelsText(models.map((m) => m.id).join(", "));
       setFetchedAt(now);
       // Persist the live list + key so the chat picker reflects it immediately.
-      if (key.trim()) await secureStore.set(apiKeyName(provider.id), key.trim());
+      if (key.trim()) {
+        await secureStore.set(apiKeyName(provider.id), key.trim());
+        setHasKey(true);
+      }
       upsertProvider({
         ...provider,
         baseUrl,
@@ -170,8 +213,14 @@ function ProviderCard({ provider }: { provider: ProviderConfig }) {
   };
 
   const save = async () => {
-    if (key.trim()) await secureStore.set(apiKeyName(provider.id), key.trim());
-    else await secureStore.clear(apiKeyName(provider.id));
+    // Blank means "unchanged", not "clear". The field can no longer be
+    // prefilled, so clearing on blank would silently delete a saved key for
+    // anyone who opened this card to edit the base URL. Removal is explicit.
+    if (key.trim()) {
+      await secureStore.set(apiKeyName(provider.id), key.trim());
+      setHasKey(true);
+      setKey("");
+    }
     upsertProvider({
       ...provider,
       baseUrl: url.trim() || provider.baseUrl,
@@ -179,6 +228,13 @@ function ProviderCard({ provider }: { provider: ProviderConfig }) {
       modelsFetchedAt: fetchedAt,
     });
     toast.success(`Saved ${provider.name}`);
+  };
+
+  const removeKey = async () => {
+    await secureStore.clear(apiKeyName(provider.id));
+    setHasKey(false);
+    setKey("");
+    toast.message(`Removed the ${provider.name} key`);
   };
 
   const del = () => {
@@ -198,16 +254,23 @@ function ProviderCard({ provider }: { provider: ProviderConfig }) {
             <KeyRound className="h-3.5 w-3.5 text-muted-foreground" />
             {provider.name}
             {!provider.builtin && <Badge variant="secondary">custom</Badge>}
-            {key && <Badge variant="success">configured</Badge>}
-            {!key && loaded && <Badge variant="warning">no key</Badge>}
+            {(hasKey || key.trim()) && <Badge variant="success">configured</Badge>}
+            {!hasKey && !key.trim() && loaded && <Badge variant="warning">no key</Badge>}
           </CardTitle>
           <CardDescription>
             {modelCount} model{modelCount === 1 ? "" : "s"}
-            {fetchedClock ? ` · live, refreshed ${fetchedClock}` : " · default list"} · Bring your own API key.
+            {fetchedClock ? ` · live, refreshed ${fetchedClock}` : " · default list"} · Bring your
+            own API key.
           </CardDescription>
         </div>
         {!provider.builtin && (
-          <Button size="icon" variant="ghost" className="h-7 w-7 text-destructive" onClick={del} aria-label="Delete provider">
+          <Button
+            size="icon"
+            variant="ghost"
+            className="h-7 w-7 text-destructive"
+            onClick={del}
+            aria-label="Delete provider"
+          >
             <Trash2 className="h-3.5 w-3.5" />
           </Button>
         )}
@@ -231,7 +294,7 @@ function ProviderCard({ provider }: { provider: ProviderConfig }) {
               type={reveal ? "text" : "password"}
               value={key}
               onChange={(e) => setKey(e.target.value)}
-              placeholder="sk-…"
+              placeholder={hasKey ? "Saved — type a new key to replace it" : "sk-…"}
               className="pr-9 font-mono"
             />
             <button
@@ -272,7 +335,17 @@ function ProviderCard({ provider }: { provider: ProviderConfig }) {
               : "Enter your key and click Fetch live models to load the provider's current models."}
           </p>
         </div>
-        <div className="flex justify-end">
+        <div className="flex justify-end gap-2">
+          {hasKey && (
+            <Button
+              size="sm"
+              variant="ghost"
+              className="text-destructive"
+              onClick={() => void removeKey()}
+            >
+              Remove key
+            </Button>
+          )}
           <Button size="sm" onClick={save}>
             <Save className="mr-1 h-3 w-3" /> Save
           </Button>

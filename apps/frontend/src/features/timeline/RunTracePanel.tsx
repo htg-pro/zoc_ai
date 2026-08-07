@@ -31,10 +31,7 @@ export function RunTracePanel({
   /** Injected in tests so the export path is observable without a download. */
   onExport?: (trace: RunTrace) => void;
 }) {
-  const trace = useMemo(
-    () => buildRunTrace(runId, events as never[]),
-    [runId, events],
-  );
+  const trace = useMemo(() => buildRunTrace(runId, events as never[]), [runId, events]);
   const [showCriticalPath, setShowCriticalPath] = useState(false);
   const [expanded, setExpanded] = useState<number | null>(null);
 
@@ -59,9 +56,7 @@ export function RunTracePanel({
       <header className="flex flex-wrap items-center gap-2 border-b border-border px-2 py-1.5">
         <span className="font-mono text-[11px] text-muted-foreground">{trace.runId}</span>
         <span className="text-[11px]">{formatDuration(trace.durationMs)}</span>
-        <span className="text-[11px] text-muted-foreground">
-          {trace.events.length} events
-        </span>
+        <span className="text-[11px] text-muted-foreground">{trace.events.length} events</span>
         {trace.totalTokens > 0 && (
           <span className="text-[11px] text-muted-foreground">
             {trace.totalTokens.toLocaleString()} tokens
@@ -102,13 +97,7 @@ export function RunTracePanel({
   );
 }
 
-function StageBand({
-  segments,
-  totalMs,
-}: {
-  segments: readonly StageSegment[];
-  totalMs: number;
-}) {
+function StageBand({ segments, totalMs }: { segments: readonly StageSegment[]; totalMs: number }) {
   return (
     <div className="border-b border-border px-2 py-2" data-testid="stage-band">
       <div className="flex h-4 w-full overflow-hidden rounded bg-muted">
@@ -134,11 +123,9 @@ function StageBand({
             key={`legend-${segment.stage}-${index}`}
             className="flex items-center gap-1 text-[10px] text-muted-foreground"
           >
-            <span
-              className="h-2 w-2 rounded-sm"
-              style={{ backgroundColor: segment.color }}
-            />
-            {segment.stage} {formatDuration(segment.durationMs)} · {segment.tokenCount.toLocaleString()} tok
+            <span className="h-2 w-2 rounded-sm" style={{ backgroundColor: segment.color }} />
+            {segment.stage} {formatDuration(segment.durationMs)} ·{" "}
+            {segment.tokenCount.toLocaleString()} tok
           </span>
         ))}
         <span className="ml-auto text-[10px] text-muted-foreground">
@@ -162,10 +149,7 @@ function TraceRow({
 }) {
   return (
     <li
-      className={cn(
-        "border-b border-border/40",
-        highlighted && "bg-[var(--zoc-ember)]/10",
-      )}
+      className={cn("border-b border-border/40", highlighted && "bg-[var(--zoc-ember)]/10")}
       data-critical={highlighted || undefined}
     >
       <button
@@ -189,9 +173,7 @@ function TraceRow({
         >
           {event.type}
         </span>
-        <span className="min-w-0 flex-1 truncate text-muted-foreground">
-          {event.summary}
-        </span>
+        <span className="min-w-0 flex-1 truncate text-muted-foreground">{event.summary}</span>
         {event.durationMs > 0 && (
           <span className="shrink-0 font-mono text-[10px] text-muted-foreground">
             {formatDuration(event.durationMs)}

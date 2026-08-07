@@ -1,6 +1,8 @@
 /**
  * The Run driver — zoc-agent-chat-rebuild R7.7, R16.1, 9.7.
  *
+ * Feature: zoc-agent-chat-rebuild, task 9.7 (R7.7, R16.1).
+ *
  * The tests that matter here are the cancellation ones, and they run on **real
  * timers on purpose**. R16.1's promise is a wall-clock one — "cancel takes effect
  * within 2 seconds" — and a fake clock would assert that the code advances a

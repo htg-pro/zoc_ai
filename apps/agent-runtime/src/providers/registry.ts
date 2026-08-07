@@ -2,6 +2,8 @@
  * Provider registry and the single model resolver — zoc-agent-chat-rebuild
  * R6.2, R13.1, R13.4, R13.5, R13.6.
  *
+ * Feature: zoc-agent-chat-rebuild, R6.2, R13.1, R13.4, R13.5, R13.6.
+ *
  * Six adapters, matching what the retained Python `model_runtime.py` already
  * talks to: an OpenAI-compatible `/chat/completions` path for most providers,
  * Anthropic's native Messages API, and a local llama.cpp endpoint.
@@ -198,6 +200,32 @@ export interface ModelRef {
   readonly baseUrl?: string | null;
 }
 
+/** Runtime-owned model order. An empty chain means "use the requested model". */
+export interface ModelRoutingPolicy {
+  readonly chain: readonly ModelRef[];
+  /** Optional health snapshot used for pre-dispatch routing. Missing entries are available. */
+  readonly available?: Readonly<Record<string, boolean>>;
+}
+
+export function modelRefKey(ref: Pick<ModelRef, "provider" | "modelId">): string {
+  return `${ref.provider}\0${ref.modelId}`;
+}
+
+/** Policy order with duplicates removed; the request is the no-policy fallback. */
+export function routingChainFor(model: ModelRef, policy?: ModelRoutingPolicy | null): ModelRef[] {
+  const source =
+    policy === undefined || policy === null || policy.chain.length === 0 ? [model] : policy.chain;
+  const seen = new Set<string>();
+  const chain: ModelRef[] = [];
+  for (const candidate of source) {
+    const key = modelRefKey(candidate);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    chain.push(candidate);
+  }
+  return chain.length > 0 ? chain : [model];
+}
+
 export interface ResolvedModel {
   readonly model: LanguageModel;
   readonly spec: ProviderSpec;
@@ -222,33 +250,119 @@ export interface ResolvedModel {
 export function resolveModel(request: {
   readonly model: ModelRef;
   readonly apiKey: string | null;
+  readonly policy?: ModelRoutingPolicy | null;
+  /** Keys for policy candidates on providers other than the requested one. */
+  readonly apiKeys?: Readonly<Record<string, string | null | undefined>>;
 }): ResolvedModel {
-  const spec = providerSpec(request.model.provider);
+  const candidates = routingChainFor(request.model, request.policy);
+  let lastUnavailable: HttpError | null = null;
 
-  if (spec.requiresKey && (request.apiKey === null || request.apiKey.length === 0)) {
-    throw new HttpError(
-      400,
-      envelope(
-        ErrorCode.NO_KEY_CONFIGURED,
-        `${spec.label} needs an API key before it can be used. Add one in Settings.`,
-      ),
-    );
+  for (const candidate of candidates) {
+    if (request.policy?.available?.[modelRefKey(candidate)] === false) continue;
+    const spec = providerSpec(candidate.provider);
+    const apiKey =
+      candidate.provider === request.model.provider
+        ? request.apiKey
+        : (request.apiKeys?.[candidate.provider] ?? null);
+
+    if (spec.requiresKey && (apiKey === null || apiKey.length === 0)) {
+      lastUnavailable = new HttpError(
+        400,
+        envelope(
+          ErrorCode.NO_KEY_CONFIGURED,
+          `${spec.label} needs an API key before it can be used. Add one in Settings.`,
+        ),
+      );
+      // The explicitly requested model keeps the original immediate refusal.
+      if (request.policy === undefined || request.policy === null) throw lastUnavailable;
+      continue;
+    }
+
+    try {
+      const model = spec.resolve({
+        apiKey,
+        modelId: candidate.modelId,
+        baseUrl: candidate.baseUrl ?? null,
+      });
+
+      return {
+        model,
+        spec,
+        modelId: candidate.modelId,
+        substitutedFor:
+          modelRefKey(candidate) === modelRefKey(request.model)
+            ? null
+            : {
+                modelId: request.model.modelId,
+                reason: "The configured routing policy selected the first available model.",
+              },
+      };
+    } catch (cause) {
+      if (cause instanceof HttpError) lastUnavailable = cause;
+      else throw cause;
+    }
   }
 
-  // M2 inserts the routing policy here — one `if`, consulted before `resolve`,
-  // writing `substitutedFor`.
-  const model = spec.resolve({
-    apiKey: request.apiKey,
-    modelId: request.model.modelId,
-    baseUrl: request.model.baseUrl ?? null,
-  });
+  if (lastUnavailable !== null && candidates.length === 1) throw lastUnavailable;
+  throw new HttpError(
+    503,
+    envelope(
+      ErrorCode.MODEL_UNAVAILABLE,
+      "No model in the configured routing chain is available.",
+      {
+        retryable: true,
+      },
+    ),
+  );
+}
 
-  return {
-    model,
-    spec,
-    modelId: request.model.modelId,
-    substitutedFor: null,
-  };
+export interface ModelFallbackNotice {
+  readonly original: ModelRef;
+  readonly fallback: ModelRef;
+  readonly reason: string;
+}
+
+export class ModelRoutingExhaustedError extends Error {
+  readonly code = ErrorCode.MODEL_UNAVAILABLE;
+  constructor(readonly causeFailure: unknown) {
+    super("No model in the configured routing chain is available.");
+    this.name = "ModelRoutingExhaustedError";
+  }
+}
+
+export function isFallbackFailureCode(code: string): boolean {
+  return new Set<string>([
+    ErrorCode.PROVIDER_RATE_LIMITED,
+    ErrorCode.MODEL_UNAVAILABLE,
+    ErrorCode.MODEL_NOT_READY,
+    ErrorCode.LOCAL_ENDPOINT_UNREACHABLE,
+  ]).has(code);
+}
+
+/** Execute in policy order, notifying before each retry and normalising exhaustion. */
+export async function executeModelChain<T>(options: {
+  readonly chain: readonly ModelRef[];
+  attempt(model: ModelRef): Promise<T>;
+  classify(error: unknown, model: ModelRef): { readonly code: string; readonly message: string };
+  onFallback?(notice: ModelFallbackNotice): void;
+}): Promise<{ readonly value: T; readonly selected: ModelRef }> {
+  let lastFailure: unknown = null;
+  for (let index = 0; index < options.chain.length; index += 1) {
+    const model = options.chain[index] as ModelRef;
+    try {
+      return { value: await options.attempt(model), selected: model };
+    } catch (failure) {
+      lastFailure = failure;
+      const classified = options.classify(failure, model);
+      const fallback = options.chain[index + 1];
+      if (!isFallbackFailureCode(classified.code) || fallback === undefined) {
+        if (isFallbackFailureCode(classified.code)) throw new ModelRoutingExhaustedError(failure);
+        throw failure;
+      }
+      options.onFallback?.({ original: model, fallback, reason: classified.message });
+    }
+  }
+  throw new ModelRoutingExhaustedError(lastFailure);
 }
 
 /** Public catalogue shape for `GET /v1/providers`. Carries no credential. */

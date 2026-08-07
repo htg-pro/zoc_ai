@@ -1,6 +1,8 @@
 /**
  * Property 35 (the error half) and Property 42's precondition — R9.8, R14.10, R16.6.
  *
+ * Feature: zoc-agent-chat-rebuild, Property 35 (R9.8, R14.10, R16.6).
+ *
  * Two claims, both about arbitrary inputs rather than about the fixtures the
  * table-driven test uses:
  *

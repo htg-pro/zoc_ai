@@ -72,8 +72,7 @@ export function PrivacySection() {
           <ShieldOff className="h-4 w-4" /> Privacy
         </h2>
         <p className="text-xs text-muted-foreground">
-          Zoc is local-first. Nothing leaves your machine unless you turn the
-          switch below on.
+          Zoc is local-first. Nothing leaves your machine unless you turn the switch below on.
         </p>
       </header>
 
@@ -83,8 +82,8 @@ export function PrivacySection() {
             Share anonymous usage stats
           </Label>
           <p className="text-[11px] text-muted-foreground">
-            No code, no file names, no personal data — only counters like run
-            duration, which mode you used, and whether a run succeeded.
+            No code, no file names, no personal data — only counters like run duration, which mode
+            you used, and whether a run succeeded.
           </p>
           <p className="text-[10.5px] text-muted-foreground">
             When enabled, batches are sent to{" "}

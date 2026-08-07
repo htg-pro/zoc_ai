@@ -273,7 +273,10 @@ const transcript: fc.Arbitrary<Fixture> = fc
     fc.string({ maxLength: 60 }),
   )
   .map(([id, parts, diffs, prompt]) => {
-    const wireParts = [...parts, ...diffs.map((part, index) => ({ ...part, seq: parts.length + index + 1 }))];
+    const wireParts = [
+      ...parts,
+      ...diffs.map((part, index) => ({ ...part, seq: parts.length + index + 1 })),
+    ];
     const messages: ZocUIMessage[] = [
       {
         id: `msg_user_${id}`,
@@ -320,7 +323,8 @@ function storedSeqs(messages: readonly ZocUIMessage[]): readonly number[] {
       }
       if (type.startsWith("tool-")) {
         const call = (part.callProviderMetadata as { zoc?: { seq?: unknown } } | undefined)?.zoc;
-        const result = (part.resultProviderMetadata as { zoc?: { seq?: unknown } } | undefined)?.zoc;
+        const result = (part.resultProviderMetadata as { zoc?: { seq?: unknown } } | undefined)
+          ?.zoc;
         const seq = typeof call?.seq === "number" ? call.seq : result?.seq;
         if (typeof seq === "number") seqs.push(seq);
       }

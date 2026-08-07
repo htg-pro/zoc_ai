@@ -54,9 +54,7 @@ REMOVE = "remove"
 class RecordingVCS:
     """VCS port that records create/commit events into a shared log."""
 
-    def __init__(
-        self, log: list[tuple[str, str]], *, can_create: bool, can_commit: bool
-    ) -> None:
+    def __init__(self, log: list[tuple[str, str]], *, can_create: bool, can_commit: bool) -> None:
         self._log = log
         self._can_create = can_create
         self._can_commit = can_commit
@@ -113,9 +111,7 @@ def _stage_orderings(draw: st.DrawFn) -> tuple[MigrationStage, ...]:
     Models "any ordering of migration steps" by permuting a random subset of
     the canonical stages.
     """
-    stages = draw(
-        st.lists(st.sampled_from(DEFAULT_STAGES), min_size=1, max_size=8, unique=True)
-    )
+    stages = draw(st.lists(st.sampled_from(DEFAULT_STAGES), min_size=1, max_size=8, unique=True))
     return tuple(draw(st.permutations(stages)))
 
 
@@ -134,8 +130,7 @@ def _scenarios(draw: st.DrawFn) -> dict[str, object]:
     existing: set[str] = set(DEFAULT_SHARED_BUILD_CONFIG) | existing_replacements
 
     exit_codes = {
-        build_id: draw(st.integers(min_value=0, max_value=130))
-        for build_id in _BUILD_IDS
+        build_id: draw(st.integers(min_value=0, max_value=130)) for build_id in _BUILD_IDS
     }
 
     return {
@@ -180,12 +175,12 @@ def test_committed_branch_precedes_every_removal(scenario: dict[str, object]) ->
         if kind != REMOVE:
             continue
         prior_kinds = {entry_kind for entry_kind, _ in log[:index]}
-        assert CREATE in prior_kinds, (
-            "legacy removal occurred before the preservation branch was created"
-        )
-        assert COMMIT in prior_kinds, (
-            "legacy removal occurred before the preservation branch was committed"
-        )
+        assert (
+            CREATE in prior_kinds
+        ), "legacy removal occurred before the preservation branch was created"
+        assert (
+            COMMIT in prior_kinds
+        ), "legacy removal occurred before the preservation branch was committed"
 
     # Corollary: if no committed branch exists, nothing was ever removed.
     if not result.preservation_branch_ready:

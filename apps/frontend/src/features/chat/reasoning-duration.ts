@@ -1,6 +1,8 @@
 /**
  * The reasoning row's elapsed-duration format — zoc-agent-chat-rebuild R8.3.
  *
+ * Feature: zoc-agent-chat-rebuild, R8.3.
+ *
  * Its own module rather than a helper inside `ReasoningRow.tsx`, because a file exporting both
  * a component and a function is a fast-refresh boundary the Vite plugin warns about — and
  * because the format is the thing Property 7's sibling assertions read, so a test importing it

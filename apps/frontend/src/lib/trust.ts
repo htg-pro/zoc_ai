@@ -212,11 +212,7 @@ export function removeFromAllowlist(key: AllowlistKey, entry: string): void {
 }
 
 // ── audit log ──────────────────────────────────────────────────────────
-export function recordDecision(
-  req: ActionRequest,
-  decision: Decision,
-  runId?: string,
-): void {
+export function recordDecision(req: ActionRequest, decision: Decision, runId?: string): void {
   ensureAuditLoaded();
   audit.push({
     ts: Date.now(),

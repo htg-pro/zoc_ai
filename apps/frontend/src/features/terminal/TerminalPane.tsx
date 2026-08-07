@@ -17,7 +17,7 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { useAgentStreamContext } from "@/features/agent/agent-stream-context";
+import { useAgentStreamContext } from "@/lib/agent-stream-context";
 import { AgentTerminalPanes } from "./AgentTerminalPanes";
 import { useTerminalPaneShortcuts } from "./useTerminalPaneShortcuts";
 import { requestReveal, revealPosition } from "@/lib/editor-actions";
@@ -61,19 +61,16 @@ export function TerminalPane() {
   const panes = useMemo(() => leaves(layout), [layout]);
   const atPaneLimit = paneCount(layout) >= MAX_PANES;
 
-  const addPane = useCallback(
-    (direction: "row" | "column", profileId?: string): void => {
-      const current = useApp.getState();
-      if (paneCount(current.terminalLayout) >= MAX_PANES) return;
-      const sessionId = current.newTerminal(profileId);
-      if (current.terminalLayout === null) {
-        useApp.getState().ensureTerminalPane(sessionId);
-      } else {
-        useApp.getState().splitActivePane(direction, sessionId);
-      }
-    },
-    [],
-  );
+  const addPane = useCallback((direction: "row" | "column", profileId?: string): void => {
+    const current = useApp.getState();
+    if (paneCount(current.terminalLayout) >= MAX_PANES) return;
+    const sessionId = current.newTerminal(profileId);
+    if (current.terminalLayout === null) {
+      useApp.getState().ensureTerminalPane(sessionId);
+    } else {
+      useApp.getState().splitActivePane(direction, sessionId);
+    }
+  }, []);
 
   // Seed exactly one terminal/pane on first mount. Reading current state inside
   // the effect keeps this idempotent under React StrictMode's effect replay.
@@ -185,10 +182,7 @@ export function TerminalPane() {
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end">
                 {profiles.map((profile) => (
-                  <DropdownMenuItem
-                    key={profile.id}
-                    onSelect={() => addPane("row", profile.id)}
-                  >
+                  <DropdownMenuItem key={profile.id} onSelect={() => addPane("row", profile.id)}>
                     <TerminalIcon className="mr-2 h-3.5 w-3.5" />
                     {profile.name}
                   </DropdownMenuItem>

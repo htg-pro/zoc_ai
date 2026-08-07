@@ -3,6 +3,8 @@
  * Property 80: A failed compaction leaves stored history unchanged.
  * Validates R34.1, R34.2, R34.9.
  *
+ * Feature: zoc-agent-chat-rebuild, Property 79 (R34.1, R34.2, R34.9).
+ *
  * Property 79 runs at 200 iterations rather than the default 100 because every bug
  * it can catch is an off-by-one at the retained-turn floor, and the draws that
  * expose one — a conversation with exactly `RETAINED_TURN_FLOOR + 1` turns, a floor

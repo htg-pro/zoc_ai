@@ -5,3 +5,14 @@ legacy
 **/gen/**
 pnpm-lock.yaml
 Cargo.lock
+
+# Generated from the Python Pydantic models by `pnpm schema:generate`, and
+# checked for drift by `pnpm schema:check` — which compares the file on disk
+# against what the generator emits, byte for byte. Prettier rewrapping a union
+# it emitted one-member-per-line is therefore a *failing build*, not a tidy-up:
+# two gateway tests read that check and both went red the first time a
+# `--write` pass reached these three files. One entry here rather than an
+# `exclude` on the pre-commit hook, because Prettier honours this file for
+# paths named on the command line too — so it also covers the package's own
+# `format` script and any hand-run `pnpm exec prettier`.
+packages/shared-types/typescript/src/

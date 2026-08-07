@@ -50,7 +50,9 @@ export function LogsPanel() {
             {logs.map((l, i) => (
               <div key={i}>
                 <span className="text-muted-foreground">[{clock(l.ts)}] </span>
-                <span className={(COLORS[l.level] ?? "") + " uppercase"}>{l.level.padEnd(7, " ")}</span>
+                <span className={(COLORS[l.level] ?? "") + " uppercase"}>
+                  {l.level.padEnd(7, " ")}
+                </span>
                 <span> {l.message}</span>
               </div>
             ))}

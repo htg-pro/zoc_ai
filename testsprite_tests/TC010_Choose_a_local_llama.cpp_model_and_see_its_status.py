@@ -39,18 +39,18 @@ async def run_test():
             await page.wait_for_load_state("domcontentloaded", timeout=5000)
         except Exception:
             pass
-        
+
         # -> Open the model picker by clicking the 'Select model' button in the Agent panel so the list of available models (including any local llama.cpp models) becomes visible.
         # Select model button
         elem = page.get_by_role('button', name='Choose model', exact=True)
         await elem.click(timeout=10000)
-        
+
         # --> Assertions to verify final state
-        
+
         # --> Verify the model badge updates
         # Assert: Expected the model selector button to show the chosen local .gguf model filename.
         await expect(page.locator("xpath=/html/body/div[1]/div/div/div/div[5]/div/div/div[1]/div/div[2]/button").nth(0)).to_contain_text(".gguf", timeout=15000), "Expected the model selector button to show the chosen local .gguf model filename."
-        
+
         # --> Verify a loading, loaded, or error status is displayed for the selected model
         # Assert: Expected the selected model status badge to display "loading".
         await expect(page.locator("xpath=/html/body/div[1]/div/div/div/div[5]/div/div/div[1]/div/div[2]/span").nth(0)).to_contain_text("loading", timeout=15000), "Expected the selected model status badge to display \"loading\"."
@@ -58,7 +58,7 @@ async def run_test():
         await expect(page.locator("xpath=/html/body/div[1]/div/div/div/div[5]/div/div/div[1]/div/div[2]/span").nth(0)).to_contain_text("loaded", timeout=15000), "Expected the selected model status badge to display \"loaded\"."
         # Assert: Expected the selected model status badge to display "error".
         await expect(page.locator("xpath=/html/body/div[1]/div/div/div/div[5]/div/div/div[1]/div/div[2]/span").nth(0)).to_contain_text("error", timeout=15000), "Expected the selected model status badge to display \"error\"."
-        
+
         # --> Test blocked by environment/access constraints during agent run
         # Reason: TEST BLOCKED No local llama.cpp (.gguf) model could be selected because none are registered in the UI. Observations: - The model picker menu is open and shows the message: "No local .gguf registered. Add one in Settings → Models." - The menu lists remote/provider models and prompts to configure API keys, but no local model entries are present.
         raise AssertionError("Test blocked during agent run: " + "TEST BLOCKED No local llama.cpp (.gguf) model could be selected because none are registered in the UI. Observations: - The model picker menu is open and shows the message: \"No local .gguf registered. Add one in Settings \u2192 Models.\" - The menu lists remote/provider models and prompts to configure API keys, but no local model entries are present." + " — the exported script cannot reproduce a PASS in this environment.")
@@ -73,4 +73,3 @@ async def run_test():
             await pw.stop()
 
 asyncio.run(run_test())
-    

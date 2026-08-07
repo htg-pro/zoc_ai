@@ -289,9 +289,7 @@ pub fn local_models_get() -> Vec<serde_json::Value> {
 /// Returns the list rather than `()` so the caller's cache is seeded from the
 /// file it was just written to rather than from what it hoped it wrote.
 #[tauri::command]
-pub fn local_models_set(
-    models: Vec<serde_json::Value>,
-) -> Result<Vec<serde_json::Value>, String> {
+pub fn local_models_set(models: Vec<serde_json::Value>) -> Result<Vec<serde_json::Value>, String> {
     set_local_models_at(&config_path(), models)
 }
 

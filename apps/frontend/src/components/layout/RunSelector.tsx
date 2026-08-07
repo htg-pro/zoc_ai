@@ -109,7 +109,15 @@ export function RunSelector() {
               {targets
                 .filter((t) => t.kind === "debug")
                 .map((t) => (
-                  <TargetRow key={t.id} target={t} selected={selected?.id === t.id} onPick={() => { setSelectedId(t.id); run(t); }} />
+                  <TargetRow
+                    key={t.id}
+                    target={t}
+                    selected={selected?.id === t.id}
+                    onPick={() => {
+                      setSelectedId(t.id);
+                      run(t);
+                    }}
+                  />
                 ))}
               <DropdownMenuSeparator />
             </>
@@ -123,7 +131,15 @@ export function RunSelector() {
             targets
               .filter((t) => t.kind === "task")
               .map((t) => (
-                <TargetRow key={t.id} target={t} selected={selected?.id === t.id} onPick={() => { setSelectedId(t.id); run(t); }} />
+                <TargetRow
+                  key={t.id}
+                  target={t}
+                  selected={selected?.id === t.id}
+                  onPick={() => {
+                    setSelectedId(t.id);
+                    run(t);
+                  }}
+                />
               ))
           )}
           <DropdownMenuSeparator />
@@ -154,8 +170,12 @@ function TargetRow({
       ) : (
         <Play className="h-3.5 w-3.5 text-emerald-400" />
       )}
-      <span className={cn("truncate", selected && "font-medium text-foreground")}>{target.label}</span>
-      <span className="ml-auto shrink-0 text-[10px] uppercase text-muted-foreground">{target.detail}</span>
+      <span className={cn("truncate", selected && "font-medium text-foreground")}>
+        {target.label}
+      </span>
+      <span className="ml-auto shrink-0 text-[10px] uppercase text-muted-foreground">
+        {target.detail}
+      </span>
     </DropdownMenuItem>
   );
 }

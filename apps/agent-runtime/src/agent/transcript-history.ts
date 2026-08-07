@@ -1,6 +1,8 @@
 /**
  * Stored transcript ↔ runtime history — zoc-agent-chat-rebuild R15.6, R34.6.
  *
+ * Feature: zoc-agent-chat-rebuild, R15.6, R34.6.
+ *
  * The adapter for the gap `composition.ts` documented. Its header said: the
  * design has the runtime rehydrate history from Workspace_Services, that endpoint
  * did not exist, so `loadHistory` answered `[]` and every Run was single-turn —

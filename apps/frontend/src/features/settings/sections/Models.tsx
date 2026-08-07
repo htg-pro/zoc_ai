@@ -108,15 +108,12 @@ export function ModelsSection() {
       <header>
         <h1 className="text-lg font-semibold tracking-tight">Models</h1>
         <p className="mt-1 text-sm text-muted-foreground">
-          Pick a default model for each task type. The agent honours these unless overridden in a session.
+          Pick a default model for each task type. The agent honours these unless overridden in a
+          session.
         </p>
       </header>
 
-      <LocalModelsCard
-        models={localModels}
-        onAdd={addLocalModel}
-        onRemove={removeLocalModel}
-      />
+      <LocalModelsCard models={localModels} onAdd={addLocalModel} onRemove={removeLocalModel} />
 
       <Card>
         <CardHeader>
@@ -286,7 +283,8 @@ function LocalModelsCard({
           <Badge variant="success">local</Badge>
         </CardTitle>
         <CardDescription>
-          Register `.gguf` weights you've downloaded. Saved paths show up in the per-task picker below.
+          Register `.gguf` weights you've downloaded. Saved paths show up in the per-task picker
+          below.
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-3">
@@ -361,8 +359,8 @@ function LocalModelsCard({
             }}
           />
           <p className="text-[10px] text-muted-foreground">
-            Passed to llama-server as <code className="font-mono">--ctx-size</code> and shown in
-            the chat-box memory indicator. Defaults to {DEFAULT_CONTEXT_WINDOW}; raise to 32 768 or
+            Passed to llama-server as <code className="font-mono">--ctx-size</code> and shown in the
+            chat-box memory indicator. Defaults to {DEFAULT_CONTEXT_WINDOW}; raise to 32 768 or
             higher for long-context models like Qwen2.5-Coder.
           </p>
         </div>
@@ -400,8 +398,8 @@ function LocalModelsCard({
             }}
           />
           <p className="text-[10px] text-muted-foreground">
-            Passed to llama-server as <code className="font-mono">--batch-size</code>. Logical
-            batch size for prompt processing. Defaults to {DEFAULT_N_BATCH}.
+            Passed to llama-server as <code className="font-mono">--batch-size</code>. Logical batch
+            size for prompt processing. Defaults to {DEFAULT_N_BATCH}.
           </p>
         </div>
         <div className="flex items-center gap-2">

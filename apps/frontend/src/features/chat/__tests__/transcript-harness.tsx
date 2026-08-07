@@ -1,6 +1,8 @@
 /**
  * The transcript's fake layout — zoc-agent-chat-rebuild task 17.1's guards, Properties 6, 47, 48.
  *
+ * Feature: zoc-agent-chat-rebuild, task 17.1.
+ *
  * jsdom has no layout engine: `offsetHeight`, `clientHeight`, and `scrollHeight` are 0 for every
  * element and `scrollTop` is a getter that returns 0 and a setter that does nothing. A virtualiser
  * asked to map a scroll offset onto a row range under those conditions reports a viewport of zero
@@ -250,9 +252,9 @@ export function resetChatSurface(): void {
 
 // ── Message fixtures ──────────────────────────────────────────────────
 
-export function metadataOf(overrides: Partial<ZocUIMessage["metadata"]> = {}): NonNullable<
-  ZocUIMessage["metadata"]
-> {
+export function metadataOf(
+  overrides: Partial<ZocUIMessage["metadata"]> = {},
+): NonNullable<ZocUIMessage["metadata"]> {
   return {
     runId: "run_1",
     provider: "anthropic",

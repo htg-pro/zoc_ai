@@ -1,6 +1,8 @@
 /**
  * Agent_Runtime HTTP router — zoc-agent-chat-rebuild R3.5, R5.1, R6.2, R7.5.
  *
+ * Feature: zoc-agent-chat-rebuild, R3.5, R5.1, R6.2, R7.5.
+ *
  * A hand-rolled table rather than a framework, for one reason that outranks
  * ergonomics: `@yao-pkg/pkg` resolves `require` statically against a snapshot
  * filesystem, so every dynamic module load in the dependency graph is a module

@@ -74,9 +74,7 @@ def _read_file_refs() -> st.SearchStrategy[ReadFileRef]:
             st.integers(min_value=0, max_value=10_000),
         ),
     )
-    return st.fixed_dictionaries({"path": _paths, "span": spans}).map(
-        lambda d: ReadFileRef(**d)
-    )
+    return st.fixed_dictionaries({"path": _paths, "span": spans}).map(lambda d: ReadFileRef(**d))
 
 
 # ── One strategy per contract row kind, each yielding a valid model ──────────
@@ -95,9 +93,9 @@ def _intent_events() -> st.SearchStrategy[IntentEvent]:
 
 
 def _thinking_events() -> st.SearchStrategy[ThinkingEvent]:
-    return st.fixed_dictionaries(
-        {"seq": _seqs, "run_id": _run_ids, "ts": _ts, "text": _text}
-    ).map(lambda d: ThinkingEvent(**d))
+    return st.fixed_dictionaries({"seq": _seqs, "run_id": _run_ids, "ts": _ts, "text": _text}).map(
+        lambda d: ThinkingEvent(**d)
+    )
 
 
 def _plan_events() -> st.SearchStrategy[PlanEvent]:
@@ -111,9 +109,9 @@ def _plan_events() -> st.SearchStrategy[PlanEvent]:
         ).map(lambda d: PlanItem(**d)),
         max_size=6,
     )
-    return st.fixed_dictionaries(
-        {"seq": _seqs, "run_id": _run_ids, "ts": _ts, "items": items}
-    ).map(lambda d: PlanEvent(**d))
+    return st.fixed_dictionaries({"seq": _seqs, "run_id": _run_ids, "ts": _ts, "items": items}).map(
+        lambda d: PlanEvent(**d)
+    )
 
 
 def _plan_update_events() -> st.SearchStrategy[PlanUpdateEvent]:
@@ -143,14 +141,14 @@ def _map_files_events() -> st.SearchStrategy[MapFilesEvent]:
 
 def _review_events() -> st.SearchStrategy[ReviewEvent]:
     files = st.lists(
-        st.fixed_dictionaries(
-            {"path": _paths, "diff": st.text(max_size=200)}
-        ).map(lambda d: ReviewFile(**d)),
+        st.fixed_dictionaries({"path": _paths, "diff": st.text(max_size=200)}).map(
+            lambda d: ReviewFile(**d)
+        ),
         max_size=6,
     )
-    return st.fixed_dictionaries(
-        {"seq": _seqs, "run_id": _run_ids, "ts": _ts, "files": files}
-    ).map(lambda d: ReviewEvent(**d))
+    return st.fixed_dictionaries({"seq": _seqs, "run_id": _run_ids, "ts": _ts, "files": files}).map(
+        lambda d: ReviewEvent(**d)
+    )
 
 
 def _read_files_events() -> st.SearchStrategy[ReadFilesEvent]:
@@ -183,18 +181,16 @@ def _command_events() -> st.SearchStrategy[CommandEvent]:
             "run_id": _run_ids,
             "ts": _ts,
             "command": st.text(min_size=1, max_size=120),
-            "exit_code": st.one_of(
-                st.none(), st.integers(min_value=-256, max_value=256)
-            ),
+            "exit_code": st.one_of(st.none(), st.integers(min_value=-256, max_value=256)),
             "error_tag": st.one_of(st.none(), st.text(max_size=40)),
         }
     ).map(lambda d: CommandEvent(**d))
 
 
 def _summary_events() -> st.SearchStrategy[SummaryEvent]:
-    return st.fixed_dictionaries(
-        {"seq": _seqs, "run_id": _run_ids, "ts": _ts, "text": _text}
-    ).map(lambda d: SummaryEvent(**d))
+    return st.fixed_dictionaries({"seq": _seqs, "run_id": _run_ids, "ts": _ts, "text": _text}).map(
+        lambda d: SummaryEvent(**d)
+    )
 
 
 def _approval_events() -> st.SearchStrategy[ApprovalEvent]:
@@ -279,22 +275,25 @@ def test_contract_defines_exactly_the_rendered_row_kinds() -> None:
     is a deliberate, reviewed change on both sides of the contract. ``plan-ready``
     joined the set with Plan mode (§12.2).
     """
-    assert frozenset(
-        {
-            "intent",
-            "thinking",
-            "plan",
-            "plan-update",
-            "plan-ready",
-            "map-files",
-            "read-files",
-            "edit-file",
-            "command",
-            "review",
-            "stage",
-            "summary",
-            "approval",
-            "done",
-        }
-    ) == RENDERED_ROW_KINDS
+    assert (
+        frozenset(
+            {
+                "intent",
+                "thinking",
+                "plan",
+                "plan-update",
+                "plan-ready",
+                "map-files",
+                "read-files",
+                "edit-file",
+                "command",
+                "review",
+                "stage",
+                "summary",
+                "approval",
+                "done",
+            }
+        )
+        == RENDERED_ROW_KINDS
+    )
     assert len(RENDERED_ROW_KINDS) == 14

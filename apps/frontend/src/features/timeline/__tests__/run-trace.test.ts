@@ -16,12 +16,7 @@ import {
 
 const T0 = Date.parse("2026-07-25T05:00:00.000Z");
 
-const ev = (
-  seq: number,
-  type: string,
-  offsetMs: number,
-  extra: Record<string, unknown> = {},
-) => ({
+const ev = (seq: number, type: string, offsetMs: number, extra: Record<string, unknown> = {}) => ({
   seq,
   type,
   runId: "r1",
@@ -98,11 +93,7 @@ describe("buildRunTrace", () => {
   });
 
   it("ignores malformed entries instead of throwing", () => {
-    const trace = buildRunTrace("r1", [
-      null,
-      { seq: 1 },
-      ev(2, "intent", 0),
-    ] as never[]);
+    const trace = buildRunTrace("r1", [null, { seq: 1 }, ev(2, "intent", 0)] as never[]);
     expect(trace.events).toHaveLength(1);
   });
 });
@@ -166,7 +157,7 @@ describe("criticalPath", () => {
     expect(criticalPath(trace)).toEqual([2]);
   });
 
-  it("returns nothing when no event has a measurable duration" , () => {
+  it("returns nothing when no event has a measurable duration", () => {
     const trace = buildRunTrace("r1", [ev(1, "intent", 0)] as never[]);
     expect(criticalPath(trace)).toEqual([]);
     expect(criticalPath(buildRunTrace("r1", []))).toEqual([]);
@@ -186,17 +177,13 @@ describe("criticalPath", () => {
 
 describe("summarizeEvent", () => {
   it("describes each event type usefully", () => {
-    expect(summarizeEvent({ type: "intent", text: "first line\nsecond" })).toBe(
-      "first line",
-    );
+    expect(summarizeEvent({ type: "intent", text: "first line\nsecond" })).toBe("first line");
     expect(summarizeEvent({ type: "edit-file", path: "src/a.ts" })).toBe("src/a.ts");
     expect(summarizeEvent({ type: "command", command: "pytest -q" })).toBe("pytest -q");
     expect(summarizeEvent({ type: "read-files", readList: [1, 2] })).toBe("2 files");
     expect(summarizeEvent({ type: "read-files", readList: [1] })).toBe("1 file");
     expect(summarizeEvent({ type: "done", ok: true })).toBe("completed");
-    expect(summarizeEvent({ type: "done", ok: false, reason: "boom" })).toBe(
-      "failed: boom",
-    );
+    expect(summarizeEvent({ type: "done", ok: false, reason: "boom" })).toBe("failed: boom");
     expect(summarizeEvent({ type: "budget", tokensUsed: 10, tokenLimit: 20 })).toBe(
       "10 / 20 tokens",
     );

@@ -2,6 +2,8 @@
  * Per-Run provider key resolution and structural log redaction —
  * zoc-agent-chat-rebuild R13.4, R13.7, R14.10.
  *
+ * Feature: zoc-agent-chat-rebuild, R13.4, R13.7, R14.10.
+ *
  * Two guarantees, and the second one is why this is a module rather than a
  * function:
  *

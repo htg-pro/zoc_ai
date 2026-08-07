@@ -1,11 +1,7 @@
 // Feature: studio-ui-redesign, Property 9: Message validation accepts exactly 1-10,000 non-whitespace-trimmed characters
 import { describe, expect, it } from "vitest";
 import fc from "fast-check";
-import {
-  MAX_MESSAGE_LENGTH,
-  isValidMessage,
-  validateMessage,
-} from "../composer-validate";
+import { MAX_MESSAGE_LENGTH, isValidMessage, validateMessage } from "../composer-validate";
 
 describe("composer-validate (Property 9)", () => {
   it("accepts iff trimmed length is in [1, 10000]", () => {
@@ -21,14 +17,11 @@ describe("composer-validate (Property 9)", () => {
 
   it("rejects whitespace-only strings", () => {
     fc.assert(
-      fc.property(
-        fc.stringOf(fc.constantFrom(" ", "\t", "\n", "\r"), { maxLength: 50 }),
-        (ws) => {
-          const r = validateMessage(ws);
-          expect(r.valid).toBe(false);
-          expect(r.reason).toBe("empty");
-        },
-      ),
+      fc.property(fc.stringOf(fc.constantFrom(" ", "\t", "\n", "\r"), { maxLength: 50 }), (ws) => {
+        const r = validateMessage(ws);
+        expect(r.valid).toBe(false);
+        expect(r.reason).toBe("empty");
+      }),
       { numRuns: 100 },
     );
   });

@@ -122,6 +122,7 @@ def extract_approach(transcript: str) -> str:
             return candidate
     return ""
 
+
 #: A run must have been over for at least this many seconds before the loop is
 #: allowed to evolve (R9.7: "no Agent_Mode run has been active for at least 60
 #: seconds").
@@ -371,9 +372,7 @@ class HermesEvolution:
                 table[str(task_type)] = cleaned
         return table
 
-    def _save_approach_weights(
-        self, table: dict[str, dict[str, dict[str, int]]]
-    ) -> None:
+    def _save_approach_weights(self, table: dict[str, dict[str, dict[str, int]]]) -> None:
         path = self._approach_weights_path()
         path.parent.mkdir(parents=True, exist_ok=True)
         self._atomic_write(path, json.dumps(table, indent=2, sort_keys=True))

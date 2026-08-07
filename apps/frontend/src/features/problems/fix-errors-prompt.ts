@@ -26,9 +26,7 @@ export function buildFixErrorsPrompt(file: string, diagnostics: Diagnostic[]): s
   const errors = diagnostics.filter((d) => d.severity === "error");
   const n = errors.length;
   const header =
-    n === 1
-      ? `Fix the following error in ${file}:`
-      : `Fix the following ${n} errors in ${file}:`;
+    n === 1 ? `Fix the following error in ${file}:` : `Fix the following ${n} errors in ${file}:`;
   const lines = errors.map((d) => `- Line ${d.line}, column ${d.column}: ${d.message}`);
   return [header, ...lines].join("\n");
 }

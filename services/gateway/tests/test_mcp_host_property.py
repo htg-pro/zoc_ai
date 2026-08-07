@@ -65,7 +65,9 @@ class FakeSession:
         self.closed = True
 
 
-def _stdio(server_id: str, *, disabled: bool = False, auto: tuple[str, ...] = ()) -> ServerDefinition:
+def _stdio(
+    server_id: str, *, disabled: bool = False, auto: tuple[str, ...] = ()
+) -> ServerDefinition:
     return ServerDefinition(
         id=server_id, transport="stdio", command="cmd", auto_approve=auto, disabled=disabled
     )
@@ -75,7 +77,9 @@ def _remote(server_id: str, transport: str) -> ServerDefinition:
     return ServerDefinition(id=server_id, transport=transport, url="http://example")  # type: ignore[arg-type]
 
 
-def _load(defs: list[ServerDefinition], sessions: dict[str, FakeSession]) -> tuple[MCPHost, McpToolRegistry, list[str]]:
+def _load(
+    defs: list[ServerDefinition], sessions: dict[str, FakeSession]
+) -> tuple[MCPHost, McpToolRegistry, list[str]]:
     reg = McpToolRegistry()
     requested: list[str] = []
 
@@ -91,7 +95,12 @@ def _load(defs: list[ServerDefinition], sessions: dict[str, FakeSession]) -> tup
 # Feature: mcp-host-and-servers, Property 4: Transport-based session classification
 def test_transport_classification() -> None:
     """Validates: Requirements 3.1, 3.2, 3.3, 3.5, 3.6."""
-    defs = [_stdio("live"), _stdio("off", disabled=True), _remote("sse", "sse"), _remote("http", "http")]
+    defs = [
+        _stdio("live"),
+        _stdio("off", disabled=True),
+        _remote("sse", "sse"),
+        _remote("http", "http"),
+    ]
     sessions = {"live": FakeSession(tools=("t",))}
     host, _reg, requested = _load(defs, sessions)
     servers = {s["id"]: s for s in host.servers()}
@@ -212,7 +221,11 @@ def test_no_partial_result_on_failure() -> None:
     def call(server_id: str) -> object:
         return asyncio.run(
             host.proxy_tool_call(
-                namespaced_name(server_id, "t"), {}, run_id="r", emit=emit, await_decision=_approve  # type: ignore[arg-type]
+                namespaced_name(server_id, "t"),
+                {},
+                run_id="r",
+                emit=emit,
+                await_decision=_approve,  # type: ignore[arg-type]
             )
         )
 
@@ -243,12 +256,16 @@ def test_failure_containment() -> None:
     _events, emit = _emitter()
     # A faulting call returns a typed outcome without raising into the run.
     outcome = asyncio.run(
-        host.proxy_tool_call(namespaced_name("bad", "t"), {}, run_id="r", emit=emit, await_decision=_approve)  # type: ignore[arg-type]
+        host.proxy_tool_call(
+            namespaced_name("bad", "t"), {}, run_id="r", emit=emit, await_decision=_approve
+        )  # type: ignore[arg-type]
     )
     assert isinstance(outcome, ToolCallError)
     # The other server is still usable afterwards.
     ok = asyncio.run(
-        host.proxy_tool_call(namespaced_name("ok", "t"), {}, run_id="r", emit=emit, await_decision=_approve)  # type: ignore[arg-type]
+        host.proxy_tool_call(
+            namespaced_name("ok", "t"), {}, run_id="r", emit=emit, await_decision=_approve
+        )  # type: ignore[arg-type]
     )
     assert isinstance(ok, ToolCallSuccess)
 
@@ -263,7 +280,9 @@ def test_auto_approve_gating() -> None:
     # Auto-approved: no ApprovalEvent, call proceeds.
     events, emit = _emitter()
     asyncio.run(
-        host.proxy_tool_call(namespaced_name("s", "approved"), {}, run_id="r", emit=emit, await_decision=_approve)  # type: ignore[arg-type]
+        host.proxy_tool_call(
+            namespaced_name("s", "approved"), {}, run_id="r", emit=emit, await_decision=_approve
+        )  # type: ignore[arg-type]
     )
     assert not any(isinstance(e, ApprovalEvent) for e in events)
     assert session.calls == [("approved", {})]
@@ -278,7 +297,11 @@ def test_auto_approve_gating() -> None:
 
     asyncio.run(
         host.proxy_tool_call(
-            namespaced_name("s", "gated"), {"a": 1}, run_id="r", emit=emit, await_decision=await_no_call_pending  # type: ignore[arg-type]
+            namespaced_name("s", "gated"),
+            {"a": 1},
+            run_id="r",
+            emit=emit,
+            await_decision=await_no_call_pending,  # type: ignore[arg-type]
         )
     )
     approvals = [e for e in events if isinstance(e, ApprovalEvent)]
@@ -297,7 +320,9 @@ def test_rejection_declined_without_call() -> None:
     host, _reg, _requested = _load(defs, {"s": session})
     _events, emit = _emitter()
     outcome = asyncio.run(
-        host.proxy_tool_call(namespaced_name("s", "gated"), {}, run_id="r", emit=emit, await_decision=_reject)  # type: ignore[arg-type]
+        host.proxy_tool_call(
+            namespaced_name("s", "gated"), {}, run_id="r", emit=emit, await_decision=_reject
+        )  # type: ignore[arg-type]
     )
     assert isinstance(outcome, ToolCallError)
     assert outcome.kind is ToolCallErrorKind.DECLINED
@@ -385,7 +410,9 @@ def test_command_event_emission() -> None:
     host, _reg, _requested = _load(defs, {"srv": FakeSession(tools=("t",))})
     events, emit = _emitter()
     asyncio.run(
-        host.proxy_tool_call(namespaced_name("srv", "t"), {}, run_id="r", emit=emit, await_decision=_approve)  # type: ignore[arg-type]
+        host.proxy_tool_call(
+            namespaced_name("srv", "t"), {}, run_id="r", emit=emit, await_decision=_approve
+        )  # type: ignore[arg-type]
     )
     commands = [e for e in events if isinstance(e, CommandEvent)]
     assert len(commands) == 1
@@ -405,7 +432,9 @@ def test_mcp_output_remains_untrusted(payload: dict[str, str]) -> None:
 
     _events1, emit1 = _emitter()
     out = asyncio.run(
-        host.proxy_tool_call(namespaced_name("s", "t"), {}, run_id="r", emit=emit1, await_decision=_approve)  # type: ignore[arg-type]
+        host.proxy_tool_call(
+            namespaced_name("s", "t"), {}, run_id="r", emit=emit1, await_decision=_approve
+        )  # type: ignore[arg-type]
     )
     # Incorporated only as tool-result data attributed to the owning server/tool.
     assert isinstance(out, ToolCallSuccess)
@@ -414,7 +443,9 @@ def test_mcp_output_remains_untrusted(payload: dict[str, str]) -> None:
     # The prior output granted no trust: the next call is still gated + declinable.
     events2, emit2 = _emitter()
     out2 = asyncio.run(
-        host.proxy_tool_call(namespaced_name("s", "t"), {}, run_id="r", emit=emit2, await_decision=_reject)  # type: ignore[arg-type]
+        host.proxy_tool_call(
+            namespaced_name("s", "t"), {}, run_id="r", emit=emit2, await_decision=_reject
+        )  # type: ignore[arg-type]
     )
     assert any(isinstance(e, ApprovalEvent) for e in events2)
     assert isinstance(out2, ToolCallError) and out2.kind is ToolCallErrorKind.DECLINED

@@ -108,9 +108,7 @@ def _instant_answer(query: str, client: HttpClient) -> list[dict[str, str]]:
     abstract = data.get("AbstractText")
     abstract_url = data.get("AbstractURL")
     if _nonempty(heading) and _nonempty(abstract_url) and _nonempty(abstract):
-        entries.append(
-            {"title": str(heading), "url": str(abstract_url), "snippet": str(abstract)}
-        )
+        entries.append({"title": str(heading), "url": str(abstract_url), "snippet": str(abstract)})
     for topic in _iter_topics(data):
         text = topic.get("Text")
         first_url = topic.get("FirstURL")
@@ -194,7 +192,9 @@ def _web_search_handler(arguments: dict[str, object]) -> dict[str, object]:
     query = arguments.get("query", "")
     raw_max = arguments.get("max_results", DEFAULT_MAX_RESULTS)
     max_results = (
-        raw_max if isinstance(raw_max, int) and not isinstance(raw_max, bool) else DEFAULT_MAX_RESULTS
+        raw_max
+        if isinstance(raw_max, int) and not isinstance(raw_max, bool)
+        else DEFAULT_MAX_RESULTS
     )
     with httpx.Client(timeout=_TIMEOUT_SECONDS, follow_redirects=True) as client:
         return web_search(str(query), max_results, client)

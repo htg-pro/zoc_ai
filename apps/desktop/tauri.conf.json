@@ -30,14 +30,7 @@
   },
   "bundle": {
     "active": true,
-    "targets": [
-      "deb",
-      "rpm",
-      "app",
-      "dmg",
-      "nsis",
-      "msi"
-    ],
+    "targets": ["deb", "rpm", "app", "dmg", "nsis", "msi"],
     "category": "DeveloperTool",
     "copyright": "\u00a9 2026 Zoc AI contributors",
     "shortDescription": "Local agentic coding desktop app.",
@@ -57,12 +50,7 @@
     "resources": [],
     "linux": {
       "deb": {
-        "depends": [
-          "libwebkit2gtk-4.1-0",
-          "libgtk-3-0",
-          "libssl3 | libssl1.1",
-          "libxdo3"
-        ]
+        "depends": ["libwebkit2gtk-4.1-0", "libgtk-3-0", "libssl3 | libssl1.1", "libxdo3"]
       }
     },
     "macOS": {
@@ -77,9 +65,7 @@
   "plugins": {
     "updater": {
       "active": false,
-      "endpoints": [
-        "https://releases.zoc.studio/updates/{{target}}/{{arch}}/{{current_version}}"
-      ],
+      "endpoints": ["https://releases.zoc.studio/updates/{{target}}/{{arch}}/{{current_version}}"],
       "dialog": false,
       "pubkey": ""
     }

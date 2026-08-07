@@ -85,8 +85,8 @@ export function ExtensionsSection() {
         <Blocks className="mt-0.5 h-3.5 w-3.5 shrink-0" />
         <span>
           Marketplace zip artifacts run in dedicated worker sandboxes. A manifest pasted here is
-          metadata-only: views remain available, but commands stay inactive without registered worker
-          handlers.
+          metadata-only: views remain available, but commands stay inactive without registered
+          worker handlers.
         </span>
       </div>
 
@@ -161,9 +161,7 @@ export function ExtensionsSection() {
                     l.level === "error" ? "text-destructive" : "text-muted-foreground",
                   )}
                 >
-                  <span className="shrink-0 opacity-60">
-                    {new Date(l.ts).toLocaleTimeString()}
-                  </span>
+                  <span className="shrink-0 opacity-60">{new Date(l.ts).toLocaleTimeString()}</span>
                   {l.pluginId && <span className="shrink-0 text-foreground">[{l.pluginId}]</span>}
                   <span className="min-w-0">{l.message}</span>
                 </li>
@@ -240,8 +238,7 @@ function PluginCard({ plugin }: { plugin: InstalledPlugin }) {
         </div>
         {contributes.commands.length > 0 && (
           <div className="text-[11px] text-muted-foreground">
-            Commands:{" "}
-            {contributes.commands.map((c) => c.title).join(", ")}
+            Commands: {contributes.commands.map((c) => c.title).join(", ")}
           </div>
         )}
         {contributes.views.length > 0 && (

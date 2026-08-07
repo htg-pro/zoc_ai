@@ -120,16 +120,12 @@ export function matchesFilter(
 }
 
 /** Non-negative integer count of sessions matching each tab (R2.5). */
-export function tabCounts(
-  sessions: Session[],
-  pinned: ReadonlySet<string>,
-): TabCounts {
+export function tabCounts(sessions: Session[], pinned: ReadonlySet<string>): TabCounts {
   return {
     all: sessions.length,
     active: sessions.filter((s) => matchesFilter(s, "active", pinned)).length,
     pinned: sessions.filter((s) => matchesFilter(s, "pinned", pinned)).length,
-    archived: sessions.filter((s) => matchesFilter(s, "archived", pinned))
-      .length,
+    archived: sessions.filter((s) => matchesFilter(s, "archived", pinned)).length,
   };
 }
 
@@ -202,10 +198,7 @@ export function filterSortSearch(
 
 // ── Pin persistence (R2.11) ──────────────────────────────────────────
 
-export function togglePinned(
-  pinned: ReadonlySet<string>,
-  id: string,
-): Set<string> {
+export function togglePinned(pinned: ReadonlySet<string>, id: string): Set<string> {
   const next = new Set(pinned);
   if (next.has(id)) next.delete(id);
   else next.add(id);

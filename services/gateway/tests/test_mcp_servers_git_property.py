@@ -46,9 +46,7 @@ class _RaisingRunner:
         raise self._exc
 
 
-_safe_seg = st.text(
-    alphabet="abcdefghijklmnopqrstuvwxyz0123456789_-", min_size=1, max_size=6
-)
+_safe_seg = st.text(alphabet="abcdefghijklmnopqrstuvwxyz0123456789_-", min_size=1, max_size=6)
 _within_path = st.lists(_safe_seg, max_size=4).map("/".join)
 _escaping_path = st.one_of(
     st.just(".."),

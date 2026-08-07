@@ -37,18 +37,18 @@ async def run_test():
         # Reload button
         elem = page.locator('[id="reload-button"]')
         await elem.click(timeout=10000)
-        
+
         # -> Click the 'Reload' button on the browser error page to retry loading the frontend.
         # Reload button
         elem = page.locator('[id="reload-button"]')
         await elem.click(timeout=10000)
-        
+
         # --> Assertions to verify final state
         # Assert: Verify terminal output is displayed
         assert False, "Expected: Verify terminal output is displayed (could not be verified on the page)"
         # Assert: Verify the terminal remains open
         assert False, "Expected: Verify the terminal remains open (could not be verified on the page)"
-        
+
         # --> Test blocked by environment/access constraints during agent run
         # Reason: TEST BLOCKED The frontend could not be reached — the UI is unreachable so the test cannot be run. Observations: - The browser displays 'ERR_EMPTY_RESPONSE' and a 'Reload' button for 127.0.0.1. - Navigations to http://localhost:1420 and http://127.0.0.1:1420 plus multiple Reload clicks did not load the app.
         raise AssertionError("Test blocked during agent run: " + "TEST BLOCKED The frontend could not be reached \u2014 the UI is unreachable so the test cannot be run. Observations: - The browser displays 'ERR_EMPTY_RESPONSE' and a 'Reload' button for 127.0.0.1. - Navigations to http://localhost:1420 and http://127.0.0.1:1420 plus multiple Reload clicks did not load the app." + " — the exported script cannot reproduce a PASS in this environment.")
@@ -63,4 +63,3 @@ async def run_test():
             await pw.stop()
 
 asyncio.run(run_test())
-    

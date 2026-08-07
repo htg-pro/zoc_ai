@@ -2,6 +2,8 @@
  * Property 71: The Capability_Policy is total and every verdict matches the table.
  * Validates R32.3, R32.4, R32.7, R32.10.
  *
+ * Feature: zoc-agent-chat-rebuild, Property 71 (R32.3, R32.4, R32.7, R32.10).
+ *
  * Runs **exhaustively over the full domain** rather than sampled. 18 cells is the
  * entire (Conversation_Mode × Plan_Approval × Capability) product, so enumeration
  * is both cheaper and stronger than 100 draws over the same space — and it is

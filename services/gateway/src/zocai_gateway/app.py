@@ -577,8 +577,7 @@ class _Run:
         """
         with self._lock:
             if self._failure_reason is None or (
-                self._failure_code == ErrorCode.RUN_FAILED
-                and code != ErrorCode.RUN_FAILED
+                self._failure_code == ErrorCode.RUN_FAILED and code != ErrorCode.RUN_FAILED
             ):
                 self._failure_reason = reason
                 self._failure_code = code
@@ -2420,9 +2419,7 @@ def create_app(
             if not model_readiness.ready:
                 raise HTTPException(
                     status_code=status.HTTP_409_CONFLICT,
-                    detail=error_body(
-                        ErrorCode.MODEL_NOT_READY, details=model_readiness.reason
-                    ),
+                    detail=error_body(ErrorCode.MODEL_NOT_READY, details=model_readiness.reason),
                 )
             # R5.2: for a locally-served llama.cpp endpoint, a *live* bounded
             # /health probe backstops the structural check — a server that is
@@ -2553,9 +2550,7 @@ def create_app(
                             file_locks=file_locks,
                             project_memory=run_project_memory,
                             hermes=run_hermes,
-                            failure_sink=lambda reason, code: run.record_failure(
-                                reason, code=code
-                            ),
+                            failure_sink=lambda reason, code: run.record_failure(reason, code=code),
                         ),
                         timeout=resolved_settings.run_timeout_seconds,
                     )

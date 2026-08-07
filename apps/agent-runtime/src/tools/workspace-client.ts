@@ -1,6 +1,8 @@
 /**
  * Workspace client — zoc-agent-chat-rebuild R6.1, R6.5, R6.6.
  *
+ * Feature: zoc-agent-chat-rebuild, R6.1, R6.5, R6.6.
+ *
  * Every call the runtime makes into Desktop_Core and Workspace_Services goes
  * through one wrapper, and the wrapper's job is a single conversion:
  *
@@ -20,6 +22,7 @@
  */
 
 import { ErrorCode } from "../http/errors.ts";
+import { PathMutex } from "../agent/run-store.ts";
 
 /** The `base_digest` sentinel for a file that did not exist (R10.15). */
 export const ABSENT_DIGEST = "absent:0";
@@ -172,11 +175,63 @@ export interface BenchmarkHistory {
   readonly runs: readonly BenchmarkRunSummary[];
 }
 
+export interface McpServerRuntime {
+  readonly id: string;
+  readonly transport: "stdio" | "sse" | "http";
+  readonly scope: "user" | "workspace";
+  readonly command: string | null;
+  readonly args: readonly string[];
+  readonly env: Readonly<Record<string, string>>;
+  readonly url: string | null;
+  readonly disabled: boolean;
+  readonly autoApprove: readonly string[];
+  readonly status: "running" | "stopped" | "error";
+  readonly errorReason: string | null;
+}
+
+export interface McpDiscoveredTool {
+  readonly serverId: string;
+  readonly bareName: string;
+  /** Workspace_Services' transport name, used only for the proxied call. */
+  readonly namespacedName: string;
+  readonly inputSchema: Readonly<Record<string, unknown>>;
+  readonly description: string | null;
+}
+
+export type McpTestOutcome =
+  | {
+      readonly outcome: "success";
+      readonly toolCount: number;
+      readonly bareNames: readonly string[];
+    }
+  | { readonly outcome: "validation-failure"; readonly reason: string }
+  | { readonly outcome: "unsupported"; readonly transport: string }
+  | { readonly outcome: "failure"; readonly reason: string };
+
 export class WorkspaceClient {
   private readonly fetchImpl: typeof fetch;
   // Not a constructor parameter property: `--experimental-strip-types` cannot generate the
   // assignment one implies, so it is `ERR_UNSUPPORTED_TYPESCRIPT_SYNTAX` at boot.
   private readonly options: WorkspaceClientOptions;
+  /**
+   * Serialises concurrent applies to the same file (R25.7, task 29.5).
+   *
+   * Owned by the client rather than passed in per Run, and that is the reason it
+   * is correct: `composition.ts` builds exactly one `WorkspaceClient` per runtime
+   * process and threads it into every Run's tool context, so a lock held here is
+   * process-wide across Runs by construction — there is no wiring anyone can
+   * forget, which is how it came to be missing in the first place.
+   *
+   * It has to be on this side. Desktop_Core's bridge serves **one thread per
+   * connection** and `handle_apply_hunks` takes no lock, so two Runs applying at
+   * once both read the file, both match `base_digest`, and both commit — the
+   * second silently clobbering the first, with two transcripts each claiming to
+   * describe the result. Serialising here closes that window: the loser now reads
+   * the winner's bytes, its digest no longer matches, and it is refused with
+   * `hunk_stale` through R10.8's existing path. One staleness mechanism, two
+   * causes — which is why the lock only has to order, not detect.
+   */
+  private readonly applyLock = new PathMutex();
 
   constructor(options: WorkspaceClientOptions) {
     this.options = options;
@@ -285,6 +340,22 @@ export class WorkspaceClient {
   async applyHunks(request: {
     planId: string;
     /** The Run this apply belongs to, so the checkpoint identifies it (R10.5). */
+    runId?: string;
+    files: readonly HunkFileRequest[];
+    checkpoint?: boolean;
+  }): Promise<WorkspaceOutcome<ApplyHunksResult>> {
+    // A rename's source is written too — it is removed — so both of its paths are
+    // locked, or two Runs renaming onto the same target would not contend.
+    const paths = request.files.flatMap((file) =>
+      file.sourcePath === null || file.sourcePath === undefined
+        ? [file.path]
+        : [file.path, file.sourcePath],
+    );
+    return this.applyLock.runAll(paths, () => this.applyHunksLocked(request));
+  }
+
+  private async applyHunksLocked(request: {
+    planId: string;
     runId?: string;
     files: readonly HunkFileRequest[];
     checkpoint?: boolean;
@@ -486,6 +557,81 @@ export class WorkspaceClient {
         modelId: typeof outcome.value.modelId === "string" ? outcome.value.modelId : modelId,
         runs,
       },
+    };
+  }
+
+  // ── MCP brokerage (R26) ────────────────────────────────────────────────
+
+  async mcpServers(): Promise<WorkspaceOutcome<readonly McpServerRuntime[]>> {
+    const outcome = await this.call<{ servers?: McpServerRuntime[] }>(
+      this.options.servicesUrl,
+      "/v1/mcp/servers",
+      undefined,
+      "Reading MCP server state",
+      false,
+    );
+    if (!outcome.ok) return outcome;
+    return { ok: true, value: outcome.value.servers ?? [] };
+  }
+
+  async mcpTools(): Promise<WorkspaceOutcome<readonly McpDiscoveredTool[]>> {
+    const outcome = await this.call<{ tools?: McpDiscoveredTool[] }>(
+      this.options.servicesUrl,
+      "/v1/mcp/tools",
+      undefined,
+      "Discovering MCP tools",
+      false,
+    );
+    if (!outcome.ok) return outcome;
+    return { ok: true, value: outcome.value.tools ?? [] };
+  }
+
+  async reloadMcp(): Promise<WorkspaceOutcome<readonly McpServerRuntime[]>> {
+    const outcome = await this.call<{ servers?: McpServerRuntime[] }>(
+      this.options.servicesUrl,
+      "/v1/mcp/reload",
+      {},
+      "Reloading MCP servers",
+      false,
+    );
+    if (!outcome.ok) return outcome;
+    return { ok: true, value: outcome.value.servers ?? [] };
+  }
+
+  async testMcp(candidate: Record<string, unknown>): Promise<WorkspaceOutcome<McpTestOutcome>> {
+    return this.call<McpTestOutcome>(
+      this.options.servicesUrl,
+      "/v1/mcp/test",
+      candidate,
+      "Testing an MCP server",
+      false,
+    );
+  }
+
+  async callMcp(
+    sourceName: string,
+    arguments_: Record<string, unknown>,
+  ): Promise<WorkspaceOutcome<Record<string, unknown>>> {
+    const outcome = await this.call<{
+      ok?: boolean;
+      result?: Record<string, unknown>;
+      code?: string;
+      message?: string;
+      retryable?: boolean;
+    }>(
+      this.options.servicesUrl,
+      "/v1/mcp/call",
+      { name: sourceName, arguments: arguments_ },
+      `Calling MCP tool ${sourceName}`,
+      false,
+    );
+    if (!outcome.ok) return outcome;
+    if (outcome.value.ok === true) return { ok: true, value: outcome.value.result ?? {} };
+    return {
+      ok: false,
+      code: outcome.value.code ?? "mcp_failed",
+      message: outcome.value.message ?? "The MCP tool failed.",
+      retryable: outcome.value.retryable === true,
     };
   }
 

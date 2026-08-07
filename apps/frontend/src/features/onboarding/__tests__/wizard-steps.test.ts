@@ -67,22 +67,18 @@ describe("canAdvance", () => {
   it("blocks the model step until a model is actually configured", () => {
     expect(canAdvance(state({ step: "model" }))).toBe(false);
     expect(canAdvance(state({ step: "model", modelChoice: "local" }))).toBe(false);
-    expect(
-      canAdvance(state({ step: "model", modelChoice: "local", modelPath: "/m.gguf" })),
-    ).toBe(true);
+    expect(canAdvance(state({ step: "model", modelChoice: "local", modelPath: "/m.gguf" }))).toBe(
+      true,
+    );
     expect(canAdvance(state({ step: "model", modelChoice: "cloud" }))).toBe(false);
-    expect(
-      canAdvance(state({ step: "model", modelChoice: "cloud", cloudKey: "sk-x" })),
-    ).toBe(true);
+    expect(canAdvance(state({ step: "model", modelChoice: "cloud", cloudKey: "sk-x" }))).toBe(true);
   });
 
   it("treats whitespace-only input as unset", () => {
-    expect(
-      canAdvance(state({ step: "model", modelChoice: "local", modelPath: "   " })),
-    ).toBe(false);
-    expect(
-      canAdvance(state({ step: "model", modelChoice: "cloud", cloudKey: "  " })),
-    ).toBe(false);
+    expect(canAdvance(state({ step: "model", modelChoice: "local", modelPath: "   " }))).toBe(
+      false,
+    );
+    expect(canAdvance(state({ step: "model", modelChoice: "cloud", cloudKey: "  " }))).toBe(false);
   });
 
   it("never blocks the other steps", () => {
@@ -99,9 +95,7 @@ describe("describeHardware", () => {
   });
 
   it("says so when there is no GPU", () => {
-    expect(describeHardware(hardware({ gpu_memory_gb: null }))).toContain(
-      "none detected",
-    );
+    expect(describeHardware(hardware({ gpu_memory_gb: null }))).toContain("none detected");
   });
 
   it("is honest when nothing was detected", () => {
@@ -112,9 +106,7 @@ describe("describeHardware", () => {
 
 describe("describeRecommendation", () => {
   it("names the model and quantisation", () => {
-    expect(describeRecommendation(hardware())).toBe(
-      "Qwen2.5-Coder-14B-Instruct (Q4_K_M)",
-    );
+    expect(describeRecommendation(hardware())).toBe("Qwen2.5-Coder-14B-Instruct (Q4_K_M)");
   });
 
   it("is empty without hardware info", () => {

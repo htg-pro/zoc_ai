@@ -6,12 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Kbd } from "@/components/ui/kbd";
 import { toast } from "@/components/ui/toast";
-import {
-  eventToKeybinding,
-  formatKeybinding,
-  getCommands,
-  type Command,
-} from "@/lib/commands";
+import { eventToKeybinding, formatKeybinding, getCommands, type Command } from "@/lib/commands";
 import {
   detectConflicts,
   effectiveKeybinding,
@@ -197,7 +192,11 @@ function KeybindingRow({
             )}
             title="Record new keybinding"
           >
-            {chord ? <Kbd>{formatKeybinding(chord)}</Kbd> : <span className="text-xs text-muted-foreground">Unbound</span>}
+            {chord ? (
+              <Kbd>{formatKeybinding(chord)}</Kbd>
+            ) : (
+              <span className="text-xs text-muted-foreground">Unbound</span>
+            )}
           </button>
         )}
         {chord && !recording && (

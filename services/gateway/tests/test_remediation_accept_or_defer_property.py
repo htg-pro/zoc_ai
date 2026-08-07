@@ -43,9 +43,7 @@ def _scenario(draw: st.DrawFn) -> tuple[EditPlan, EditPlan | None, FailureRecord
         command=command, exit_code=draw(st.integers(min_value=1, max_value=99)), log=draw(_SHORT)
     )
     prior = draw(_PLANS)
-    shape = draw(
-        st.sampled_from(["none", "identical", "differs_refs", "differs_no_refs", "free"])
-    )
+    shape = draw(st.sampled_from(["none", "identical", "differs_refs", "differs_no_refs", "free"]))
     if shape == "none":
         candidate: EditPlan | None = None
     elif shape == "identical":
@@ -56,7 +54,9 @@ def _scenario(draw: st.DrawFn) -> tuple[EditPlan, EditPlan | None, FailureRecord
             changes=(*prior.changes, PlannedChange(path="z.py", content=draw(_SHORT))),
         )
     elif shape == "differs_no_refs":
-        candidate = EditPlan(reasoning="unrelated", changes=(PlannedChange(path="zz.py", content="qqq"),))
+        candidate = EditPlan(
+            reasoning="unrelated", changes=(PlannedChange(path="zz.py", content="qqq"),)
+        )
     else:
         candidate = draw(_PLANS)
     return prior, candidate, failure

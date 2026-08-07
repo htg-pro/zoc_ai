@@ -103,7 +103,9 @@ describe("Feature: zoc-agent-chat-rebuild, task 18.2: the plan card", () => {
   });
 
   it("keeps the footer's count and the apply payload the same number", () => {
-    const diffs = [diffOf("src/a.ts", "modify", [hunk("h1", MODIFY_PATCH), hunk("h2", MODIFY_PATCH)])];
+    const diffs = [
+      diffOf("src/a.ts", "modify", [hunk("h1", MODIFY_PATCH), hunk("h2", MODIFY_PATCH)]),
+    ];
     const onApply = vi.fn();
     render(<PlanRow plan={planOf(diffs)} diffs={diffs} onApply={onApply} />);
 
@@ -292,7 +294,9 @@ describe("Feature: zoc-agent-chat-rebuild, task 18.2: the plan card", () => {
     // The two files that were not written are absent — the whole point of the property beside this test.
     expect(document.querySelector('[data-zoc-receipt-file="src/two.ts"]')).toBeNull();
     expect(document.querySelector('[data-zoc-receipt-file="src/three.ts"]')).toBeNull();
-    expect(screen.getByRole("button", { name: /revert the change to src\/one\.ts/ })).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: /revert the change to src\/one\.ts/ }),
+    ).toBeInTheDocument();
   });
 
   it("says so rather than offering a rollback that cannot work", () => {

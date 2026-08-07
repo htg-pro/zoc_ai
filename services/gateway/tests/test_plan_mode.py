@@ -12,9 +12,7 @@ from zocai_gateway.run_pipeline import _restrict_plan_to_paths
 
 def _plan(*files: str) -> AgentPlan:
     return AgentPlan(
-        steps=[
-            EditStep(file=f, action="modify", rationale=f"touch {f}") for f in files
-        ],
+        steps=[EditStep(file=f, action="modify", rationale=f"touch {f}") for f in files],
         verification_command="pytest -q",
         confidence=0.8,
     )
@@ -24,8 +22,7 @@ def _edit_plan(*files: str) -> EditPlan:
     return EditPlan(
         reasoning="because",
         changes=tuple(
-            PlannedChange(path=f, content="body", diff=f"--- a/{f}\n+++ b/{f}\n")
-            for f in files
+            PlannedChange(path=f, content="body", diff=f"--- a/{f}\n+++ b/{f}\n") for f in files
         ),
     )
 
@@ -135,9 +132,7 @@ def test_restrict_plan_normalises_separators() -> None:
 
 
 def test_restrict_plan_to_nothing_yields_an_empty_plan() -> None:
-    structured, plan = _restrict_plan_to_paths(
-        _plan("a.py"), _edit_plan("a.py"), ("other.py",)
-    )
+    structured, plan = _restrict_plan_to_paths(_plan("a.py"), _edit_plan("a.py"), ("other.py",))
     assert structured.steps == []
     assert plan.changes == ()
     assert plan.has_changes is False

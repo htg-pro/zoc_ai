@@ -38,9 +38,9 @@ describe("createInlineCompletionsProvider registration (R8.1)", () => {
     expect(monaco.languages.registerInlineCompletionsProvider).toHaveBeenCalledTimes(1);
     const [selector, provider] = monaco.languages.registerInlineCompletionsProvider.mock.calls[0];
     expect(selector).toEqual({ pattern: "**" });
-    expect(typeof (provider as { provideInlineCompletions: unknown }).provideInlineCompletions).toBe(
-      "function",
-    );
+    expect(
+      typeof (provider as { provideInlineCompletions: unknown }).provideInlineCompletions,
+    ).toBe("function");
     reg.dispose();
     expect(dispose).toHaveBeenCalledTimes(1);
   });
@@ -54,8 +54,13 @@ describe("createInlineCompletionsProvider registration (R8.1)", () => {
         onToken(")");
       },
     });
-    const provider = (monaco.languages.registerInlineCompletionsProvider.mock.calls[0][1]) as {
-      provideInlineCompletions: (m: unknown, p: unknown, c: unknown, t: unknown) => { items: Array<{ insertText: string }> };
+    const provider = monaco.languages.registerInlineCompletionsProvider.mock.calls[0][1] as {
+      provideInlineCompletions: (
+        m: unknown,
+        p: unknown,
+        c: unknown,
+        t: unknown,
+      ) => { items: Array<{ insertText: string }> };
     };
     const result = provider.provideInlineCompletions(
       fakeModel("const x = ", 10),
@@ -69,8 +74,13 @@ describe("createInlineCompletionsProvider registration (R8.1)", () => {
     // An empty completion yields no items (no ghost text, no hint).
     const { monaco: monaco2 } = fakeMonaco();
     createInlineCompletionsProvider(monaco2 as never, { streamCompletion: async () => {} });
-    const provider2 = (monaco2.languages.registerInlineCompletionsProvider.mock.calls[0][1]) as {
-      provideInlineCompletions: (m: unknown, p: unknown, c: unknown, t: unknown) => { items: unknown[] };
+    const provider2 = monaco2.languages.registerInlineCompletionsProvider.mock.calls[0][1] as {
+      provideInlineCompletions: (
+        m: unknown,
+        p: unknown,
+        c: unknown,
+        t: unknown,
+      ) => { items: unknown[] };
     };
     const empty = provider2.provideInlineCompletions(
       fakeModel("", 0),
@@ -239,8 +249,7 @@ describe("MonacoView inline completions registration (R8.1)", () => {
     stageAgentEditBatch("run-applied", [
       {
         path: "src/App.tsx",
-        diff:
-          "@@ -1 +1 @@\n-export function App() {}\n+export const App = () => {}\n",
+        diff: "@@ -1 +1 @@\n-export function App() {}\n+export const App = () => {}\n",
         adds: 1,
         dels: 1,
       },

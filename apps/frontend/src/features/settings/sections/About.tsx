@@ -209,9 +209,7 @@ function UpdatesCard() {
         )}
         {result && result !== "up-to-date" && (
           <div className="flex flex-wrap items-center gap-2 rounded-md border border-primary/30 bg-primary/10 px-3 py-2 text-sm">
-            <span>
-              v{result.version} is available.
-            </span>
+            <span>v{result.version} is available.</span>
             <Button size="sm" onClick={() => void install()}>
               Update now
             </Button>

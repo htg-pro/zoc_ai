@@ -1,6 +1,8 @@
 /**
  * The `@perf` fixture's dev server — zoc-agent-chat-rebuild task 17.6.
  *
+ * Feature: zoc-agent-chat-rebuild, task 17.6.
+ *
  * Serves `fixture.html` through the app's own Vite config, so the modules the browser loads are
  * resolved, transformed, and aliased exactly as they are in development. Building a separate bundle
  * for the measurement would measure that bundle.

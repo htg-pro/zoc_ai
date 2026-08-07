@@ -2,6 +2,8 @@
  * The model picker's view model — zoc-agent-chat-rebuild R13.1, R13.2, R13.3, R13.6, R13.11, R13.12,
  * R13.13, task 22.2.
  *
+ * Feature: zoc-agent-chat-rebuild, task 22.2 (R13.1, R13.2, R13.3, R13.6, R13.11, R13.12).
+ *
  * What the picker shows about a model, and the one rule that decides whether a Run can start. Pure, because
  * Property 30's claim — submission gating is a function of key state alone — is a claim about a function and
  * would be untestable as a component's internal.
@@ -50,6 +52,8 @@ export interface ModelChoice {
   /** Mean tokens per second from this model's recorded benchmark history, or absent (R13.11, R13.12). */
   readonly meanTokensPerSecond?: number;
   readonly contextLimit: number;
+  /** The catalogue's image-input declaration (R29.3). */
+  readonly vision?: boolean;
 }
 
 /**
@@ -145,7 +149,9 @@ export function formatMeanRate(model: ModelChoice): string | null {
   if (rate === undefined || !Number.isFinite(rate) || rate <= 0) return null;
   // The same threshold `usage-figures.ts` uses for the live figure, so the two never disagree about
   // whether a rate is a whole number.
-  return rate < 100 ? `${rate.toFixed(1).replace(/\.0$/, "")} tok/s` : `${String(Math.round(rate))} tok/s`;
+  return rate < 100
+    ? `${rate.toFixed(1).replace(/\.0$/, "")} tok/s`
+    : `${String(Math.round(rate))} tok/s`;
 }
 
 /**
@@ -182,5 +188,6 @@ export function modelChoice(input: {
       ? {}
       : { meanTokensPerSecond: input.meanTokensPerSecond }),
     contextLimit: input.contextLimit,
+    vision: input.model.vision ?? false,
   };
 }

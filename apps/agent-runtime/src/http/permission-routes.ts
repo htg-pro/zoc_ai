@@ -1,6 +1,8 @@
 /**
  * Permission HTTP surface — zoc-agent-chat-rebuild R11.7, R11.9, R32.9.
  *
+ * Feature: zoc-agent-chat-rebuild, R11.7, R11.9, R32.9.
+ *
  * Three routes:
  *
  *   POST /v1/runs/:id/approvals   — one endpoint, two decision kinds

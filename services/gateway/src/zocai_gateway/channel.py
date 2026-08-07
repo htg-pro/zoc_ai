@@ -54,9 +54,7 @@ __all__ = [
 
 #: Structured planning rows — the "what I intend to do / am reasoning about"
 #: kinds named by R2.7.
-PLANNING_ROW_TYPES: frozenset[str] = frozenset(
-    {"intent", "thinking", "plan", "plan-update"}
-)
+PLANNING_ROW_TYPES: frozenset[str] = frozenset({"intent", "thinking", "plan", "plan-update"})
 
 #: To-do / progress-checklist rows named by R2.7.
 TODO_ROW_TYPES: frozenset[str] = frozenset({"plan", "plan-update", "summary"})

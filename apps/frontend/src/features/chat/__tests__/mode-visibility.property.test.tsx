@@ -148,7 +148,9 @@ describe("Feature: zoc-agent-chat-rebuild, Property 19: the active permission mo
 
         const items = [...document.querySelectorAll("[data-zoc-approval-item]")];
         expect(items).toHaveLength(PERMISSION_MODES.length);
-        expect(items.filter((item) => item.getAttribute("data-state") === "active")).toHaveLength(1);
+        expect(items.filter((item) => item.getAttribute("data-state") === "active")).toHaveLength(
+          1,
+        );
       }),
       RUNS,
     );

@@ -188,8 +188,7 @@ export function buildRunTrace(runId: string, raw: readonly RawEvent[]): RunTrace
   });
 
   const totalTokens = ordered.reduce(
-    (max, event) =>
-      event.type === "budget" ? Math.max(max, Number(event.tokensUsed ?? 0)) : max,
+    (max, event) => (event.type === "budget" ? Math.max(max, Number(event.tokensUsed ?? 0)) : max),
     0,
   );
 
@@ -211,10 +210,7 @@ export function buildRunTrace(runId: string, raw: readonly RawEvent[]): RunTrace
  * failed APPLY should show two amber bands, which is exactly the information a
  * user is looking for when they open a timeline.
  */
-export function buildSegments(
-  events: readonly TraceEvent[],
-  totalMs: number,
-): StageSegment[] {
+export function buildSegments(events: readonly TraceEvent[], totalMs: number): StageSegment[] {
   const segments: StageSegment[] = [];
   let previousTokenReading = 0;
   for (const event of events) {
@@ -222,9 +218,10 @@ export function buildSegments(
     // Budget frames are snapshots, not FSM transitions. Attribute their token
     // delta to the stage that was active immediately before the snapshot.
     const stage = event.type === "budget" && last ? last.stage : event.stage;
-    const reading = event.type === "budget"
-      ? Math.max(0, Number(event.payload.tokensUsed ?? 0))
-      : previousTokenReading;
+    const reading =
+      event.type === "budget"
+        ? Math.max(0, Number(event.payload.tokensUsed ?? 0))
+        : previousTokenReading;
     const tokenDelta = Math.max(0, reading - previousTokenReading);
     if (event.type === "budget") previousTokenReading = Math.max(previousTokenReading, reading);
 

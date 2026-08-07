@@ -17,7 +17,7 @@ const mocks = vi.hoisted(() => ({
   writeToTerminal: vi.fn(),
 }));
 
-vi.mock("@/features/agent/agent-stream-context", () => ({
+vi.mock("@/lib/agent-stream-context", () => ({
   useAgentStreamContext: () => ({ events: mocks.events, status: "open" }),
 }));
 
@@ -39,9 +39,7 @@ vi.mock("@/lib/terminal-manager", () => ({
   writeToTerminal: mocks.writeToTerminal,
 }));
 
-function commandEvent(
-  patch: Partial<AgentEvents.CommandEvent> = {},
-): AgentEvents.CommandEvent {
+function commandEvent(patch: Partial<AgentEvents.CommandEvent> = {}): AgentEvents.CommandEvent {
   return {
     type: "command",
     seq: 1,

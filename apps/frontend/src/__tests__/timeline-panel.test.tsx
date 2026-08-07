@@ -13,14 +13,26 @@ describe("TimelinePanel", () => {
 
   it("renders merged commits and checkpoints", async () => {
     const commits: GitCommit[] = [
-      { hash: "h1", short: "h1", author: "Ada", email: "a@x", timestamp: 3000, subject: "initial commit" },
+      {
+        hash: "h1",
+        short: "h1",
+        author: "Ada",
+        email: "a@x",
+        timestamp: 3000,
+        subject: "initial commit",
+      },
     ];
     useApp.setState({
       loadGitLog: vi.fn(async () => commits),
       loadCheckpoints: vi.fn(async () => {}),
       restoreCheckpoint: vi.fn(async () => true),
       checkpoints: [
-        { run_id: "r1", label: "Agent edit", created_at: new Date(2_000_000).toISOString(), files: ["a.ts"] },
+        {
+          run_id: "r1",
+          label: "Agent edit",
+          created_at: new Date(2_000_000).toISOString(),
+          files: ["a.ts"],
+        },
       ],
     });
 

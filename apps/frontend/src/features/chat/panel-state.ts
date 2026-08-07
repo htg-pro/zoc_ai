@@ -1,6 +1,8 @@
 /**
  * The panel's derived state — zoc-agent-chat-rebuild R3.8, R13.9, R14.8, R16.5, R16.6, task 22.8.
  *
+ * Feature: zoc-agent-chat-rebuild, task 22.8 (R3.8, R13.9, R14.8, R16.5, R16.6).
+ *
  * Everything `ChatPanel` shows that is a *function* of `useChat`'s status and the transcript, extracted
  * so it can be asserted without mounting the panel. The panel itself is then wiring: providers, one
  * `useChat` instance, and a layout.
@@ -20,7 +22,7 @@
  * live figure for a Run that is not running — which reads as a measurement rather than as a leftover.
  */
 
-import type { RunLifecyclePart, UsagePart } from "@zoc-studio/shared-types";
+import type { ConversationMode, RunLifecyclePart, UsagePart } from "@zoc-studio/shared-types";
 
 import type { ContextCensus } from "./composer/context-figures";
 import type { RunPillState } from "./header/RunStatusPill";
@@ -207,7 +209,8 @@ export function censusOf(messages: readonly ZocUIMessage[]): ContextCensus {
       messagesOutOfWindow: usage?.messagesOutOfWindow ?? metadata.messagesOutOfWindow,
       summaryActive: usage?.summaryActive ?? metadata.summaryActive,
       consumedTokens:
-        (usage?.inputTokens ?? metadata.inputTokens) + (usage?.outputTokens ?? metadata.outputTokens),
+        (usage?.inputTokens ?? metadata.inputTokens) +
+        (usage?.outputTokens ?? metadata.outputTokens),
       // A turn with no `UsagePart` has no limit to name, so it cannot claim to have been measured
       // against a model — which is exactly R12.9's estimate case.
       measuredAgainst:
@@ -225,6 +228,34 @@ export function censusOf(messages: readonly ZocUIMessage[]): ContextCensus {
     consumedTokens: 0,
     measuredAgainst: null,
   };
+}
+
+/** The three Conversation_Modes, restated so a hand-edited transcript cannot smuggle a fourth in. */
+const CONVERSATION_MODES: ReadonlySet<string> = new Set(["ask", "plan", "agent"]);
+
+/**
+ * The Conversation_Mode a restored Session should reopen in (R32.16).
+ *
+ * The newest message metadata that names one, which is the mode of the **last submission** — the runtime
+ * writes `conversationMode` onto every finished turn precisely so this can be read without replaying
+ * parts (see `ZocMessageMetadata`).
+ *
+ * `agent` for a Session with no submissions, per Amendment 11. That default is a decision rather than a
+ * fallback: an empty mode would leave the composer's control with no selected value, and the two
+ * remaining candidates are worse — `ask` silently downgrades what a returning user asked for last time
+ * on any Session whose first Run never finished, and reading the *previous* Session's mode would make the
+ * control's value depend on navigation history.
+ *
+ * Validated rather than trusted, for the same reason `restoreTranscript` checks its envelope: this value
+ * comes off a file on the user's disk, and an unknown string reaching the mode control would render a
+ * segmented control with nothing selected.
+ */
+export function conversationModeOf(messages: readonly ZocUIMessage[]): ConversationMode {
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const mode: unknown = messages[index]?.metadata?.conversationMode;
+    if (typeof mode === "string" && CONVERSATION_MODES.has(mode)) return mode as ConversationMode;
+  }
+  return "agent";
 }
 
 /**

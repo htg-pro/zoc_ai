@@ -1,6 +1,8 @@
 /**
  * Assistant markdown, rendered inert — zoc-agent-chat-rebuild R8.1, R8.5, R8.6.
  *
+ * Feature: zoc-agent-chat-rebuild, R8.1, R8.5, R8.6.
+ *
  * The one place model-authored markdown becomes DOM. Every safety decision in the surface is
  * concentrated here, so a reviewer has one file to read rather than a policy spread across
  * every row that might render prose.

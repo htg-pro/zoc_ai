@@ -28,6 +28,17 @@
  * measured on their machine. The skip is loud — it names the environment variable that fixes it — and
  * the fixed runner sets `ZOC_PERF_CHROME`, so a silent skip in CI is a configuration bug rather than a
  * missing assertion.
+ *
+ * ## Why "the fixed runner" is load-bearing, not boilerplate
+ *
+ * A `longtask` entry is *any* main-thread task over 50 ms, including the part of it the OS scheduler
+ * spent elsewhere. So the zero-long-task guard is the one budget here that a contended host can fail
+ * for code that is itself fast: measured during a concurrent `cargo test --workspace`, this file
+ * reported three; on the same tree with the machine quiet it reports none, three runs out of three.
+ * That is also why the assertion reads the sample list rather than the count — a failure has to carry
+ * the durations, or the next person cannot tell scheduler noise from a coalescing regression. The
+ * other four budgets are averages, percentiles, and heap figures with headroom, which is why they
+ * survived the same contention.
  */
 
 // @vitest-environment node
@@ -64,53 +75,53 @@ const chrome = findChrome();
 /** Vite's first-run dependency optimisation plus a browser launch is the slow part, not the streams. */
 const SETUP_TIMEOUT_MS = 180_000;
 
-describe.skipIf(chrome === null)("@perf Feature: zoc-agent-chat-rebuild, transcript budgets", () => {
-  let server: FixtureServer;
-  let browser: PerfBrowser;
+describe.skipIf(chrome === null)(
+  "@perf Feature: zoc-agent-chat-rebuild, transcript budgets",
+  () => {
+    let server: FixtureServer;
+    let browser: PerfBrowser;
 
-  beforeAll(async () => {
-    server = await startFixtureServer();
-    // `chrome` is non-null inside a `skipIf(chrome === null)` block; the assertion is for the compiler.
-    browser = await launchPerfBrowser(chrome ?? "");
-    await browser.navigate(server.url);
-    // The fixture installs its handle after the first commit, so a driver that raced it would evaluate
-    // against `undefined` and report a protocol error rather than a budget failure.
-    await browser.evaluate<boolean>(
-      "new Promise((resolve) => { const poll = () => window.__zocPerf ? resolve(true) : setTimeout(poll, 25); poll(); })",
-    );
-  }, SETUP_TIMEOUT_MS);
-
-  afterAll(async () => {
-    await browser?.close();
-    await server?.close();
-  });
-
-  it(
-    "keeps a 500-message Session's attributable heap at or below 400 MB (R20.5)",
-    async () => {
-      await browser.collectGarbage();
-      const baseline = await browser.heapUsedBytes();
-
-      const mounted = await browser.evaluate<number>(
-        `window.__zocPerf.setMessageCount(${String(SESSION_MESSAGES)})`,
+    beforeAll(async () => {
+      server = await startFixtureServer();
+      // `chrome` is non-null inside a `skipIf(chrome === null)` block; the assertion is for the compiler.
+      browser = await launchPerfBrowser(chrome ?? "");
+      await browser.navigate(server.url);
+      // The fixture installs its handle after the first commit, so a driver that raced it would evaluate
+      // against `undefined` and report a protocol error rather than a budget failure.
+      await browser.evaluate<boolean>(
+        "new Promise((resolve) => { const poll = () => window.__zocPerf ? resolve(true) : setTimeout(poll, 25); poll(); })",
       );
-      expect(mounted).toBe(SESSION_MESSAGES);
+    }, SETUP_TIMEOUT_MS);
 
-      await browser.collectGarbage();
-      const loaded = await browser.heapUsedBytes();
-      const attributable = loaded - baseline;
+    afterAll(async () => {
+      await browser?.close();
+      await server?.close();
+    });
 
-      // A negative or zero delta would mean the collection reclaimed more than the Session allocated,
-      // which means the fixture did not mount — a pass for the wrong reason.
-      expect(attributable).toBeGreaterThan(0);
-      expect(attributable).toBeLessThanOrEqual(HEAP_BUDGET_BYTES);
-    },
-    SETUP_TIMEOUT_MS,
-  );
+    it(
+      "keeps a 500-message Session's attributable heap at or below 400 MB (R20.5)",
+      async () => {
+        await browser.collectGarbage();
+        const baseline = await browser.heapUsedBytes();
 
-  it(
-    "holds the p95 animation-frame interval at or below 18.2 ms over a 10 s stream (R19.4)",
-    async () => {
+        const mounted = await browser.evaluate<number>(
+          `window.__zocPerf.setMessageCount(${String(SESSION_MESSAGES)})`,
+        );
+        expect(mounted).toBe(SESSION_MESSAGES);
+
+        await browser.collectGarbage();
+        const loaded = await browser.heapUsedBytes();
+        const attributable = loaded - baseline;
+
+        // A negative or zero delta would mean the collection reclaimed more than the Session allocated,
+        // which means the fixture did not mount — a pass for the wrong reason.
+        expect(attributable).toBeGreaterThan(0);
+        expect(attributable).toBeLessThanOrEqual(HEAP_BUDGET_BYTES);
+      },
+      SETUP_TIMEOUT_MS,
+    );
+
+    it("holds the p95 animation-frame interval at or below 18.2 ms over a 10 s stream (R19.4)", async () => {
       await browser.evaluate<number>(`window.__zocPerf.setMessageCount(120)`);
       const report = await browser.evaluate<StreamReport>(
         `window.__zocPerf.stream({ partsPerSecond: ${String(PARTS_PER_SECOND)}, durationMs: 10000 })`,
@@ -121,13 +132,9 @@ describe.skipIf(chrome === null)("@perf Feature: zoc-agent-chat-rebuild, transcr
       expect(report.parts).toBeGreaterThan(300);
       expect(report.frameSamples).toBeGreaterThan(300);
       expect(report.p95IntervalMs).toBeLessThanOrEqual(FRAME_INTERVAL_BUDGET_MS);
-    },
-    120_000,
-  );
+    }, 120_000);
 
-  it(
-    "produces no long task over a 30 s stream at 40 parts/second (task 17.1)",
-    async () => {
+    it("produces no long task over a 30 s stream at 40 parts/second (task 17.1)", async () => {
       // The entry type has to be observable, or a zero count means "not measured" rather than "clean".
       const observable = await browser.evaluate<boolean>(
         "PerformanceObserver.supportedEntryTypes.includes('longtask')",
@@ -143,14 +150,15 @@ describe.skipIf(chrome === null)("@perf Feature: zoc-agent-chat-rebuild, transcr
       );
 
       expect(report.parts).toBeGreaterThan(900);
-      expect(report.longTasks).toBe(0);
-    },
-    180_000,
-  );
+      // Asserted on the samples rather than the count, so a failure names the durations and their
+      // offsets into the stream instead of "expected 3 to be +0". The distinction is the whole
+      // diagnosis: three 55 ms tasks on a machine running a compile is the OS scheduler, three
+      // 300 ms tasks clustered at the largest tail string is the coalescing design failing. The
+      // count alone cannot tell those apart, and this guard used to report only the count.
+      expect(report.longTaskSamples).toEqual([]);
+    }, 180_000);
 
-  it(
-    "commits a tool entry within 200 ms of the part's receipt, over 30 calls (task 16.1)",
-    async () => {
+    it("commits a tool entry within 200 ms of the part's receipt, over 30 calls (task 16.1)", async () => {
       await browser.evaluate<number>(`window.__zocPerf.setMessageCount(120)`);
       const report = await browser.evaluate<LatencyReport>(
         "window.__zocPerf.toolCallLatency(30)",
@@ -161,13 +169,9 @@ describe.skipIf(chrome === null)("@perf Feature: zoc-agent-chat-rebuild, transcr
       // The maximum, not the median: 16.1's guard is about the worst entry a user waits for, and a
       // median under budget with a 400 ms outlier is exactly the case a percentile would hide.
       expect(report.maxMs).toBeLessThan(TOOL_ENTRY_BUDGET_MS);
-    },
-    120_000,
-  );
+    }, 120_000);
 
-  it(
-    "paints mention results within 100 ms of a keystroke over a 20,000-path index (R12.2)",
-    async () => {
+    it("paints mention results within 100 ms of a keystroke over a 20,000-path index (R12.2)", async () => {
       // The paint half of 20.2's guard. The search half runs in the default suite, where jsdom measures
       // pure JavaScript faithfully; this half needs a real DOM, because rendering fifty `cmdk` rows inside
       // a Radix popover costs six times as much in jsdom as it does in Chromium and a browser budget
@@ -184,7 +188,6 @@ describe.skipIf(chrome === null)("@perf Feature: zoc-agent-chat-rebuild, transcr
       // result set rather than of a full one.
       expect(report.samples).toBeGreaterThan(25);
       expect(report.maxMs).toBeLessThan(MENTION_BUDGET_MS);
-    },
-    180_000,
-  );
-});
+    }, 180_000);
+  },
+);

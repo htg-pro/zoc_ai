@@ -13,10 +13,7 @@ import { useApp } from "@/lib/store";
 import type { LspClient } from "./lsp-client";
 
 /** The three allowlisted logical language-server names (mirrors `lsp.py`). */
-export type ServerName =
-  | "typescript-language-server"
-  | "pyright"
-  | "rust-analyzer";
+export type ServerName = "typescript-language-server" | "pyright" | "rust-analyzer";
 
 /** Language_Id → Server_Name (R2.1). The four TS/JS ids share one server. */
 export const LANGUAGE_SERVERS: Readonly<Record<string, ServerName>> = {

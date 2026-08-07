@@ -39,7 +39,7 @@ async def run_test():
             await page.wait_for_load_state("domcontentloaded", timeout=5000)
         except Exception:
             pass
-        
+
         # -> Final action — this is where the agent failed
         # Error observed by agent: Navigation failed - site unavailable: http://localhost:1420/
         await page.goto("http://localhost:1420/")
@@ -47,13 +47,13 @@ async def run_test():
             await page.wait_for_load_state("domcontentloaded", timeout=5000)
         except Exception:
             pass
-        
+
         # --> Assertions to verify final state
         # Assert: Verify the selected model status is displayed
         assert False, "Expected: Verify the selected model status is displayed (could not be verified on the page)"
         # Assert: Verify the active session conversation remains available
         assert False, "Expected: Verify the active session conversation remains available (could not be verified on the page)"
-        
+
         # --> Test blocked by environment/access constraints during agent run
         # Reason: TEST BLOCKED The frontend app at http://localhost:1420 could not be reached, so the UI actions required by the test could not be performed. Observations: - The browser shows a page saying "This page isn't working" and the error code ERR_EMPTY_RESPONSE. - Only a 'Reload' button is visible; the SPA and its interactive elements (Settings, Models, composer) are not present. - Previous navigation/wa...
         raise AssertionError("Test blocked during agent run: " + "TEST BLOCKED The frontend app at http://localhost:1420 could not be reached, so the UI actions required by the test could not be performed. Observations: - The browser shows a page saying \"This page isn't working\" and the error code ERR_EMPTY_RESPONSE. - Only a 'Reload' button is visible; the SPA and its interactive elements (Settings, Models, composer) are not present. - Previous navigation/wa..." + " — the exported script cannot reproduce a PASS in this environment.")
@@ -68,4 +68,3 @@ async def run_test():
             await pw.stop()
 
 asyncio.run(run_test())
-    

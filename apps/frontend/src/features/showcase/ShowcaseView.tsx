@@ -9,51 +9,87 @@ import { Kbd } from "@/components/ui/kbd";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Separator } from "@/components/ui/separator";
-import { RunCardView } from "@/features/agent/RunCardView";
-import { normalizeEvents } from "@/features/agent/normalize";
-import { ToolCallCard } from "@/features/agent/ToolCallCard";
-import { DiffCard } from "@/features/agent/DiffCard";
-import { MessageItem } from "@/features/agent/MessageItem";
-import { MOCK_DIFF, MOCK_MESSAGES, MOCK_TOOL_CALL } from "@/lib/mock-data";
-import type { ToolCall } from "@zoc-studio/shared-types";
+import { Transcript } from "@/features/chat/Transcript";
+import { DiffReview } from "@/features/chat/review/DiffReview";
+import { FILE_LEVEL_DECISION } from "@/features/chat/store";
+import { ToolTimeline } from "@/features/chat/timeline/ToolTimeline";
+import type { ToolEntryModel } from "@/features/chat/timeline/tool-entry-model";
+import type { ZocUIMessage } from "@/features/chat/wire/ui-message";
+import type { DiffPart } from "@zoc-studio/shared-types";
 
 /**
- * A small run card for the demo surfaces. Built through the real
- * `normalizeEvents` fold so the story cannot drift from what the app renders.
+ * Chat_Surface fixtures for the visual catalogue (task 25.6).
+ *
+ * These replaced the legacy `RunCardView` / `normalizeEvents` / `ToolCallCard` / `DiffCard` /
+ * `MessageItem` stories, whose modules 26.1 deletes. The run-card story is gone rather than ported:
+ * the Chat_Surface's transcript *is* its run timeline, so the "Messages" story below covers it.
+ *
+ * Fixtures are literals rather than `lib/mock-data`'s `Message`/`ToolCall`/`DiffPatch` shapes,
+ * because those are the legacy wire types and the rows here read `ZocUIMessage`/`ToolEntryModel`/
+ * `DiffPart`.
  */
-const DEMO_CARD = {
-  runId: "demo-run",
-  rows: normalizeEvents(
-    [
+const DEMO_MESSAGES: ZocUIMessage[] = [
+  { id: "m1", role: "user", parts: [{ type: "text", text: "Add a settings toggle" }] },
+  {
+    id: "m2",
+    role: "assistant",
+    parts: [
       {
-        type: "intent",
-        seq: 0,
-        runId: "demo-run",
-        ts: "2024-01-01T00:00:00.000Z",
-        text: "Add a settings toggle",
-        modelTier: "local-slm",
-        contextWindowTokens: 4096,
+        type: "reasoning",
+        text: "The switch already exists in `components/ui`, so this is wiring.",
       },
-      {
-        type: "command",
-        seq: 1,
-        runId: "demo-run",
-        ts: "2024-01-01T00:00:01.000Z",
-        command: "pnpm test",
-        exitCode: 0,
-      },
+      { type: "text", text: "Wired the existing `Switch` into `SettingsView`. One line of state." },
     ],
-    { activeRunId: "demo-run", boundMessageId: null, highestSeq: -1 },
-  ).rows,
+  },
+];
+
+const TOOL_ENTRIES: ToolEntryModel[] = (
+  [
+    ["running", "read", "fs.read"],
+    ["succeeded", "write", "fs.write"],
+    ["failed", "execute", "shell.run"],
+    ["denied", "network", "http.fetch"],
+  ] as const
+).map(([state, kind, toolName], i) => ({
+  toolCallId: `showcase-${i}`,
+  toolName,
+  kind,
+  state,
+  durationMs: 120 * (i + 1),
+  ...(state === "succeeded" ? { metric: "+24 −11" } : {}),
+  ...(state === "failed" || state === "denied"
+    ? { error: { code: "ENOENT", message: "fs.write: ENOENT '/tmp/x'", retryable: true } }
+    : {}),
+}));
+
+const DEMO_DIFF: DiffPart = {
+  type: "diff",
+  seq: 1,
+  runId: "demo-run",
+  messageId: "m2",
+  ts: "2026-08-03T10:00:00.000Z",
+  agentName: null,
+  planId: "demo-plan",
+  path: "apps/frontend/src/features/settings/SettingsView.tsx",
+  action: "modify",
+  sourcePath: null,
+  language: "typescript",
+  hunks: [
+    {
+      hunkId: "h1",
+      oldStart: 10,
+      oldLines: 1,
+      newStart: 10,
+      newLines: 2,
+      patch: "-const before = 1;\n+const after = 1;\n+const extra = 2;\n",
+    },
+  ],
+  baseDigest: "sha256:base",
+  stale: false,
 };
 
-const TOOL_STATES: ToolCall[] = (["pending", "running", "succeeded", "failed", "needs_approval"] as const).map((status, i) => ({
-  ...MOCK_TOOL_CALL,
-  id: `showcase-${i}`,
-  status,
-  name: `tool.${status}`,
-  error: status === "failed" ? "fs.write: ENOENT '/tmp/x'" : null,
-}));
+/** The story is a static picture, so every decision handler is a no-op. */
+const NO_OP = () => {};
 
 export function ShowcaseView() {
   return (
@@ -108,29 +144,23 @@ export function ShowcaseView() {
         </Story>
 
         <Story title="Messages">
-          <div className="space-y-3">
-            {MOCK_MESSAGES.map((m) => (
-              <MessageItem key={m.id} message={m} />
-            ))}
-          </div>
+          <Transcript messages={DEMO_MESSAGES} streaming={false} />
         </Story>
 
         <Story title="Tool calls (all states)">
-          <div className="space-y-2">
-            {TOOL_STATES.map((t) => (
-              <ToolCallCard key={t.id} call={t} />
-            ))}
-          </div>
+          <ToolTimeline entries={TOOL_ENTRIES} />
         </Story>
 
-        <Story title="Diff card">
-          <DiffCard patch={MOCK_DIFF} />
-        </Story>
-
-        <Story title="Agent workflow timeline">
-          <div className="max-w-sm">
-            <RunCardView card={DEMO_CARD} focused collapsed={false} />
-          </div>
+        <Story title="Diff review">
+          <DiffReview
+            diff={DEMO_DIFF}
+            stale={false}
+            decisions={{ h1: "accepted", [FILE_LEVEL_DECISION]: "undecided" }}
+            isExpanded={() => true}
+            onDecideHunk={NO_OP}
+            onDecideFile={NO_OP}
+            onExpandedChange={NO_OP}
+          />
         </Story>
 
         <Story title="States: loading / empty / error">

@@ -1,6 +1,8 @@
 /**
  * The mark legibility story — zoc-agent-chat-rebuild task 13.4 (R17.5, R18.3).
  *
+ * Feature: zoc-agent-chat-rebuild, task 13.4 (R17.5, R18.3).
+ *
  * R18.3's acceptance test is a *look*: at 16 × 16, 1× device pixel ratio, in both
  * themes, both counters must remain visibly open and the kink must remain visibly
  * a break. design.md:3030 makes that a Ladle story precisely so it is a

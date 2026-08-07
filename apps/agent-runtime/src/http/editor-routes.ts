@@ -1,6 +1,8 @@
 /**
  * The two editor inference routes — zoc-agent-chat-rebuild R6.2, 9.7.
  *
+ * Feature: zoc-agent-chat-rebuild, task 9.7 (R6.2).
+ *
  * ```
  * POST /v1/completions   → 200 text/event-stream
  *                          event: token  data: {"text": "…"}   (n, in order)

@@ -120,9 +120,9 @@ def test_bundle_sidecar_points_at_gateway() -> None:
     ), "bundle_sidecar.py does not --collect-submodules zocai_gateway"
 
     # The produced binary keeps the zoc-studio-agent name expected by Tauri.
-    assert "zoc-studio-agent" in source, (
-        "bundle_sidecar.py no longer names the output binary zoc-studio-agent"
-    )
+    assert (
+        "zoc-studio-agent" in source
+    ), "bundle_sidecar.py no longer names the output binary zoc-studio-agent"
 
 
 # ---------------------------------------------------------------------------
@@ -160,6 +160,6 @@ def test_zocai_stores_created_on_first_run(tmp_path: Path) -> None:
     zocai_dir = matrix.zocai_dir.resolve()
     for path in (*matrix.directories(), *matrix.files()):
         resolved = path.resolve()
-        assert resolved == zocai_dir or zocai_dir in resolved.parents, (
-            f"store escaped .zocai/ confinement: {resolved}"
-        )
+        assert (
+            resolved == zocai_dir or zocai_dir in resolved.parents
+        ), f"store escaped .zocai/ confinement: {resolved}"

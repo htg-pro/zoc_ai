@@ -15,7 +15,7 @@ concrete git/cargo/pnpm/uv implementations.
 
 ## Guarantees enforced
 
-- A committed preservation branch must exist before *any* legacy directory is
+- A committed preservation branch must exist before _any_ legacy directory is
   removed (R13.2).
 - Branch-creation failure and branch-commit failure are two independent halt
   conditions; both delete nothing (R13.3, R13.8).

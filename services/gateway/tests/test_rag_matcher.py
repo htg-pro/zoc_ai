@@ -32,9 +32,7 @@ from zocai_gateway.model_interface import ModelTier
 
 
 def _frag(path: str, score: float, content: str = "x") -> RagFragment:
-    return RagFragment(
-        path=path, content=content, score=score, source=FragmentSource.BUFFER
-    )
+    return RagFragment(path=path, content=content, score=score, source=FragmentSource.BUFFER)
 
 
 # -- scoring ---------------------------------------------------------------
@@ -125,10 +123,7 @@ def test_scan_caps_at_max_fragments() -> None:
     matcher = WorkspaceRagMatcher()
     # Every buffer fully matches the query, so all clear the threshold; the cap
     # must still bound the output at 50.
-    buffers = [
-        OpenBuffer(path=f"f{i:03d}.py", content="match")
-        for i in range(MAX_FRAGMENTS + 25)
-    ]
+    buffers = [OpenBuffer(path=f"f{i:03d}.py", content="match") for i in range(MAX_FRAGMENTS + 25)]
     results = matcher.scan("match", open_buffers=buffers)
 
     assert len(results) == MAX_FRAGMENTS
@@ -137,9 +132,7 @@ def test_scan_caps_at_max_fragments() -> None:
 def test_scan_uses_injected_rust_hook() -> None:
     seen: list[tuple[str, str]] = []
 
-    def fake_rust_hook(
-        query: str, candidates: Sequence[tuple[str, str]]
-    ) -> list[float]:
+    def fake_rust_hook(query: str, candidates: Sequence[tuple[str, str]]) -> list[float]:
         seen.extend(candidates)
         # Score every candidate just above threshold regardless of content.
         return [0.9 for _ in candidates]
@@ -154,9 +147,7 @@ def test_scan_uses_injected_rust_hook() -> None:
 
 
 def test_scan_hook_wrong_length_raises() -> None:
-    def short_hook(
-        query: str, candidates: Sequence[tuple[str, str]]
-    ) -> list[float]:
+    def short_hook(query: str, candidates: Sequence[tuple[str, str]]) -> list[float]:
         return [0.9]
 
     matcher = WorkspaceRagMatcher(scan_hook=short_hook)
@@ -256,9 +247,7 @@ def test_local_slm_injects_only_active_target_fragments() -> None:
         _frag("other.py", 0.95),
         _frag("active.py", 0.8),
     ]
-    injected = matcher.inject(
-        ModelTier.LOCAL_SLM, fragments, active_target="active.py"
-    )
+    injected = matcher.inject(ModelTier.LOCAL_SLM, fragments, active_target="active.py")
 
     assert injected.tier is ModelTier.LOCAL_SLM
     assert {f.path for f in injected.fragments} == {"active.py"}
@@ -289,9 +278,7 @@ def test_cloud_injects_source_maps_dependency_maps_and_steering() -> None:
             source=FragmentSource.FOLDER,
         ),
     ]
-    injected = matcher.inject(
-        ModelTier.CLOUD, fragments, steering="# steering rules"
-    )
+    injected = matcher.inject(ModelTier.CLOUD, fragments, steering="# steering rules")
 
     assert injected.tier is ModelTier.CLOUD
     assert set(injected.source_maps) == {"app.py", "ui.ts"}

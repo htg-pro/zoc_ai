@@ -56,9 +56,7 @@ class _OrderRecordingRagMatcher:
     comparing the order of recorded operations.
     """
 
-    def __init__(
-        self, log: list[str], fragments: tuple[RagFragment, ...] = ()
-    ) -> None:
+    def __init__(self, log: list[str], fragments: tuple[RagFragment, ...] = ()) -> None:
         self._log = log
         self.fragments = fragments
         self.queries: list[str] = []

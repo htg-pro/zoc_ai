@@ -1,7 +1,7 @@
 // Feature: zoc-ai-agent-chat-overhaul, Task 14: production-path store wiring
 import { describe, it, expect, beforeEach } from "vitest";
 import { useApp } from "@/lib/store";
-import type { TrackedRun } from "@/features/agent/agent-runs";
+import type { TrackedRun } from "@/lib/agent-runs";
 
 const initial = useApp.getState();
 
@@ -10,7 +10,6 @@ describe("store production-path wiring", () => {
     useApp.setState({
       ...initial,
       sessions: [],
-      chat: [],
       agentItems: [],
       trackedRuns: [],
       invalidProviders: {},

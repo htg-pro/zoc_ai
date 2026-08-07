@@ -54,6 +54,7 @@ import { OnboardingWizard } from "@/features/onboarding/OnboardingWizard";
 import { FIRST_TASK_PROMPT } from "@/features/onboarding/wizard-steps";
 import { loadLocalModels } from "@/lib/local-models";
 import { useApp } from "@/lib/store";
+import { useChatSurface } from "@/features/chat/store";
 import * as bridge from "@/lib/tauri-bridge";
 
 const clickButton = (pattern: RegExp) =>
@@ -109,9 +110,8 @@ describe("OnboardingWizard", () => {
     // The workspace step now commits (persists) the workspace, and finish
     // records first-run completion while preserving the bound root. Assert on
     // the final persisted config rather than the first call.
-    const calls = (
-      bridge.desktopConfigSet as unknown as { mock: { calls: unknown[][] } }
-    ).mock.calls;
+    const calls = (bridge.desktopConfigSet as unknown as { mock: { calls: unknown[][] } }).mock
+      .calls;
     const cfg = calls[calls.length - 1][0] as {
       workspace_root: string | null;
       first_run_done: boolean;
@@ -127,6 +127,7 @@ describe("OnboardingWizard", () => {
 
     clickButton(/start exploring/i);
     expect(onComplete).toHaveBeenCalled();
-    expect(useApp.getState().input).toBe(FIRST_TASK_PROMPT);
+    // The Chat_Surface's draft since 24.2: the app store's `input` is read by no mounted composer.
+    expect(useChatSurface.getState().draft).toBe(FIRST_TASK_PROMPT);
   });
 });

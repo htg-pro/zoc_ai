@@ -1,6 +1,8 @@
 /**
  * The send control — zoc-agent-chat-rebuild R8.7, R12.6, R32.14, R32.15, task 20.2.
  *
+ * Feature: zoc-agent-chat-rebuild, task 20.2 (R8.7, R12.6, R32.14, R32.15).
+ *
  * One button with two jobs. Idle it sends; while a Run streams it becomes `Queue` and holds one message,
  * showing the queued count — which is R8.7's "keep the composer usable" made concrete: the user types the
  * next thing while the current Run finishes, and nothing is lost and nothing interrupts.

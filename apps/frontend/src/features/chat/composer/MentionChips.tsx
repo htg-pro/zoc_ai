@@ -1,6 +1,8 @@
 /**
  * The mention chips — zoc-agent-chat-rebuild R12.3, R12.5, R12.7, task 20.2.
  *
+ * Feature: zoc-agent-chat-rebuild, task 20.2 (R12.3, R12.5, R12.7).
+ *
  * One removable chip per attached reference, above the textarea. Two states, and the second is the reason
  * the component exists rather than being a list of strings: a chip whose file was deleted or renamed after
  * selection renders struck through with an `unresolved` badge and is **excluded from the request** (R12.7).

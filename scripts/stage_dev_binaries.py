@@ -89,9 +89,7 @@ def _stage_hotpath(triple: str) -> int:
         return 1
 
     print(f"==> Building {HOTPATH_CRATE} (source changed or missing)")
-    subprocess.check_call(
-        ["cargo", "build", "--release", "-p", HOTPATH_CRATE], cwd=str(ROOT)
-    )
+    subprocess.check_call(["cargo", "build", "--release", "-p", HOTPATH_CRATE], cwd=str(ROOT))
 
     produced = ROOT / "target" / "release" / f"{HOTPATH_CRATE}{suffix}"
     if not produced.exists():

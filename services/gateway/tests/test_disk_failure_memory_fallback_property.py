@@ -120,9 +120,7 @@ def test_disk_failure_falls_back_to_memory_without_loss(
                 for _ in range(count):
                     # R10.1 (operational): append must never raise, even
                     # mid-outage.
-                    seq = worker.append(
-                        {"runId": "r-1", "type": "command", "n": next_index}
-                    )
+                    seq = worker.append({"runId": "r-1", "type": "command", "n": next_index})
                     returned_seqs.append(seq)
                     buffered.append(next_index)
                     next_index += 1

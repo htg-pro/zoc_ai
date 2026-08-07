@@ -29,9 +29,7 @@ EXPECTED_BINARIES = {"pyright-langserver", "typescript-language-server", "rust-a
 
 # Matches a doctor line's fallback, e.g.
 #   ; pyright-langserver --version 2>/dev/null || echo "MISSING (uv pip install pyright)"
-_DOCTOR_LINE = re.compile(
-    r';\s*([A-Za-z0-9_-]+)\s+--version[^|]*\|\|\s*echo\s+"MISSING \((.*?)\)"'
-)
+_DOCTOR_LINE = re.compile(r';\s*([A-Za-z0-9_-]+)\s+--version[^|]*\|\|\s*echo\s+"MISSING \((.*?)\)"')
 
 
 def doctor_section() -> str:
@@ -72,9 +70,9 @@ def main() -> int:
     #     matches the single source of truth (the install table).
     for binary, cmd in doctor.items():
         assert cmd, f"doctor MISSING line for {binary!r} has no install command"
-        assert cmd == table[binary], (
-            f"{binary}: doctor command {cmd!r} != install-table command {table[binary]!r}"
-        )
+        assert (
+            cmd == table[binary]
+        ), f"{binary}: doctor command {cmd!r} != install-table command {table[binary]!r}"
 
     # (1) `make doctor` actually names all three binaries (best-effort: needs make).
     if shutil.which("make"):

@@ -1,6 +1,8 @@
 /**
  * Tool registry — zoc-agent-chat-rebuild R5.3, R9.4, R10.10, R10.16, R11.3, R26.2.
  *
+ * Feature: zoc-agent-chat-rebuild, R5.3, R9.4, R10.10, R10.16, R11.3, R26.2.
+ *
  * Every tool is a `tool()` with a `zod` input schema and a `kind` tag. The tag is
  * what the permission gate reads: `read` and `search` are never gated; `write`,
  * `execute`, `network`, and `mcp` always are.
@@ -45,10 +47,11 @@
 
 import { tool, type Tool } from "ai";
 import { z } from "zod";
-import type { ConversationMode, ToolKind } from "@zoc-studio/shared-types";
+import type { Capability, ConversationMode, ToolKind } from "@zoc-studio/shared-types";
 
 import { PLAN_TOOL } from "./plan.ts";
 import type { WorkspaceClient, WorkspaceOutcome } from "./workspace-client.ts";
+import type { McpToolView } from "../mcp/control.ts";
 
 export { PLAN_TOOL };
 
@@ -76,6 +79,8 @@ export interface ToolDescriptor {
    * signal has to be *callable* for `hasToolCall` to ever fire.
    */
   readonly tool: Tool | null;
+  /** Effective capability, used for read-only MCP declarations. */
+  readonly capability?: Capability;
 }
 
 /** What the tool implementations need. Passed in, never module state. */
@@ -109,7 +114,12 @@ export interface ToolContext {
     name: string,
     kind: ToolKind,
     execute: (args: A) => Promise<R>,
+    declared?: { readonly userDeclaredCapability?: Capability },
   ) => (args: A) => Promise<R>;
+  /** Connected MCP tools, fetched from Workspace_Services for this Run. */
+  readonly mcpTools?: readonly McpToolView[];
+  /** Provider-defined tools already authorised for this Run. */
+  readonly providerTools?: readonly ToolDescriptor[];
 }
 
 /**
@@ -213,11 +223,45 @@ export function buildToolDescriptors(ctx: ToolContext): readonly ToolDescriptor[
   // Built, not filtered: see the header. `declare_complete` last, so it reads as
   // the terminal entry it is.
   if (ctx.mode !== "ask") descriptors.push(...effectfulDescriptors(ctx));
+  descriptors.push(...mcpDescriptors(ctx));
+  descriptors.push(...(ctx.providerTools ?? []));
   descriptors.push(completionDescriptor());
 
   assertRegistryIsWellFormed(descriptors);
   if (ctx.mode === "ask") assertReadOnlyRegistry(descriptors);
   return descriptors;
+}
+
+/**
+ * Build MCP tools only from the enabled set. In Ask mode a tool marked read-only by
+ * the user is safe to offer; execute-default tools are omitted before the model sees
+ * them, matching the registration-time construction used by built-ins (R26.3/R26.5).
+ */
+export function mcpDescriptors(ctx: ToolContext): ToolDescriptor[] {
+  return (ctx.mcpTools ?? [])
+    .filter((entry) => entry.enabled)
+    .filter((entry) => ctx.mode !== "ask" || entry.capability === "read")
+    .map((entry) => {
+      const capability: Capability = entry.capability === "read" ? "read" : "execute";
+      return {
+        name: entry.name,
+        kind: "mcp" as const,
+        capability,
+        description:
+          entry.description ?? `Call the ${entry.bareName} tool on MCP server ${entry.serverId}.`,
+        tool: tool({
+          description: entry.description ?? `Call ${entry.bareName} on ${entry.serverId}.`,
+          inputSchema: z.record(z.string(), z.unknown()),
+          execute: ctx.gated(
+            entry.name,
+            "mcp",
+            async (args: Record<string, unknown>) =>
+              asToolResult(await ctx.workspace.callMcp(entry.sourceName, args)),
+            { userDeclaredCapability: capability },
+          ),
+        }),
+      } satisfies ToolDescriptor;
+    });
 }
 
 /**
@@ -417,6 +461,7 @@ export function assertRegistryIsWellFormed(descriptors: readonly ToolDescriptor[
 export function assertReadOnlyRegistry(descriptors: readonly ToolDescriptor[]): void {
   for (const descriptor of descriptors) {
     if (descriptor.kind !== "read" && descriptor.kind !== "search") {
+      if (descriptor.capability === "read") continue;
       throw new Error(
         `${descriptor.name} is tagged ${descriptor.kind} but Ask mode's registry is ` +
           "read-only (R32.5).",
@@ -459,6 +504,9 @@ export function toolCatalogue(
     name: descriptor.name,
     kind: descriptor.kind,
     description: descriptor.description,
-    gated: descriptor.kind !== "read" && descriptor.kind !== "search",
+    gated:
+      descriptor.capability !== "read" &&
+      descriptor.kind !== "read" &&
+      descriptor.kind !== "search",
   }));
 }

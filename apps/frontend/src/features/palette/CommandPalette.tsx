@@ -189,7 +189,11 @@ export function CommandPalette() {
           />
           <CommandList>
             {mode === "command" ? (
-              <CommandModeList commands={commands} onRun={(id) => void runCommand(id).then(close)} getState={appState.getState} />
+              <CommandModeList
+                commands={commands}
+                onRun={(id) => void runCommand(id).then(close)}
+                getState={appState.getState}
+              />
             ) : (
               <>
                 {loading && (
@@ -224,7 +228,9 @@ export function CommandPalette() {
                         }}
                       >
                         <Icon
-                          name={c.kind === "folder" ? "Folder" : c.kind === "symbol" ? "Hash" : "File"}
+                          name={
+                            c.kind === "folder" ? "Folder" : c.kind === "symbol" ? "Hash" : "File"
+                          }
                           className="h-3.5 w-3.5 text-muted-foreground"
                         />
                         <span className="truncate font-mono text-xs">{c.label}</span>
@@ -238,14 +244,13 @@ export function CommandPalette() {
                   </CommandGroup>
                 )}
                 {!loading && term && fileResults.length === 0 && (
-                  <CommandEmpty>No {mode === "symbol" ? "symbols" : "files"} match “{term}”.</CommandEmpty>
+                  <CommandEmpty>
+                    No {mode === "symbol" ? "symbols" : "files"} match “{term}”.
+                  </CommandEmpty>
                 )}
                 <CommandSeparator />
                 <CommandGroup heading="Commands">
-                  <CommandItem
-                    value="show all commands"
-                    onSelect={() => setQuery(">")}
-                  >
+                  <CommandItem value="show all commands" onSelect={() => setQuery(">")}>
                     <CommandIcon className="h-3.5 w-3.5 text-primary" />
                     Show all commands
                     <CommandShortcut>type &gt;</CommandShortcut>
@@ -303,7 +308,10 @@ function CommandModeList({
                   <Icon name={cmd.icon} className="h-3.5 w-3.5 text-muted-foreground" />
                   <span className="text-xs">{cmd.title}</span>
                   {reason ? (
-                    <span className="ml-auto truncate text-[10px] text-muted-foreground" title={reason}>
+                    <span
+                      className="ml-auto truncate text-[10px] text-muted-foreground"
+                      title={reason}
+                    >
                       {reason}
                     </span>
                   ) : cmd.keybinding ? (

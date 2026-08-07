@@ -45,9 +45,7 @@ class _StructuredBrain(DefaultAgentBrain):
     def structured_plan(self, request: AgentRunRequest, context: RunContext) -> AgentPlan:
         return _PLAN
 
-    def run_checks(
-        self, request: AgentRunRequest, plan: EditPlan
-    ) -> tuple[int, str, str]:
+    def run_checks(self, request: AgentRunRequest, plan: EditPlan) -> tuple[int, str, str]:
         return (0, "noop-check", "")
 
 
@@ -160,9 +158,7 @@ def test_execute_run_forwards_rag_matcher(tmp_path: Path) -> None:
     class _RecordingMatcher:
         def extract(self, query: str) -> tuple[RagFragment, ...]:
             extracted.append(query)
-            return (
-                RagFragment(path="ctx.py", content="def helper(): ...", score=0.9),
-            )
+            return (RagFragment(path="ctx.py", content="def helper(): ...", score=0.9),)
 
     events: list[dict] = []
     result = _run(

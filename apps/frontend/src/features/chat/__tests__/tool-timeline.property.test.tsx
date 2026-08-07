@@ -258,15 +258,6 @@ describe("Feature: zoc-agent-chat-rebuild, Property 44: tool entries expose thei
         const trigger = container.querySelector("[data-zoc-tool-trigger]");
         if (trigger !== null) fireEvent.click(trigger);
 
-        // "Reachable" is the property's word, and the collapsed display truncates — so the full
-        // path is carried on the element. A path only present in its truncated form would be
-        // unreachable in exactly the case truncation exists for.
-        const reachable = new Set(
-          [...container.querySelectorAll("[data-zoc-path]")].map((node) =>
-            node.getAttribute("data-zoc-path"),
-          ),
-        );
-
         for (const [label, group] of [
           ["read", model.readPaths ?? []],
           ["wrote", model.writtenPaths ?? []],
@@ -278,6 +269,21 @@ describe("Feature: zoc-agent-chat-rebuild, Property 44: tool entries expose thei
           if (distinct.length === 0) continue;
 
           const list = container.querySelector(`[data-zoc-path-list="${label}"]`);
+
+          // "Reachable" is the property's word, and the collapsed display truncates — so the full
+          // path is carried on the element. A path only present in its truncated form would be
+          // unreachable in exactly the case truncation exists for.
+          //
+          // Scoped to *this* list, not to the container: a container-wide query over-counted
+          // whenever a path sat in one list's overflow and was shown in the other's. Read
+          // `[a,b,c,d]` renders `a … and 3 more`, so a written `[b]` put `b` in the container and
+          // `shown + overflow` came to 5 for a four-path set — the row was right and the oracle
+          // was wrong. That is the flake the example below pins.
+          const reachable = new Set(
+            [...(list?.querySelectorAll("[data-zoc-path]") ?? [])].map((node) =>
+              node.getAttribute("data-zoc-path"),
+            ),
+          );
           const overflow = Number(
             list
               ?.querySelector("[data-zoc-path-overflow]")
@@ -287,7 +293,25 @@ describe("Feature: zoc-agent-chat-rebuild, Property 44: tool entries expose thei
           expect(shown + overflow, `${label}: ${JSON.stringify(distinct)}`).toBe(distinct.length);
         }
       }),
-      RUNS,
+      {
+        ...RUNS,
+        // A written path that is also one of the read list's overflowed entries. A random seed
+        // found it once in a full-suite run and not again in ~2500 iterations, so it is pinned
+        // here rather than left to luck.
+        examples: [
+          [
+            {
+              toolCallId: "call_dup01",
+              toolName: "workspace_apply_hunks",
+              kind: "write",
+              state: "succeeded",
+              durationMs: 120,
+              readPaths: ["a.ts", "b.ts", "c.ts", "d.ts"],
+              writtenPaths: ["b.ts"],
+            } satisfies ToolEntryModel,
+          ],
+        ],
+      },
     );
   });
 

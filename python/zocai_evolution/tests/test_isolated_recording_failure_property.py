@@ -149,9 +149,11 @@ def test_recording_failures_are_isolated_and_runtime_stays_operational(
 
     emitted: list[str] = []
     if emitter_raises:
+
         def emitter(_message: str) -> None:
             raise emitter_exc
     else:
+
         def emitter(message: str) -> None:
             emitted.append(message)
 

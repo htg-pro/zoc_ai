@@ -137,7 +137,10 @@ def test_anthropic_tools_payload_and_tool_use_parsing(monkeypatch) -> None:
 def test_anthropic_end_turn_maps_to_stop(monkeypatch) -> None:
     monkeypatch.setattr(
         "zocai_gateway.model_runtime._post_json",
-        lambda *_a, **_k: {"content": [{"type": "text", "text": "all done"}], "stop_reason": "end_turn"},
+        lambda *_a, **_k: {
+            "content": [{"type": "text", "text": "all done"}],
+            "stop_reason": "end_turn",
+        },
     )
     response = generate_with_tools(
         _request("anthropic", api_key="secret"),

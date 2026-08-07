@@ -69,9 +69,7 @@ def run_project_tests(
     if os.name == "posix":
         exit_code, output, timed_out = _run_in_pty(root, test.command, timeout_seconds)
     else:  # pragma: no cover - exercised on Windows builds
-        exit_code, output, timed_out = _run_in_subprocess(
-            root, test.command, timeout_seconds
-        )
+        exit_code, output, timed_out = _run_in_subprocess(root, test.command, timeout_seconds)
     clean_output = _ANSI_RE.sub("", output).replace("\r\n", "\n").replace("\r", "\n")
     passed, failed = _parse_counts(clean_output, exit_code)
     return ProjectTestResult(
@@ -154,9 +152,7 @@ def _from_pyproject(root: Path) -> ProjectTestCommand | None:
             f"from {module.strip()} import {function.strip()} as _test; "
             "raise SystemExit(_test() or 0)"
         )
-        return ProjectTestCommand(
-            command=f"python -c {shlex.quote(code)}", source="pyproject.toml"
-        )
+        return ProjectTestCommand(command=f"python -c {shlex.quote(code)}", source="pyproject.toml")
     return None
 
 
@@ -174,8 +170,7 @@ def _declares_pytest(payload: dict[str, object]) -> bool:
     dependencies = project.get("dependencies") if isinstance(project, dict) else None
     if isinstance(dependencies, list):
         return any(
-            isinstance(item, str) and item.lower().startswith("pytest")
-            for item in dependencies
+            isinstance(item, str) and item.lower().startswith("pytest") for item in dependencies
         )
     return False
 
@@ -255,9 +250,7 @@ def _status_exit_code(status: int) -> int:
     return 1
 
 
-def _run_in_subprocess(
-    root: Path, command: str, timeout_seconds: float
-) -> tuple[int, str, bool]:
+def _run_in_subprocess(root: Path, command: str, timeout_seconds: float) -> tuple[int, str, bool]:
     env = os.environ.copy()
     env.update({"CI": "1", "NO_COLOR": "1"})
     try:

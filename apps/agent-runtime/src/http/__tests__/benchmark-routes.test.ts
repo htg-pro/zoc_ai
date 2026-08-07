@@ -1,6 +1,8 @@
 /**
  * The benchmark proxy over real HTTP — zoc-agent-chat-rebuild R13.11, R13.12, 9.9.
  *
+ * Feature: zoc-agent-chat-rebuild, task 9.9 (R13.11, R13.12).
+ *
  * The assertion that matters is the null one. R13.12 says a model with no recorded
  * history is listed with **no figure**, and the only way the picker can honour that is
  * if the route distinguishes "never measured" from "measured as slow" — so the tests

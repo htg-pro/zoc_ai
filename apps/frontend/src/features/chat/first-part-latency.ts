@@ -1,6 +1,8 @@
 /**
  * First-part latency — zoc-agent-chat-rebuild R20.1, R20.2, task 20.10.
  *
+ * Feature: zoc-agent-chat-rebuild, task 20.10 (R20.1, R20.2).
+ *
  * Two `performance` marks and the measure between them. The marks are set at the two moments a user would
  * recognise: `run:submit` when they pressed send, and `run:first-paint` when something appeared. Nothing in
  * the plan measured R20.1 or R20.2 before this, and the two points are the reason — a budget measured from

@@ -60,8 +60,7 @@ class _StubWorker:
 
 def _docs(n: int) -> tuple[RawDocument, ...]:
     return tuple(
-        RawDocument(url=f"https://e/{i}", title=f"t{i}", html=f"<p>body {i}</p>")
-        for i in range(n)
+        RawDocument(url=f"https://e/{i}", title=f"t{i}", html=f"<p>body {i}</p>") for i in range(n)
     )
 
 
@@ -78,9 +77,7 @@ def test_clean_html_strips_tags_scripts_and_collapses_whitespace() -> None:
 
 
 def test_web_search_returns_cleaned_structured_documents() -> None:
-    worker = _StubWorker(
-        [RawDocument(url="https://a", title="A", html="<p>Hi <b>there</b></p>")]
-    )
+    worker = _StubWorker([RawDocument(url="https://a", title="A", html="<p>Hi <b>there</b></p>")])
     gateway = MCPGateway(web_search_spawner=lambda q, n: worker)
 
     outcome = gateway.web_search("anything")
@@ -177,9 +174,7 @@ def test_github_returns_structured_result() -> None:
         assert params == {"name": "zocai"}
         return {"stars": 7}
 
-    outcome = MCPGateway(github_invoker=invoker).github(
-        "get_repo", {"name": "zocai"}
-    )
+    outcome = MCPGateway(github_invoker=invoker).github("get_repo", {"name": "zocai"})
 
     assert isinstance(outcome, GitHubResult)
     assert outcome.tool == GITHUB_TOOL

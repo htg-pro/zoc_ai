@@ -83,8 +83,7 @@ def test_compression_triggers_exactly_at_seventy_percent(
     event = at_threshold.compress(limit)
     assert event is not None
     assert any(
-        message.content.startswith(COMPRESSED_HISTORY_PREFIX)
-        for message in at_threshold.messages
+        message.content.startswith(COMPRESSED_HISTORY_PREFIX) for message in at_threshold.messages
     )
 
 
@@ -153,10 +152,7 @@ def test_compression_is_idempotent(extra_turns: int) -> None:
         messages=[
             Message(Role.SYSTEM, "prompt"),
             Message(Role.SYSTEM, f"{COMPRESSED_HISTORY_PREFIX} existing"),
-            *[
-                Message(Role.USER, f"turn-{index}", "APPLY")
-                for index in range(extra_turns)
-            ],
+            *[Message(Role.USER, f"turn-{index}", "APPLY") for index in range(extra_turns)],
         ],
         tokenizer_kind=_LOCAL,
         summarizer=lambda _prompt: "must not run",

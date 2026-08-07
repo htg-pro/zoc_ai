@@ -51,7 +51,10 @@ export function classifyRuleSource(rel: string): RuleSource {
     const nested = normalized.split(s).filter(Boolean).length > 1;
     return { path: rel, kind: "agents", nested, label: "AGENTS.md" };
   }
-  if (normalized.toLowerCase().includes(".cursor/rules") || normalized.toLowerCase().includes(".cursor\\rules")) {
+  if (
+    normalized.toLowerCase().includes(".cursor/rules") ||
+    normalized.toLowerCase().includes(".cursor\\rules")
+  ) {
     return {
       path: rel,
       kind: "cursor",
@@ -59,7 +62,10 @@ export function classifyRuleSource(rel: string): RuleSource {
       label: ".cursor/rules",
     };
   }
-  if (normalized.toLowerCase().includes(".zoc/rules") || normalized.toLowerCase().includes(".zoc\\rules")) {
+  if (
+    normalized.toLowerCase().includes(".zoc/rules") ||
+    normalized.toLowerCase().includes(".zoc\\rules")
+  ) {
     return {
       path: rel,
       kind: "zoc",
@@ -77,13 +83,11 @@ export function classifyRuleSource(rel: string): RuleSource {
  */
 export function classifyRuleSources(paths: string[]): RuleSource[] {
   const KIND_ORDER: Record<RuleKind, number> = { zoc: 0, cursor: 1, agents: 2, other: 3 };
-  return paths
-    .map(classifyRuleSource)
-    .sort((a, b) => {
-      if (a.kind !== b.kind) return KIND_ORDER[a.kind] - KIND_ORDER[b.kind];
-      if (a.nested !== b.nested) return a.nested ? 1 : -1;
-      return a.path.localeCompare(b.path);
-    });
+  return paths.map(classifyRuleSource).sort((a, b) => {
+    if (a.kind !== b.kind) return KIND_ORDER[a.kind] - KIND_ORDER[b.kind];
+    if (a.nested !== b.nested) return a.nested ? 1 : -1;
+    return a.path.localeCompare(b.path);
+  });
 }
 
 /** A one-line summary for the Rules badge/tooltip. */

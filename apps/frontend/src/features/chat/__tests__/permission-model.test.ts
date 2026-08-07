@@ -1,6 +1,8 @@
 /**
  * The approval dock's model — zoc-agent-chat-rebuild R11.7, R11.8, R11.9, R21.3, task 19.1.
  *
+ * Feature: zoc-agent-chat-rebuild, task 19.1 (R11.7, R11.8, R11.9, R21.3).
+ *
  * The arithmetic the dock is spacing around: which request is pending, how long it has, and what it is
  * called. Unit-tested here rather than through a rendered dock, because each of these is a decision with
  * an edge case rather than a layout — and the two properties beside this file assert the rendered

@@ -113,7 +113,7 @@ export function TopBar() {
           >
             <GitBranch className="h-3 w-3 text-muted-foreground" />
             <span className="font-mono text-[10.5px] text-muted-foreground">
-              {git?.is_repo ? git.branch ?? "(detached)" : "—"}
+              {git?.is_repo ? (git.branch ?? "(detached)") : "—"}
             </span>
             {gitDirtyCount > 0 && (
               <span className="ml-0.5 font-mono text-[10.5px] text-warning">{gitDirtyCount}</span>
@@ -144,7 +144,14 @@ export function TopBar() {
       <div className="flex shrink-0 items-center gap-1" data-tauri-drag-region={false}>
         <Tooltip>
           <TooltipTrigger asChild>
-            <Button size="icon" variant="ghost" className={cn("h-7 w-7", sidePanelOpen && "bg-primary/10 text-primary")} onClick={toggleSide} aria-label="Toggle side panel" aria-pressed={sidePanelOpen}>
+            <Button
+              size="icon"
+              variant="ghost"
+              className={cn("h-7 w-7", sidePanelOpen && "bg-primary/10 text-primary")}
+              onClick={toggleSide}
+              aria-label="Toggle side panel"
+              aria-pressed={sidePanelOpen}
+            >
               <PanelLeft className="h-3.5 w-3.5" />
             </Button>
           </TooltipTrigger>
@@ -152,7 +159,14 @@ export function TopBar() {
         </Tooltip>
         <Tooltip>
           <TooltipTrigger asChild>
-            <Button size="icon" variant="ghost" className={cn("h-7 w-7", bottomDockOpen && "bg-primary/10 text-primary")} onClick={toggleBottom} aria-label="Toggle bottom dock" aria-pressed={bottomDockOpen}>
+            <Button
+              size="icon"
+              variant="ghost"
+              className={cn("h-7 w-7", bottomDockOpen && "bg-primary/10 text-primary")}
+              onClick={toggleBottom}
+              aria-label="Toggle bottom dock"
+              aria-pressed={bottomDockOpen}
+            >
               <PanelBottom className="h-3.5 w-3.5" />
             </Button>
           </TooltipTrigger>
@@ -163,10 +177,7 @@ export function TopBar() {
             <Button
               size="icon"
               variant="ghost"
-              className={cn(
-                "h-7 w-7",
-                rightPanelOpen && "bg-primary/10 text-primary",
-              )}
+              className={cn("h-7 w-7", rightPanelOpen && "bg-primary/10 text-primary")}
               onClick={toggleRight}
               aria-label="Toggle agent panel"
               aria-pressed={rightPanelOpen}
@@ -180,11 +191,7 @@ export function TopBar() {
         <div className="mx-1 h-4 w-px bg-[hsl(var(--border-muted))]" />
 
         {/* Running status or Run selector */}
-        {isRunning || streaming ? (
-          <RunningPill />
-        ) : (
-          <RunSelector />
-        )}
+        {isRunning || streaming ? <RunningPill /> : <RunSelector />}
       </div>
     </header>
   );

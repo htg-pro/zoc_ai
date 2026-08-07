@@ -134,9 +134,7 @@ def project_stages(history: Sequence[StageEvent]) -> tuple[StageReport, ...]:
             # terminal error frame.
             if states[reported] is not StageState.SUCCEEDED:
                 states[reported] = StageState.FAILED
-                reasons[reported] = (
-                    event.reason or "The run stopped before this stage completed."
-                )
+                reasons[reported] = event.reason or "The run stopped before this stage completed."
         elif state is StageState.SUCCEEDED:
             if states[reported] is not StageState.FAILED:
                 states[reported] = StageState.SUCCEEDED

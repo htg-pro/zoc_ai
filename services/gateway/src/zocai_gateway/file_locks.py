@@ -120,8 +120,7 @@ class FileLockRegistry:
                 blocked = [
                     path
                     for path in wanted
-                    if (entry := self._holders.get(path)) is not None
-                    and entry.run_id != run_id
+                    if (entry := self._holders.get(path)) is not None and entry.run_id != run_id
                 ]
                 if not blocked:
                     for path in wanted:

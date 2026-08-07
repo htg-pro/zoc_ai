@@ -1,6 +1,8 @@
 /**
  * Token_Rate — zoc-agent-chat-rebuild R13.8, R13.9, R13.10, 9.9.
  *
+ * Feature: zoc-agent-chat-rebuild, task 9.9 (R13.8, R13.9, R13.10).
+ *
  * Generated output tokens per second, measured **runtime-side** over the
  * **first-token → last-token** interval. Both halves of that are decisions the design
  * makes explicitly, and it records the two alternatives it rejected because either

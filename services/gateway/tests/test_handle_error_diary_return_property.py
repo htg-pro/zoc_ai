@@ -127,9 +127,7 @@ def test_handle_error_records_to_diary_and_returns_to_plan_edits(
     """
     loop, diary = _make_loop()
 
-    outcome = loop.on_checks_complete(
-        exit_code, command=command, log=log, prior_plan=prior_plan
-    )
+    outcome = loop.on_checks_complete(exit_code, command=command, log=log, prior_plan=prior_plan)
 
     # R5.4: exactly one failure entry was appended to the Session_Diary, and it
     # carries the captured command, exit code, and log.

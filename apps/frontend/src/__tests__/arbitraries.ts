@@ -75,22 +75,20 @@ export const arbPlan: fc.Arbitrary<Plan> = fc.record({
 export const arbPlanUniqueIds: fc.Arbitrary<Plan> = fc
   .uniqueArray(arbId, { maxLength: 12 })
   .chain((ids) =>
-    fc
-      .tuple(...ids.map(() => arbPlanStepStatus))
-      .map((statuses) => ({
-        id: "plan",
-        goal: "g",
-        created_at: new Date(0).toISOString(),
-        steps: ids.map((id, i) => ({
-          id,
-          title: `step-${i}`,
-          detail: null,
-          status: statuses[i],
-          attempt: 0,
-          error: null,
-          done: statuses[i] === "done",
-        })),
+    fc.tuple(...ids.map(() => arbPlanStepStatus)).map((statuses) => ({
+      id: "plan",
+      goal: "g",
+      created_at: new Date(0).toISOString(),
+      steps: ids.map((id, i) => ({
+        id,
+        title: `step-${i}`,
+        detail: null,
+        status: statuses[i],
+        attempt: 0,
+        error: null,
+        done: statuses[i] === "done",
       })),
+    })),
   );
 
 export const arbSessionStatus = fc.constantFrom(...SESSION_STATUSES);
@@ -112,20 +110,12 @@ export const arbSession: fc.Arbitrary<Session> = fc.record({
 /** Sessions with unique ids — required for grouping/pin/delete isolation. */
 export const arbSessionsUniqueIds: fc.Arbitrary<Session[]> = fc
   .uniqueArray(arbId, { maxLength: 12 })
-  .chain((ids) =>
-    fc.tuple(
-      ...ids.map((id) =>
-        arbSession.map((s) => ({ ...s, id })),
-      ),
-    ),
-  )
+  .chain((ids) => fc.tuple(...ids.map((id) => arbSession.map((s) => ({ ...s, id })))))
   .map((arr) => arr as Session[]);
 
 export const arbMessage: fc.Arbitrary<Message> = fc.record({
   id: arbId,
-  role: fc.constantFrom("user", "assistant", "system", "tool") as fc.Arbitrary<
-    Message["role"]
-  >,
+  role: fc.constantFrom("user", "assistant", "system", "tool") as fc.Arbitrary<Message["role"]>,
   content: fc.string({ maxLength: 40 }),
   name: fc.constant(null),
   tool_call_id: fc.constant(null),
@@ -210,24 +200,21 @@ export const arbUnifiedDiff: fc.Arbitrary<{
     return { diff: lines.join("\n"), adds, dels };
   });
 
-export const arbDiffPatch: fc.Arbitrary<DiffPatch & { _adds: number; _dels: number }> =
-  fc.tuple(arbId, fc.string({ minLength: 1, maxLength: 16 }), arbUnifiedDiff).map(
-    ([id, file, d]) => ({
-      id,
-      file_path: file,
-      unified_diff: d.diff,
-      summary: null,
-      _adds: d.adds,
-      _dels: d.dels,
-    }),
-  );
+export const arbDiffPatch: fc.Arbitrary<DiffPatch & { _adds: number; _dels: number }> = fc
+  .tuple(arbId, fc.string({ minLength: 1, maxLength: 16 }), arbUnifiedDiff)
+  .map(([id, file, d]) => ({
+    id,
+    file_path: file,
+    unified_diff: d.diff,
+    summary: null,
+    _adds: d.adds,
+    _dels: d.dels,
+  }));
 
 /** A set of patches with unique ids — for apply/undo isolation properties. */
 export const arbPatchesUniqueIds: fc.Arbitrary<
   Array<DiffPatch & { _adds: number; _dels: number }>
 > = fc
   .uniqueArray(arbId, { minLength: 1, maxLength: 8 })
-  .chain((ids) =>
-    fc.tuple(...ids.map((id) => arbDiffPatch.map((p) => ({ ...p, id })))),
-  )
+  .chain((ids) => fc.tuple(...ids.map((id) => arbDiffPatch.map((p) => ({ ...p, id })))))
   .map((arr) => arr as Array<DiffPatch & { _adds: number; _dels: number }>);

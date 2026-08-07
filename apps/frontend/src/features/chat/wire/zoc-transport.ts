@@ -2,6 +2,8 @@
  * The Chat_Surface's transport — zoc-agent-chat-rebuild R5.2, R7.7, R7.8, R16.1,
  * R16.3, R16.4, R16.5.
  *
+ * Feature: zoc-agent-chat-rebuild, R5.2, R7.7, R7.8, R16.1, R16.3, R16.4.
+ *
  * `DefaultChatTransport` cannot be used, and the reason is not ergonomics. It owns three
  * things this one has to own instead:
  *
@@ -75,6 +77,17 @@ export interface ModelRef {
   readonly baseUrl?: string | null;
 }
 
+/** An attachment after renderer-side capability/size gating (R29.2–R29.5). */
+export interface RunAttachmentRef {
+  readonly kind: "image" | "document";
+  readonly name: string;
+  readonly mediaType: string;
+  readonly size: number;
+  readonly dataUrl?: string;
+  readonly text?: string;
+  readonly estimatedTokens: number;
+}
+
 /**
  * Everything about the *next* submission that lives outside the message list.
  *
@@ -88,6 +101,9 @@ export interface SubmissionContext {
   readonly permissionMode: "ask" | "auto" | "deny";
   readonly modelRef: ModelRef;
   readonly mentions: readonly MentionRef[];
+  readonly attachments?: readonly RunAttachmentRef[];
+  /** Per-source inclusion for the next Run. Missing paths default to enabled (R30.3). */
+  readonly rulesSelection?: Readonly<Record<string, boolean>>;
 }
 
 /** One Run the transport is following, as the surface needs to see it. */
@@ -259,6 +275,7 @@ export class ZocChatTransport implements ChatTransport<ZocUIMessage> {
     const body = {
       // `chatId` is `useChat`'s vocabulary; Zoc names it `sessionId` everywhere (R35.5).
       sessionId: opts.chatId,
+      ...(opts.messageId === undefined ? {} : { userMessageId: opts.messageId }),
       prompt: lastUserText(opts.messages),
       mentions: submission.mentions.map((mention) => ({
         kind: mention.kind,
@@ -266,6 +283,23 @@ export class ZocChatTransport implements ChatTransport<ZocUIMessage> {
         ...(mention.label === undefined ? {} : { label: mention.label }),
         ...(mention.content === undefined ? {} : { content: mention.content }),
       })),
+      ...(submission.attachments === undefined || submission.attachments.length === 0
+        ? {}
+        : {
+            attachments: submission.attachments.map((attachment) => ({
+              kind: attachment.kind,
+              name: attachment.name,
+              mediaType: attachment.mediaType,
+              size: attachment.size,
+              estimatedTokens: attachment.estimatedTokens,
+              ...(attachment.dataUrl === undefined ? {} : { dataUrl: attachment.dataUrl }),
+              ...(attachment.text === undefined ? {} : { text: attachment.text }),
+            })),
+          }),
+      ...(submission.rulesSelection === undefined ||
+      Object.keys(submission.rulesSelection).length === 0
+        ? {}
+        : { rulesSelection: submission.rulesSelection }),
       mode: submission.mode,
       permissionMode: submission.permissionMode,
       modelRef: {

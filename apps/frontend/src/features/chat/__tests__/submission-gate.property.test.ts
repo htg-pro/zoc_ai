@@ -59,17 +59,22 @@ const invalidMode = fc.constantFrom(
 describe("Feature: zoc-agent-chat-rebuild, Property 77: a refusal envelope is complete and free of identifiers and paths", () => {
   it("refuses an out-of-range mode with a code and the three available modes (R32.14)", () => {
     fc.assert(
-      fc.property(invalidMode, draft, fc.option(workspaceRoot, { nil: null }), (mode, text, root) => {
-        const verdict = checkSubmission({ mode, workspaceRoot: root, draft: text });
-        expect(verdict.permitted).toBe(false);
-        if (verdict.permitted) return;
+      fc.property(
+        invalidMode,
+        draft,
+        fc.option(workspaceRoot, { nil: null }),
+        (mode, text, root) => {
+          const verdict = checkSubmission({ mode, workspaceRoot: root, draft: text });
+          expect(verdict.permitted).toBe(false);
+          if (verdict.permitted) return;
 
-        expect(verdict.code).toBe(SUBMISSION_CODES.invalidRequest);
-        // Names the three, because "invalid mode" leaves the user to guess what is valid.
-        for (const label of ["Ask", "Plan", "Agent"]) {
-          expect(verdict.message).toContain(label);
-        }
-      }),
+          expect(verdict.code).toBe(SUBMISSION_CODES.invalidRequest);
+          // Names the three, because "invalid mode" leaves the user to guess what is valid.
+          for (const label of ["Ask", "Plan", "Agent"]) {
+            expect(verdict.message).toContain(label);
+          }
+        },
+      ),
       RUNS,
     );
   });
@@ -109,12 +114,17 @@ describe("Feature: zoc-agent-chat-rebuild, Property 77: a refusal envelope is co
 
   it("permits every mode once a workspace is open", () => {
     fc.assert(
-      fc.property(fc.constantFrom("ask", "plan", "agent"), draft, workspaceRoot, (mode, text, root) => {
-        const verdict = checkSubmission({ mode, workspaceRoot: root, draft: text });
-        expect(verdict.permitted).toBe(true);
-        // R32.2: the mode that comes out is the mode that went in, never one inferred from the draft.
-        if (verdict.permitted) expect(verdict.mode).toBe(mode);
-      }),
+      fc.property(
+        fc.constantFrom("ask", "plan", "agent"),
+        draft,
+        workspaceRoot,
+        (mode, text, root) => {
+          const verdict = checkSubmission({ mode, workspaceRoot: root, draft: text });
+          expect(verdict.permitted).toBe(true);
+          // R32.2: the mode that comes out is the mode that went in, never one inferred from the draft.
+          if (verdict.permitted) expect(verdict.mode).toBe(mode);
+        },
+      ),
       RUNS,
     );
   });

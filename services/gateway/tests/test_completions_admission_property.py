@@ -25,9 +25,7 @@ from zocai_gateway.settings import LOOPBACK_HOSTS, GatewaySettings
 _loopback_hosts = st.sampled_from(sorted(LOOPBACK_HOSTS))
 _non_loopback_hosts = st.sampled_from(["0.0.0.0", "10.0.0.5", "192.168.1.10", "example.com"])
 # Header-safe printable ASCII: a credential is sent as an HTTP header value.
-_header_safe = st.text(
-    alphabet=st.characters(min_codepoint=0x21, max_codepoint=0x7E), max_size=24
-)
+_header_safe = st.text(alphabet=st.characters(min_codepoint=0x21, max_codepoint=0x7E), max_size=24)
 _configured_tokens = st.one_of(st.none(), st.just(""), _header_safe.filter(lambda s: len(s) >= 1))
 
 _VALID_BODY = {

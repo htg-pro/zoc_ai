@@ -33,22 +33,21 @@ def test_advanced_context_event_twins_are_generated_and_in_sync() -> None:
     assert {
         name: field.alias
         for name, field in ContextCompressedEvent.model_fields.items()
-        if name
-        in {"original_tokens", "compressed_tokens", "compression_ratio"}
+        if name in {"original_tokens", "compressed_tokens", "compression_ratio"}
     } == {
         "original_tokens": "originalTokens",
         "compressed_tokens": "compressedTokens",
         "compression_ratio": "compressionRatio",
     }
 
-    typescript = (
-        root / "packages/shared-types/typescript/src/agent-events.ts"
-    ).read_text(encoding="utf-8")
-    assert 'export interface MapFilesEvent extends BaseEvent {' in typescript
+    typescript = (root / "packages/shared-types/typescript/src/agent-events.ts").read_text(
+        encoding="utf-8"
+    )
+    assert "export interface MapFilesEvent extends BaseEvent {" in typescript
     assert 'type: "map-files";' in typescript
     assert "readList: string[];" in typescript
     assert "writeList: string[];" in typescript
-    assert 'export interface ContextCompressedEvent extends BaseEvent {' in typescript
+    assert "export interface ContextCompressedEvent extends BaseEvent {" in typescript
     assert 'type: "context-compressed";' in typescript
     assert "originalTokens: number;" in typescript
     assert "compressedTokens: number;" in typescript

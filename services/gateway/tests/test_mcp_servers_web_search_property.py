@@ -56,9 +56,7 @@ _topic = st.builds(lambda text, url: {"Text": text, "FirstURL": url}, _maybe, _m
 # Feature: mcp-host-and-servers, Property 27: web search result validity and cap
 @settings(max_examples=200)
 @given(topics=st.lists(_topic, max_size=12), max_results=st.integers(min_value=1, max_value=10))
-def test_web_search_result_validity_and_cap(
-    topics: list[dict[str, str]], max_results: int
-) -> None:
+def test_web_search_result_validity_and_cap(topics: list[dict[str, str]], max_results: int) -> None:
     """Validates: Requirements 14.3, 14.4, 14.5."""
     client = _FakeClient(
         instant=_FakeResponse(json_data={"RelatedTopics": topics}),

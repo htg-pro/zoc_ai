@@ -48,9 +48,7 @@ function fakeStream(deltas: readonly string[]) {
   return { impl, calls };
 }
 
-type EditorGeneratorStream = NonNullable<
-  Parameters<typeof createEditorGenerator>[0]["streamImpl"]
->;
+type EditorGeneratorStream = NonNullable<Parameters<typeof createEditorGenerator>[0]["streamImpl"]>;
 
 async function collect(iterable: AsyncIterable<string>): Promise<string[]> {
   const out: string[] = [];
@@ -74,7 +72,10 @@ describe("Feature: zoc-agent-chat-rebuild, task 22.11: the editor generator reso
 
   it("passes the route's own sampling settings straight through", async () => {
     const { impl, calls } = fakeStream(["ok"]);
-    const generate = createEditorGenerator({ secrets: sourceWith("sk-live-key"), streamImpl: impl });
+    const generate = createEditorGenerator({
+      secrets: sourceWith("sk-live-key"),
+      streamImpl: impl,
+    });
     const signal = new AbortController().signal;
 
     await collect(
@@ -94,7 +95,10 @@ describe("Feature: zoc-agent-chat-rebuild, task 22.11: the editor generator reso
 
   it("omits stopSequences entirely for inline edit, which must not truncate on a blank line", async () => {
     const { impl, calls } = fakeStream(["ok"]);
-    const generate = createEditorGenerator({ secrets: sourceWith("sk-live-key"), streamImpl: impl });
+    const generate = createEditorGenerator({
+      secrets: sourceWith("sk-live-key"),
+      streamImpl: impl,
+    });
 
     await collect(generate(request({ stopSequences: [] })));
     // Absent rather than `[]`: a replacement may legitimately contain a blank line.
@@ -117,7 +121,10 @@ describe("Feature: zoc-agent-chat-rebuild, task 22.11: the editor generator reso
 describe("Feature: zoc-agent-chat-rebuild, task 22.11: what the generator refuses", () => {
   const attempt = async (overrides: Partial<EditorGenerateRequest>): Promise<Error | null> => {
     const { impl } = fakeStream(["unreachable"]);
-    const generate = createEditorGenerator({ secrets: sourceWith("sk-live-key"), streamImpl: impl });
+    const generate = createEditorGenerator({
+      secrets: sourceWith("sk-live-key"),
+      streamImpl: impl,
+    });
     try {
       await collect(generate(request(overrides)));
       return null;

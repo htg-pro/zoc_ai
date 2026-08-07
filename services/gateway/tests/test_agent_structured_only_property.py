@@ -98,8 +98,7 @@ def conforming_rows(draw: st.DrawFn) -> dict[str, object]:
         base["text"] = draw(st.text(max_size=20))
     elif kind == "read-files":
         base["files"] = [
-            {"path": p}
-            for p in draw(st.lists(st.text(min_size=1, max_size=8), max_size=3))
+            {"path": p} for p in draw(st.lists(st.text(min_size=1, max_size=8), max_size=3))
         ]
     elif kind == "edit-file":
         base["path"] = draw(st.text(min_size=1, max_size=12))

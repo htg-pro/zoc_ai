@@ -175,10 +175,7 @@ describe("Feature: zoc-agent-chat-rebuild, task 22.1: writing the list", () => {
     bridge.localModelsSet.mockResolvedValue([model("local:a")]);
     const models = await load();
 
-    const written = await models.persistLocalModels([
-      model("local:a"),
-      model("local:b"),
-    ] as never);
+    const written = await models.persistLocalModels([model("local:a"), model("local:b")] as never);
 
     expect(written.map((m) => m.id)).toEqual(["local:a"]);
   });

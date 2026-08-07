@@ -2,6 +2,8 @@
  * Property 59: Slot admission bounds concurrency and queues fairly.
  * Validates R25.1, R25.2.
  *
+ * Feature: zoc-agent-chat-rebuild, Property 59 (R25.1, R25.2).
+ *
  * Stays in the M1 set despite R25.2's M2 tag: the Slot manager ships in M1 at its
  * default count of 3, so queue admission is M1 behaviour and needs an M1 property.
  *

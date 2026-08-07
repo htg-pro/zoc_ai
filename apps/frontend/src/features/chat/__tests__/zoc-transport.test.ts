@@ -2,6 +2,8 @@
  * `ZocChatTransport` — zoc-agent-chat-rebuild task 11.1 (R5.2, R7.7, R7.8, R16.1,
  * R16.3, R16.4, R16.5).
  *
+ * Feature: zoc-agent-chat-rebuild, task 11.1 (R5.2, R7.7, R7.8, R16.1, R16.3, R16.4).
+ *
  * A stub `fetch` and a stub clock throughout: what the transport owns is protocol
  * behaviour — which frames reach `useChat`, when a re-attach happens, what the request
  * body contains — and none of that is a claim about a real socket. The two integration

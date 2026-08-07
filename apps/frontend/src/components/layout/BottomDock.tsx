@@ -1,11 +1,21 @@
-import { Terminal as TerminalIcon, AlertTriangle, ListChecks, ScrollText, Megaphone, X, Pause, Play, History } from "lucide-react";
+import {
+  Terminal as TerminalIcon,
+  AlertTriangle,
+  ListChecks,
+  ScrollText,
+  Megaphone,
+  X,
+  Pause,
+  Play,
+  History,
+} from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { TerminalPane } from "@/features/terminal/TerminalPane";
 import { ProblemsPanel } from "@/features/problems/ProblemsPanel";
 import { LogsPanel } from "@/features/problems/LogsPanel";
 import { OutputPanel } from "@/features/problems/OutputPanel";
 import { TasksPanel } from "@/features/tasks/TasksPanel";
-import { CheckpointsPanel } from "@/features/agent/CheckpointsPanel";
+import { CheckpointsPanel } from "@/features/timeline/CheckpointsPanel";
 import { useApp, type BottomTab } from "@/lib/store";
 import { problemsBadge } from "@/lib/problems-badge";
 import { cn } from "@/lib/utils";
@@ -93,7 +103,13 @@ export function BottomDock() {
               {paused ? "Resume" : "Pause"} agent
             </button>
           )}
-          <Button size="icon" variant="ghost" className="h-6 w-6" onClick={toggle} aria-label="Close dock">
+          <Button
+            size="icon"
+            variant="ghost"
+            className="h-6 w-6"
+            onClick={toggle}
+            aria-label="Close dock"
+          >
             <X className="h-3.5 w-3.5" />
           </Button>
         </div>

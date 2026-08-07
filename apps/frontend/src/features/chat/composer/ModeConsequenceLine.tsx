@@ -1,6 +1,8 @@
 /**
  * The mode consequence line — zoc-agent-chat-rebuild R11.10, R32.1, task 20.2.
  *
+ * Feature: zoc-agent-chat-rebuild, task 20.2 (R11.10, R32.1).
+ *
  * One muted line directly under the control row, stating what the current *pair* of modes permits. The
  * sentence comes from `mode-consequence.ts`, which derives it from the Capability_Policy — so this
  * component is spacing, a live region, and a truncation rule, and nothing else.
@@ -27,11 +29,7 @@ export interface ModeConsequenceLineProps {
   className?: string;
 }
 
-export function ModeConsequenceLine({
-  mode,
-  permissionMode,
-  className,
-}: ModeConsequenceLineProps) {
+export function ModeConsequenceLine({ mode, permissionMode, className }: ModeConsequenceLineProps) {
   const consequence = modeConsequence(mode, permissionMode);
 
   return (

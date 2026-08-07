@@ -1,6 +1,8 @@
 /**
  * Workspace-client rules discovery — zoc-agent-chat-rebuild R30.1, R6.3, R6.6.
  *
+ * Feature: zoc-agent-chat-rebuild, R30.1, R6.3, R6.6.
+ *
  * Task 9.4's transport half. Three things are pinned: the request is a GET with
  * no body (the Python route takes no arguments and a POST would mean inventing
  * one), a transport failure is reported rather than thrown (R6.6, so a

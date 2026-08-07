@@ -29,9 +29,7 @@ export function useTerminalPaneShortcuts(): void {
           s.closeTerminalPane(s.focusedPaneId);
           if (
             sessionId &&
-            !leaves(useApp.getState().terminalLayout).some(
-              (pane) => pane.sessionId === sessionId,
-            )
+            !leaves(useApp.getState().terminalLayout).some((pane) => pane.sessionId === sessionId)
           ) {
             void disposeTerminal(sessionId);
           }

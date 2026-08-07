@@ -106,7 +106,8 @@ export function ActivityBar() {
             badge={badgeFor(item.key)}
             active={
               item.key === "sessions"
-                ? mainView === "sessions" || (mainView === "editor" && item.key === activity && sidePanelOpen)
+                ? mainView === "sessions" ||
+                  (mainView === "editor" && item.key === activity && sidePanelOpen)
                 : mainView === "editor" && item.key === activity && sidePanelOpen
             }
             onClick={() => handleClick(item)}

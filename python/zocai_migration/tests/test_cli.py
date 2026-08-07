@@ -18,9 +18,7 @@ import pytest
 from zocai_migration import git_available
 from zocai_migration.cli import main
 
-pytestmark = pytest.mark.skipif(
-    not git_available(), reason="git executable not available on PATH"
-)
+pytestmark = pytest.mark.skipif(not git_available(), reason="git executable not available on PATH")
 
 
 def _git(repo: Path, *args: str) -> None:

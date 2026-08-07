@@ -1,7 +1,7 @@
 // Feature: zoc-ai-agent-chat-overhaul, Task 13: structured GatewayRequestError is retained; auth errors are recognized
 import { describe, expect, it } from "vitest";
 import { AUTH_STATUSES, isAuthError, normalizeError } from "../errors";
-import { GatewayRequestError } from "@/features/agent/gateway-client";
+import { GatewayRequestError } from "@/lib/gateway-client";
 
 describe("error normalization retains structured GatewayRequestError fields", () => {
   it("keeps code/status/details/retryable through normalizeError", () => {

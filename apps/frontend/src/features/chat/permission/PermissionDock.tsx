@@ -1,6 +1,8 @@
 /**
  * The approval dock — zoc-agent-chat-rebuild R11.8, R21.3, task 19.1.
  *
+ * Feature: zoc-agent-chat-rebuild, task 19.1 (R11.8, R21.3).
+ *
  * The pending request, pinned above the composer and **outside** the transcript's scroll container.
  * That placement is the whole requirement: R11.8 says a pending approval must stay visible without
  * scroll-away, and the only way to guarantee it is for the request not to be in the scrolling region at
@@ -62,7 +64,12 @@ export interface PermissionDockProps {
   className?: string;
 }
 
-export function PermissionDock({ messages, onDecide, now = Date.now, className }: PermissionDockProps) {
+export function PermissionDock({
+  messages,
+  onDecide,
+  now = Date.now,
+  className,
+}: PermissionDockProps) {
   const pendingApprovalId = useChatSurface((state) => state.pendingApprovalId);
   const setPendingApprovalId = useChatSurface((state) => state.setPendingApprovalId);
   const reducedMotion = useReducedMotion();

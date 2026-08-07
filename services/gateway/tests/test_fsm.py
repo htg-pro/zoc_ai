@@ -219,12 +219,8 @@ def test_done_has_no_legal_successors() -> None:
 
 def test_default_factory_event_kinds_per_stage() -> None:
     assert isinstance(default_stage_event_factory(Stage.DONE, 0, "r", "t"), DoneEvent)
-    assert isinstance(
-        default_stage_event_factory(Stage.SUMMARY, 0, "r", "t"), SummaryEvent
-    )
-    assert isinstance(
-        default_stage_event_factory(Stage.ANALYZE, 0, "r", "t"), ThinkingEvent
-    )
+    assert isinstance(default_stage_event_factory(Stage.SUMMARY, 0, "r", "t"), SummaryEvent)
+    assert isinstance(default_stage_event_factory(Stage.ANALYZE, 0, "r", "t"), ThinkingEvent)
     err = default_stage_event_factory(Stage.ERROR_CLOSED, 0, "r", "t", "why")
     assert isinstance(err, CommandEvent)
     assert err.error_tag == "why"

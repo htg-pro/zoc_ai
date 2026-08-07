@@ -9,7 +9,15 @@
  * trivially testable.
  */
 
-export type SymbolKind = "function" | "class" | "interface" | "type" | "const" | "method" | "struct" | "enum";
+export type SymbolKind =
+  | "function"
+  | "class"
+  | "interface"
+  | "type"
+  | "const"
+  | "method"
+  | "struct"
+  | "enum";
 
 export interface OutlineSymbol {
   name: string;
@@ -24,13 +32,19 @@ interface Rule {
 }
 
 const TS_RULES: Rule[] = [
-  { re: /^\s*(?:export\s+)?(?:default\s+)?(?:async\s+)?function\s+([A-Za-z_$][\w$]*)/, kind: "function" },
+  {
+    re: /^\s*(?:export\s+)?(?:default\s+)?(?:async\s+)?function\s+([A-Za-z_$][\w$]*)/,
+    kind: "function",
+  },
   { re: /^\s*(?:export\s+)?(?:abstract\s+)?class\s+([A-Za-z_$][\w$]*)/, kind: "class" },
   { re: /^\s*(?:export\s+)?interface\s+([A-Za-z_$][\w$]*)/, kind: "interface" },
   { re: /^\s*(?:export\s+)?type\s+([A-Za-z_$][\w$]*)/, kind: "type" },
   { re: /^\s*(?:export\s+)?enum\s+([A-Za-z_$][\w$]*)/, kind: "enum" },
   // const Foo = ( … ) =>  /  const Foo = function
-  { re: /^\s*(?:export\s+)?const\s+([A-Za-z_$][\w$]*)\s*=\s*(?:async\s*)?(?:\([^)]*\)\s*(?::[^=]+)?=>|function\b)/, kind: "function" },
+  {
+    re: /^\s*(?:export\s+)?const\s+([A-Za-z_$][\w$]*)\s*=\s*(?:async\s*)?(?:\([^)]*\)\s*(?::[^=]+)?=>|function\b)/,
+    kind: "function",
+  },
 ];
 
 const PY_RULES: Rule[] = [

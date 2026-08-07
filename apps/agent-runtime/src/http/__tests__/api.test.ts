@@ -1,6 +1,8 @@
 /**
  * The composed route table — zoc-agent-chat-rebuild 9.7, design.md:1404.
  *
+ * Feature: zoc-agent-chat-rebuild, task 9.7.
+ *
  * A table test rather than a behaviour test. Its job is to notice an endpoint that
  * silently stopped being registered: every group is wired through one function, so a
  * refactor that drops a `register…` call would leave the group's own tests passing
@@ -42,6 +44,17 @@ function deps(): ApiDeps {
     },
     compaction: { hasActiveRun: () => false, prepare: vi.fn(async () => null) },
     permissions: { approvalsFor: () => null, auditEntries: () => [] },
+    mcp: {
+      control: {
+        refresh: vi.fn(async () => ({ servers: [], tools: [] })),
+        updateTool: vi.fn(() => null),
+        reload: vi.fn(async () => ({ ok: true as const, value: { servers: [], tools: [] } })),
+        test: vi.fn(async () => ({
+          ok: true as const,
+          value: { outcome: "success" as const, toolCount: 0, bareNames: [] },
+        })),
+      } as unknown as ApiDeps["mcp"]["control"],
+    },
   };
 }
 
@@ -61,6 +74,10 @@ const EXPECTED: ReadonlyArray<readonly [string, string]> = [
   ["POST", "/v1/sessions/s1/title"],
   ["POST", "/v1/completions"],
   ["POST", "/v1/inline-edit"],
+  ["GET", "/v1/mcp/servers"],
+  ["PATCH", "/v1/mcp/tools/mcp__server__tool"],
+  ["POST", "/v1/mcp/reload"],
+  ["POST", "/v1/mcp/test"],
 ];
 
 describe("registerApiRoutes", () => {
@@ -82,8 +99,7 @@ describe("registerApiRoutes", () => {
     expect(router.match("GET", "/v1/nothing-here")).toBe(404);
   });
 
-  it("does not yet claim the endpoint M2 owns", () => {
-    // `/v1/mcp` is M2 §30's. Registering it now would mean a 200 describing nothing.
+  it("keeps the MCP collection root undefined while registering its concrete routes", () => {
     const router = new Router();
     registerApiRoutes(router, deps());
 

@@ -135,12 +135,9 @@ export async function runPluginTerminalCommand(
   const client = options.client ?? (await getAgentClient());
   const platform =
     options.platform ??
-    (typeof navigator !== "undefined" && /windows/i.test(navigator.userAgent)
-      ? "windows"
-      : "unix");
+    (typeof navigator !== "undefined" && /windows/i.test(navigator.userAgent) ? "windows" : "unix");
   const executable = platform === "windows" ? "cmd.exe" : "/bin/sh";
-  const args =
-    platform === "windows" ? ["/d", "/s", "/c", command] : ["-lc", command];
+  const args = platform === "windows" ? ["/d", "/s", "/c", command] : ["-lc", command];
   const cwd = options.cwd ?? useApp.getState().workspaceRoot ?? undefined;
   const session = await client.spawnTerminal(executable, {
     args,
@@ -167,8 +164,7 @@ export async function runPluginTerminalCommand(
         const combined = output + event.chunk;
         if (combined.length > maxOutput) {
           output =
-            combined.slice(0, Math.max(0, maxOutput - truncatedMarker.length)) +
-            truncatedMarker;
+            combined.slice(0, Math.max(0, maxOutput - truncatedMarker.length)) + truncatedMarker;
           truncated = true;
         } else {
           output = combined;

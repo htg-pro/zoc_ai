@@ -155,9 +155,7 @@ class EditCoordinator:
     toolset: FullToolset
     run_id: str = "run"
     emit: EmitSink | None = None
-    next_seq: Callable[[], int] = field(
-        default_factory=lambda: itertools.count().__next__
-    )
+    next_seq: Callable[[], int] = field(default_factory=lambda: itertools.count().__next__)
     write_allowlist: frozenset[str] | None = None
     wait_for_approval: ApprovalWaiter | None = None
     events: list[ThinkingEvent | EditFileEvent | CommandEvent | ApprovalEvent] = field(
@@ -231,9 +229,7 @@ class EditCoordinator:
                 # event naming the failed change, and attempt nothing further.
                 reason = f"failed to apply change to {change.path!r}: {exc}"
                 self._emit_apply_error(change, reason)
-                return ApplyOutcome(
-                    applied=tuple(applied), failed=change, error=reason
-                )
+                return ApplyOutcome(applied=tuple(applied), failed=change, error=reason)
             applied.append(change)
             self._emit_edit_file(change, base_hash=base_hash)
         return ApplyOutcome(applied=tuple(applied))
@@ -264,11 +260,7 @@ class EditCoordinator:
         if waiter is None:
             return False
         decision = waiter(None)
-        verdict = (
-            decision
-            if isinstance(decision, str)
-            else getattr(decision, "decision", None)
-        )
+        verdict = decision if isinstance(decision, str) else getattr(decision, "decision", None)
         if verdict == "approve":
             normalized = (workspace_root / path).resolve()
             try:
@@ -333,9 +325,7 @@ class EditCoordinator:
         )
         self._record(event)
 
-    def _record(
-        self, event: ThinkingEvent | EditFileEvent | CommandEvent | ApprovalEvent
-    ) -> None:
+    def _record(self, event: ThinkingEvent | EditFileEvent | CommandEvent | ApprovalEvent) -> None:
         """Record ``event`` and forward it to the sink in production order."""
         self.events.append(event)
         if self.emit is not None:
@@ -345,7 +335,6 @@ class EditCoordinator:
     def _now() -> str:
         """An ISO-8601 UTC timestamp for the ``ts`` field."""
         return datetime.now(UTC).isoformat()
-
 
 
 def _diff_stats(diff: str) -> tuple[int, int]:

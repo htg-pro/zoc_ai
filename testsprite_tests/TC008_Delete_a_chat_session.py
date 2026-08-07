@@ -39,19 +39,19 @@ async def run_test():
             await page.wait_for_load_state("domcontentloaded", timeout=5000)
         except Exception:
             pass
-        
+
         # -> Click the 'Sessions' button in the left sidebar to open the Sessions panel and reveal the list of sessions.
         # Sessions button
         elem = page.get_by_role('button', name='Sessions', exact=True)
         await elem.click(timeout=10000)
-        
+
         # -> Click the 'Delete session' button for the 'groq smoke' session and, if a confirmation dialog appears, confirm the deletion.
         # Delete groq smoke button
         elem = page.get_by_role('button', name='Delete groq smoke', exact=True)
         await elem.click(timeout=10000)
-        
+
         # --> Assertions to verify final state
-        
+
         # --> Verify the session is removed from the list
         await page.locator("xpath=/html/body/div[1]/div/div/div/div[1]/div/aside/div/div/div[3]/div/div/div/div[2]/button").nth(0).scroll_into_view_if_needed()
         # Assert: The 'Test Session' entry is visible in the sessions list.
@@ -72,4 +72,3 @@ async def run_test():
             await pw.stop()
 
 asyncio.run(run_test())
-    

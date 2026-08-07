@@ -590,7 +590,7 @@ export type AgentEvent =
 
 export * as AgentEvents from "./agent-events";
 
-// ── Wire_Protocol (Message_Part contract, Agent_Runtime ↔ Chat_Surface) 
+// ── Wire_Protocol (Message_Part contract, Agent_Runtime ↔ Chat_Surface)
 
 export * as MessageParts from "./message-parts";
 

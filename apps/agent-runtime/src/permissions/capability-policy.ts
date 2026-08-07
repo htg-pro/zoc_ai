@@ -2,6 +2,8 @@
  * Capability_Policy — zoc-agent-chat-rebuild R11.10, R11.11, R32.3, R32.4,
  * R32.7, R32.9–R32.13.
  *
+ * Feature: zoc-agent-chat-rebuild, R11.10, R11.11, R32.3, R32.4, R32.7, R32.9.
+ *
  * A faithful port of `mode_router.py`'s `Capability` / `Decision` / `PERMISSIONS`.
  *
  * **Pure by construction.** No imports beyond types, no I/O, no clock, no

@@ -1,6 +1,8 @@
 /**
  * The unknown-discriminant log — zoc-agent-chat-rebuild R7.6, task 16.3.
  *
+ * Feature: zoc-agent-chat-rebuild, task 16.3 (R7.6).
+ *
  * R7.6 asks for three things when a Message_Part arrives with a discriminant the surface does
  * not know: a neutral placeholder row, **one log record per Run per discriminant**, and a stream
  * that keeps going. The row is {@link ../UnknownPartRow}; the stream continuing is the transcript

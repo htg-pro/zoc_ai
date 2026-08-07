@@ -12,9 +12,7 @@ from zocai_gateway.workspace_index import _resolve_changed_files
 _NAME = st.text(alphabet="abcdefghijklmnopqrstuvwxyz0123456789", min_size=1, max_size=16)
 _CASES = st.lists(
     st.tuples(
-        st.sampled_from(
-            ["relative-inside", "absolute-inside", "traversal", "absolute-outside"]
-        ),
+        st.sampled_from(["relative-inside", "absolute-inside", "traversal", "absolute-outside"]),
         _NAME,
     ),
     min_size=0,

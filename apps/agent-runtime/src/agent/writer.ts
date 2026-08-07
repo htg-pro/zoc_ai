@@ -2,6 +2,8 @@
  * Agent_Runtime stream writer and sequence allocator — zoc-agent-chat-rebuild
  * R7.1, R7.7, R16.3.
  *
+ * Feature: zoc-agent-chat-rebuild, R7.1, R7.7, R16.3.
+ *
  * Two collaborating pieces, split for one structural reason.
  *
  * `RunWriter` builds the seven Zoc data parts and hands them to the AI SDK's
@@ -52,6 +54,7 @@ import type {
   PermissionRequestPart,
   PlanPart,
   RunLifecyclePart,
+  SourcePart,
   UsagePart,
 } from "@zoc-studio/shared-types";
 
@@ -91,6 +94,7 @@ export interface ZocProducedParts {
   "zoc-run": RunLifecyclePart;
   "zoc-usage": UsagePart;
   "zoc-error": ErrorPart;
+  "zoc-source": SourcePart;
   "zoc-compaction": CompactionPart;
 }
 
@@ -408,6 +412,44 @@ export class RunWriter {
   error(payload: PartPayload<ErrorPart>): ErrorPart {
     this.errorOrdinal += 1;
     return this.data("zoc-error", `${this.runId}:error:${this.errorOrdinal}`, "error", payload);
+  }
+
+  /** One growing source row per Run. */
+  source(payload: PartPayload<SourcePart>): SourcePart {
+    return this.data("zoc-source", this.runId, "source", payload);
+  }
+
+  /** A registration-time refusal for a provider tool that has no local execute. */
+  providerToolError(payload: {
+    readonly toolName: string;
+    readonly kind: "network";
+    readonly code: string;
+    readonly message: string;
+    readonly retryable: boolean;
+  }): void {
+    const toolCallId = `${this.runId}:registration:${payload.toolName}`;
+    this.writer.write({
+      type: "tool-input-available",
+      toolCallId,
+      toolName: payload.toolName,
+      input: {},
+      providerExecuted: true,
+      providerMetadata: { zoc: { kind: payload.kind } },
+    });
+    this.writer.write({
+      type: "tool-output-error",
+      toolCallId,
+      errorText: payload.message,
+      providerExecuted: true,
+      providerMetadata: {
+        zoc: {
+          kind: payload.kind,
+          code: payload.code,
+          retryable: payload.retryable,
+          details: null,
+        },
+      },
+    });
   }
 
   compaction(payload: PartPayload<CompactionPart>): CompactionPart {

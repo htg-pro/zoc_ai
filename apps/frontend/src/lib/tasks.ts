@@ -191,7 +191,8 @@ export function detectMake(text: string): Task[] {
       source: "make",
       command: "make",
       args: [target],
-      group: target === "build" || target === "all" ? "build" : /test/.test(target) ? "test" : "none",
+      group:
+        target === "build" || target === "all" ? "build" : /test/.test(target) ? "test" : "none",
       problemMatcher: null,
     });
   }

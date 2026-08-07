@@ -19,7 +19,13 @@ function pane(i: number): TerminalPane {
 function buildTree(n: number): PaneNode {
   let node: PaneNode = pane(0);
   for (let i = 1; i < n; i += 1) {
-    node = { kind: "split", id: `sp${i}`, direction: i % 2 ? "row" : "column", a: node, b: pane(i) };
+    node = {
+      kind: "split",
+      id: `sp${i}`,
+      direction: i % 2 ? "row" : "column",
+      a: node,
+      b: pane(i),
+    };
   }
   return node;
 }

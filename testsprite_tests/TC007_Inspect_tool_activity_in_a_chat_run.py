@@ -40,7 +40,7 @@ async def run_test():
             await page.wait_for_load_state("domcontentloaded", timeout=5000)
         except Exception:
             pass
-        
+
         # --> Assertions to verify final state
         # Assert: Verify tool-call activity is displayed
         assert False, "Expected: Verify tool-call activity is displayed (could not be verified on the page)"
@@ -57,4 +57,3 @@ async def run_test():
             await pw.stop()
 
 asyncio.run(run_test())
-    

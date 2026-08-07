@@ -4,9 +4,11 @@
 // library per capability, each pinned), 19.6 (one animation library), and 4.4
 // (the security overrides are preserved).
 //
-// The additive-until-26.2 half is asserted too: the twelve hand-written
-// keyframes the Legacy_Panel's class names reference must still be present in
-// `src/styles/globals.css` — they are removed by task 26.2, not here.
+// The motion-layer half is asserted too, and as of task 26.5 it is asserted in
+// both directions: the five superseded keyframes are gone from
+// `src/styles/globals.css` and must stay gone, and the nine that survive are
+// pinned because something live resolves to each. See the block below for why
+// the count is five and not twelve.
 import { describe, it, expect } from "vitest";
 import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
@@ -111,9 +113,7 @@ describe("Chat_Surface frontend dependencies (task 12.2)", () => {
 
   describe("lint tooling", () => {
     it("carries the maintained eslint-comments fork as a devDependency", () => {
-      expect(
-        pkg.devDependencies["@eslint-community/eslint-plugin-eslint-comments"],
-      ).toBeTruthy();
+      expect(pkg.devDependencies["@eslint-community/eslint-plugin-eslint-comments"]).toBeTruthy();
     });
   });
 
@@ -149,62 +149,90 @@ describe("Chat_Surface frontend dependencies (task 12.2)", () => {
     });
   });
 
-  describe("additive only: the legacy keyframes survive until task 26.2", () => {
+  /**
+   * Task 26.5 narrowed the motion layer, and this block is the inversion of the
+   * table that used to guard it. The assertion that the legacy keyframes are
+   * *gone* is worth more than the assertion that they are present: it is the
+   * only thing that would catch a re-introduction.
+   *
+   * **Five, not twelve.** 26.2 listed twelve keyframes as legacy-panel-only.
+   * Seven of them are not: six are the animations the Motion_System layer's
+   * `.motion-*` classes resolve to — `lib/reduced-motion.ts` pins those class
+   * names and Property 12.5 asserts the mapping — and `pulse-status` plus
+   * `pulse-dot` also have live component callers (`SessionsView.tsx`,
+   * `EditorArea.tsx`, `SidePanel.tsx`, and `MonacoView.tsx` via
+   * `motion-caret-blink`). Deleting a keyframe out from under a class that
+   * survives fails nothing, because CSS drops an unknown `animation-name`
+   * silently — which is what the third test below exists to catch.
+   */
+  describe("the motion layer is narrowed to what survives (task 26.5)", () => {
     it.each([
       "zoc-pulse",
       "zoc-check-pop",
       "zoc-success-flash",
-      "orb-breathe",
-      "pulse-status",
       "pulse-primary",
+      "pulse-dot-green",
+    ])("no longer defines the superseded %s keyframe", (name) => {
+      expect(globalsCss).not.toContain(`@keyframes ${name} {`);
+    });
+
+    it.each([
+      // Motion_System tokens (R6.1) — see `ANIMATED_CLASS` in lib/reduced-motion.ts.
+      "orb-breathe",
       "shimmer",
       "fade-row",
       "caret-blink",
-      "pulse-dot",
-      "pulse-dot-green",
       "typing-dot",
-      // Kept beyond 26.2 as well: Monaco and global chrome.
+      // Motion_System plus live component classes.
+      "pulse-dot",
+      "pulse-status",
+      // Monaco and global chrome.
       "spin",
       "agent-edit-flash-fade",
-    ])("still defines the %s keyframe", (name) => {
+    ])("still defines the %s keyframe, which something live resolves to", (name) => {
       expect(globalsCss).toContain(`@keyframes ${name} {`);
+    });
+
+    // The one that catches the silent half. A `.motion-*` class whose keyframe
+    // was deleted still parses, still passes Property 12.5, and simply does not
+    // animate — so no assertion about class names or about keyframe names alone
+    // would notice. This closes the loop in both directions.
+    it("defines every animation it names, and names every animation it defines", () => {
+      const named = new Set(
+        [...globalsCss.matchAll(/animation(?:-name)?:\s*([a-z][a-z0-9-]*)/g)]
+          .map((m) => m[1])
+          .filter((name) => name !== "none"),
+      );
+      const defined = new Set(
+        [...globalsCss.matchAll(/@keyframes\s+([a-z][a-z0-9-]*)\s*\{/g)].map((m) => m[1]),
+      );
+      expect([...named].filter((name) => !defined.has(name))).toEqual([]);
+      expect([...defined].filter((name) => !named.has(name))).toEqual([]);
     });
   });
 
   describe("the motion budget is enforced by lint (R5.6)", () => {
-    it(
-      "permits the LazyMotion + m pattern",
-      async () => {
-        const findings = await motionBudgetFindings(
-          'import { LazyMotion, domAnimation, m } from "motion/react";\n' +
-            "export const ok = [LazyMotion, domAnimation, m];\n",
-        );
-        expect(findings).toEqual([]);
-      },
-      30_000,
-    );
+    it("permits the LazyMotion + m pattern", async () => {
+      const findings = await motionBudgetFindings(
+        'import { LazyMotion, domAnimation, m } from "motion/react";\n' +
+          "export const ok = [LazyMotion, domAnimation, m];\n",
+      );
+      expect(findings).toEqual([]);
+    }, 30_000);
 
-    it(
-      "refuses the full motion component",
-      async () => {
-        const findings = await motionBudgetFindings(
-          'import { motion } from "motion/react";\nexport const bad = motion;\n',
-        );
-        expect(findings.length).toBeGreaterThan(0);
-        expect(findings.join("\n")).toContain("LazyMotion");
-      },
-      30_000,
-    );
+    it("refuses the full motion component", async () => {
+      const findings = await motionBudgetFindings(
+        'import { motion } from "motion/react";\nexport const bad = motion;\n',
+      );
+      expect(findings.length).toBeGreaterThan(0);
+      expect(findings.join("\n")).toContain("LazyMotion");
+    }, 30_000);
 
-    it(
-      "refuses a namespace import that would defeat the budget",
-      async () => {
-        const findings = await motionBudgetFindings(
-          'import * as everything from "motion";\nexport const bad = everything;\n',
-        );
-        expect(findings.length).toBeGreaterThan(0);
-      },
-      30_000,
-    );
+    it("refuses a namespace import that would defeat the budget", async () => {
+      const findings = await motionBudgetFindings(
+        'import * as everything from "motion";\nexport const bad = everything;\n',
+      );
+      expect(findings.length).toBeGreaterThan(0);
+    }, 30_000);
   });
 });

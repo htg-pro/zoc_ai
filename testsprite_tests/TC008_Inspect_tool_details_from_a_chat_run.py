@@ -39,7 +39,7 @@ async def run_test():
             await page.wait_for_load_state("domcontentloaded", timeout=5000)
         except Exception:
             pass
-        
+
         # -> Final action — this is where the agent failed
         # Error observed by agent: Navigation failed - site unavailable: http://localhost:1420
         await page.goto("http://localhost:1420")
@@ -47,7 +47,7 @@ async def run_test():
             await page.wait_for_load_state("domcontentloaded", timeout=5000)
         except Exception:
             pass
-        
+
         # --> Assertions to verify final state
         current_url = await page.evaluate("() => window.location.href")
         # Assert: page loaded with a URL (final outcome verified by the AI judge during the run)
@@ -63,4 +63,3 @@ async def run_test():
             await pw.stop()
 
 asyncio.run(run_test())
-    

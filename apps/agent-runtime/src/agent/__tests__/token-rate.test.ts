@@ -1,6 +1,8 @@
 /**
  * Token_Rate — zoc-agent-chat-rebuild R13.8, R13.10, R13.12, 9.9.
  *
+ * Feature: zoc-agent-chat-rebuild, task 9.9 (R13.8, R13.10, R13.12).
+ *
  * Both of 9.9's guards are here, and both are guards rather than tests in the sense
  * that they fail for a *plausible* rewrite rather than for a typo:
  *

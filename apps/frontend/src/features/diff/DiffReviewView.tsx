@@ -24,7 +24,13 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { useApp } from "@/lib/store";
-import { changePosition, nextIndex, parseUnifiedDiff, prevIndex, reviewSummary } from "@/lib/diff-utils";
+import {
+  changePosition,
+  nextIndex,
+  parseUnifiedDiff,
+  prevIndex,
+  reviewSummary,
+} from "@/lib/diff-utils";
 import { cn } from "@/lib/utils";
 import { toast } from "@/components/ui/toast";
 
@@ -66,9 +72,7 @@ export function DiffReviewView() {
 
   const applyAll = async () => {
     const ids = patches.map((p) => p.id);
-    const results = await Promise.all(
-      ids.map((id) => accept(id).catch(() => false)),
-    );
+    const results = await Promise.all(ids.map((id) => accept(id).catch(() => false)));
     const applied = results.filter(Boolean).length;
     const failed = ids.length - applied;
     setConfirm(false);
@@ -86,9 +90,11 @@ export function DiffReviewView() {
   };
 
   const accepted = acceptedHunks[current.id] ?? new Set<number>();
-  const { hunks: currentHunks, adds: currentAdds, dels: currentDels } = parseUnifiedDiff(
-    current.unified_diff,
-  );
+  const {
+    hunks: currentHunks,
+    adds: currentAdds,
+    dels: currentDels,
+  } = parseUnifiedDiff(current.unified_diff);
 
   return (
     <div className="flex h-full bg-background">
@@ -278,8 +284,8 @@ export function DiffReviewView() {
               Apply all patches?
             </DialogTitle>
             <DialogDescription>
-              {patches.length} files will be modified. This will write to disk through the agent
-              and respect your permission grants.
+              {patches.length} files will be modified. This will write to disk through the agent and
+              respect your permission grants.
             </DialogDescription>
           </DialogHeader>
           <div className="flex justify-end gap-2">
@@ -357,10 +363,15 @@ function InlineMode({ diff, accepted, onAccept, onReject }: HunkProps) {
         return (
           <div
             key={hi}
-            className={cn("border-b border-border/50", isAccepted && "ring-1 ring-inset ring-emerald-500/30")}
+            className={cn(
+              "border-b border-border/50",
+              isAccepted && "ring-1 ring-inset ring-emerald-500/30",
+            )}
           >
             <div className="flex items-center justify-between bg-muted/40 px-3 py-1">
-              <span className="text-[11px] text-muted-foreground">{h.header || `Hunk ${hi + 1}`}</span>
+              <span className="text-[11px] text-muted-foreground">
+                {h.header || `Hunk ${hi + 1}`}
+              </span>
               <HunkActions
                 index={hi}
                 accepted={isAccepted}
@@ -405,10 +416,15 @@ function SplitMode({ diff, accepted, onAccept, onReject }: HunkProps) {
         return (
           <div
             key={hi}
-            className={cn("border-b border-border/50", isAccepted && "ring-1 ring-inset ring-emerald-500/30")}
+            className={cn(
+              "border-b border-border/50",
+              isAccepted && "ring-1 ring-inset ring-emerald-500/30",
+            )}
           >
             <div className="flex items-center justify-between bg-muted/40 px-3 py-1">
-              <span className="text-[11px] text-muted-foreground">{h.header || `Hunk ${hi + 1}`}</span>
+              <span className="text-[11px] text-muted-foreground">
+                {h.header || `Hunk ${hi + 1}`}
+              </span>
               <HunkActions
                 index={hi}
                 accepted={isAccepted}
@@ -430,7 +446,9 @@ function SplitMode({ diff, accepted, onAccept, onReject }: HunkProps) {
                         className={cn(
                           "flex gap-2 px-3",
                           side === "left" && l.kind === "del" && "bg-red-500/10 text-red-200",
-                          side === "right" && l.kind === "add" && "bg-emerald-500/10 text-emerald-200",
+                          side === "right" &&
+                            l.kind === "add" &&
+                            "bg-emerald-500/10 text-emerald-200",
                         )}
                       >
                         <span className="w-8 select-none text-right text-[10px] text-muted-foreground/60">

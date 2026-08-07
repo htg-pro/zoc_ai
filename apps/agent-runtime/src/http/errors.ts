@@ -1,6 +1,8 @@
 /**
  * Agent_Runtime error envelope — zoc-agent-chat-rebuild R7.5, R9.8, R16.6.
  *
+ * Feature: zoc-agent-chat-rebuild, R7.5, R9.8, R16.6.
+ *
  * One shape for every failure the runtime can report, whether it leaves as an
  * HTTP body or as a streamed `ErrorPart`. It is the Gateway's four-field
  * envelope verbatim, so the Chat_Surface needs exactly one normaliser for
@@ -82,6 +84,8 @@ export const ErrorCode = {
   // ── Provider ─────────────────────────────────────────────────────────
   PROVIDER_AUTH_FAILED: "provider_auth_failed",
   PROVIDER_RATE_LIMITED: "provider_rate_limited",
+  /** Informational part emitted when a Run moves to the next routing candidate. */
+  MODEL_FALLBACK: "model_fallback",
   /** 5xx, a network failure, an unknown model, or a timeout (R27.6). */
   MODEL_UNAVAILABLE: "model_unavailable",
   /** Retryable only after trimming, which is what R12.6's action does. */

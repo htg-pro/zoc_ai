@@ -1,6 +1,8 @@
 /**
  * The transcript — zoc-agent-chat-rebuild R8.1, R20.3, R20.4, R20.7, R20.8, R21.2, task 17.1.
  *
+ * Feature: zoc-agent-chat-rebuild, task 17.1 (R8.1, R20.3, R20.4, R20.7, R20.8, R21.2).
+ *
  * Two stacked regions in one **native** scroll container: a virtualised region for every settled
  * row, and an always-mounted tail for the in-flight Run. The split, the per-kind estimates, and the
  * row cache live in `transcript-regions.ts`; the row `switch` lives in `transcript-model.ts` and
@@ -50,6 +52,8 @@ import { useVirtualizer } from "@tanstack/react-virtual";
 
 import { cn } from "@/lib/utils";
 import { JumpToLatest } from "./JumpToLatest";
+import { RunAnnouncer } from "./RunAnnouncer";
+import type { RunPillState } from "./header/RunStatusPill";
 import { ReviewSurfaceContext, type ReviewSurface } from "./review/review-surface";
 import { TranscriptRowView } from "./TranscriptRowView";
 import { sameItems, useFrameCoalesced, useStableCallback } from "./commit-discipline";
@@ -88,6 +92,16 @@ export interface TranscriptProps {
   streaming: boolean;
   /** R23.2's migrated legacy events, already ordered and collapsed (24.2). */
   historicalRows?: readonly TranscriptRow[];
+  /**
+   * The Run's lifecycle state, announced through this region's live area (R21.2, task 23.1).
+   *
+   * Separate from `streaming` because the two answer different questions: `streaming` drives markdown
+   * repair and fence highlighting, and collapses every terminal outcome into `false`. R21.2 needs to
+   * tell a completion from a failure, which that boolean cannot do.
+   */
+  runState?: RunPillState;
+  /** Appended to a failure announcement, so the reason travels with the event (R21.2). */
+  runFailureDetail?: string | null;
   /** The authoritative tool kind, from 22.1's `/v1/tools` catalogue. */
   toolKindOf?: (toolName: string) => ToolKind | undefined;
   onToolRetry?: (toolCallId: string) => void;
@@ -110,6 +124,8 @@ export function Transcript({
   messages,
   streaming,
   historicalRows,
+  runState,
+  runFailureDetail,
   toolKindOf,
   onToolRetry,
   onErrorRetry,
@@ -295,6 +311,16 @@ export function Transcript({
             ))}
           </div>
         </div>
+
+        {/*
+          R21.2's other half. The tail above announces text as it arrives; this announces the Run's
+          start, completion, and failure — events a Run can reach without emitting any text at all.
+          Outside the scrolling container because it renders nothing visible and must not be
+          virtualised away when the user scrolls back through history.
+        */}
+        {runState === undefined ? null : (
+          <RunAnnouncer state={runState} failureDetail={runFailureDetail ?? null} />
+        )}
 
         <JumpToLatest />
       </div>

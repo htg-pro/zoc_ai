@@ -1,6 +1,8 @@
 /**
  * One tool call in the timeline — zoc-agent-chat-rebuild R9.2, R9.3, R9.4, R9.6, R9.7, R21.4.
  *
+ * Feature: zoc-agent-chat-rebuild, R9.2, R9.3, R9.4, R9.6, R9.7, R21.4.
+ *
  * An `<li>` on the rail: node, tool name, one-line summary, then a right-aligned metric column
  * with the duration always rightmost. Expanding discloses the input, the output, and every
  * affected path.
@@ -145,6 +147,19 @@ export function ToolEntry({
       >
         {entry.toolName}
       </span>
+      {entry.agentName === undefined ? null : (
+        <span
+          className="shrink-0 rounded-[var(--zoc-radius-chip)] border px-1 font-mono"
+          data-zoc-agent-name={entry.agentName}
+          style={{
+            borderColor: "var(--zoc-border)",
+            color: "var(--zoc-agent)",
+            fontSize: "var(--zoc-text-label)",
+          }}
+        >
+          {entry.agentName}
+        </span>
+      )}
       {entry.summary !== undefined && entry.summary.length > 0 ? (
         <span
           className="min-w-0 flex-1 truncate"
@@ -193,6 +208,10 @@ export function ToolEntry({
   return (
     <li
       className={cn("flex flex-col", className)}
+      // Restated for the same reason the timeline restates `list`: this `<li>` is a flex container,
+      // and its parent is one too, so neither implicit role survives to the accessibility tree
+      // unaided.
+      role="listitem"
       style={{ gap: "var(--zoc-row-gap-tight)" }}
       data-zoc-tool-entry={entry.toolCallId}
       // R9.7 and R21.4's contract, from one function so the cluster cannot phrase it differently.
@@ -201,7 +220,7 @@ export function ToolEntry({
       {hasDetail ? (
         <Collapsible open={open} onOpenChange={onOpenChange}>
           <CollapsibleTrigger
-            className="flex w-full items-center gap-2 rounded-[var(--zoc-radius-chip)] px-1 py-0.5 text-left hover:bg-[var(--zoc-row-bg)]"
+            className="flex w-full items-center gap-2 rounded-[var(--zoc-radius-chip)] px-1 py-0.5 text-left hover:bg-[var(--zoc-row-bg)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--zoc-agent-strong)]"
             data-zoc-tool-trigger=""
           >
             <ChevronRight

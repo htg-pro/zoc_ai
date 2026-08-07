@@ -11,10 +11,7 @@ const CAP = 12;
 
 function storage(): Storage | null {
   if (typeof localStorage === "undefined") return null;
-  if (
-    typeof localStorage.getItem !== "function" ||
-    typeof localStorage.setItem !== "function"
-  ) {
+  if (typeof localStorage.getItem !== "function" || typeof localStorage.setItem !== "function") {
     return null;
   }
   return localStorage;

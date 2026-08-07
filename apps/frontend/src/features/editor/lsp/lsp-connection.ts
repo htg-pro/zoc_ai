@@ -9,7 +9,7 @@
  * `LanguageServerState` through an `onState` callback that drives the
  * per-language status indicator.
  */
-import { resolveAgentPort } from "@/lib/agent-port";
+import { resolveWorkspaceServicesEndpoint } from "@/lib/workspace-services-endpoint";
 
 // Application close codes the Gateway may send (kept in sync with the
 // `services/gateway/src/zocai_gateway/routes/lsp.py` mirror constants).
@@ -64,9 +64,8 @@ export async function openLspConnection(
   serverName: string,
   options: LspConnectionOptions,
 ): Promise<LspConnection> {
-  const factory =
-    options.socketFactory ?? ((url) => new WebSocket(url) as unknown as LspSocket);
-  const port = await resolveAgentPort();
+  const factory = options.socketFactory ?? ((url) => new WebSocket(url) as unknown as LspSocket);
+  const { port } = await resolveWorkspaceServicesEndpoint();
   const url = lspConnectionUrl(port, serverName);
 
   let socket: LspSocket | null = null;

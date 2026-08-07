@@ -1,6 +1,8 @@
 /**
  * The inline-edit (⌘K) client — zoc-agent-chat-rebuild R2.1, R6.2, R6.5, R7.8, task 22.12.
  *
+ * Feature: zoc-agent-chat-rebuild, task 22.12 (R2.1, R6.2, R6.5, R7.8).
+ *
  * Re-homed from `features/agent/inline-edit-client.ts`, which 26.1 deletes, and retargeted from the
  * Gateway's `POST /v1/agent/inline-edit` to the Agent_Runtime's `POST /v1/inline-edit` (9.7). Inline edit
  * is a provider inference call, so it moves off Workspace_Services for the same reason autocomplete does
@@ -70,7 +72,8 @@ function parseFrame(raw: string): SseFrame {
   for (const line of raw.split(/\r?\n/)) {
     if (line.startsWith(":")) continue; // comment / heartbeat
     if (line.startsWith("event:")) event = line.slice("event:".length).trim();
-    else if (line.startsWith("data:")) dataLines.push(line.slice("data:".length).replace(/^\s/, ""));
+    else if (line.startsWith("data:"))
+      dataLines.push(line.slice("data:".length).replace(/^\s/, ""));
   }
   return { event, data: dataLines.join("\n") };
 }

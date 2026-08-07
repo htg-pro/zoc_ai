@@ -4,11 +4,7 @@ import { setSetting } from "@/lib/settings";
 import { setTrust, setRunMode } from "@/lib/trust";
 import * as agentClient from "@/lib/agent-client";
 import * as bridge from "@/lib/tauri-bridge";
-import type {
-  AgentClient,
-  CodeReviewRequest,
-  TestGenRequest,
-} from "@/lib/agent-client";
+import type { AgentClient, CodeReviewRequest, TestGenRequest } from "@/lib/agent-client";
 import type {
   CodeReviewReport,
   Session,
@@ -27,7 +23,6 @@ describe("app store", () => {
       attachments: [...initial.attachments],
       pendingPatches: [...initial.pendingPatches],
       acceptedHunks: {},
-      chat: [...initial.chat],
       agentItems: [...initial.agentItems],
     });
     // Phase 13: most store tests assume a trusted workspace that runs commands.
@@ -128,9 +123,9 @@ describe("app store", () => {
   it("marks a buffer dirty on edit and clears it on save (browser preview)", async () => {
     await useApp.getState().openFile("/services/agent.py");
     useApp.getState().updateFile("/services/agent.py", "print('changed')\n");
-    expect(
-      useApp.getState().openFiles.find((f) => f.path === "/services/agent.py")?.dirty,
-    ).toBe(true);
+    expect(useApp.getState().openFiles.find((f) => f.path === "/services/agent.py")?.dirty).toBe(
+      true,
+    );
 
     // In the (non-Tauri) test environment saveFile just clears the dirty flag.
     const ok = await useApp.getState().saveActiveFile();
@@ -164,7 +159,12 @@ describe("app store", () => {
         path: "/ws/node_modules",
         kind: "dir",
         children: [
-          { name: "Composer.tsx", path: "/ws/node_modules/Composer.tsx", kind: "file", children: null },
+          {
+            name: "Composer.tsx",
+            path: "/ws/node_modules/Composer.tsx",
+            kind: "file",
+            children: null,
+          },
         ],
       },
     ]);
@@ -191,8 +191,7 @@ describe("app store", () => {
         {
           id: "patch-test-1",
           file_path: "src/example.ts",
-          unified_diff:
-            "--- a/src/example.ts\n+++ b/src/example.ts\n@@ -1 +1 @@\n-old\n+new\n",
+          unified_diff: "--- a/src/example.ts\n+++ b/src/example.ts\n@@ -1 +1 @@\n-old\n+new\n",
           summary: "tweak example",
         },
       ],
@@ -257,16 +256,20 @@ describe("app store", () => {
       selectedModel: { provider: "mock", model: "mock-model" },
       llamaCppStatus: null,
     });
-    const start = useApp.getState().chat.length;
+    const start = useApp.getState().agentItems.length;
     useApp.getState().sendUserMessage("hello agent");
-    expect(useApp.getState().chat.length).toBe(start + 1);
+    expect(useApp.getState().agentItems.length).toBe(start + 1);
     await new Promise((r) => setTimeout(r, 700));
-    expect(useApp.getState().chat.length).toBe(start + 2);
+    expect(useApp.getState().agentItems.length).toBe(start + 2);
     // Offline used to produce a fabricated assistant answer; it is now a system
-    // line that says nothing was sent.
-    const last = useApp.getState().chat[start + 1];
-    expect(last.message?.role).toBe("system");
-    expect(last.message?.content).toContain("Can't reach the agent service");
+    // line that says nothing was sent. Read off `agentItems` since task 26.6
+    // deleted the parallel `chat` array: `appendSystemChat` wrote both halves
+    // from the same string, and the surviving half spells a system line as an
+    // `error` row.
+    expect(useApp.getState().agentItems[start + 1]).toMatchObject({
+      type: "error",
+      error: expect.stringContaining("Can't reach the agent service"),
+    });
     expect(useApp.getState().streaming).toBe(false);
   });
 
@@ -305,9 +308,7 @@ describe("app store", () => {
   it("routes /review to the structured review endpoint exactly once", async () => {
     const review: CodeReviewReport = {
       summary: "looks fine",
-      findings: [
-        { file: "src/a.ts", line: 1, severity: "low", message: "nit" },
-      ],
+      findings: [{ file: "src/a.ts", line: 1, severity: "low", message: "nit" }],
     };
     const codeReview = vi
       .fn<(id: string, req: CodeReviewRequest) => Promise<CodeReviewReport>>()
@@ -341,9 +342,12 @@ describe("app store", () => {
       const [name, args] = spy.mock.calls[0];
       expect(name).toBe("explain");
       expect(args).toEqual({ target: "src/foo.ts" });
-      // The user message itself is still appended to the chat.
-      const last = useApp.getState().chat[useApp.getState().chat.length - 1];
-      expect(last.message?.content).toBe("/explain src/foo.ts");
+      // The user message itself is still appended to the transcript.
+      const items = useApp.getState().agentItems;
+      expect(items[items.length - 1]).toMatchObject({
+        type: "user_message",
+        text: "/explain src/foo.ts",
+      });
     } finally {
       useApp.setState({ runSlashCommand: original });
     }
@@ -361,7 +365,7 @@ describe("app store", () => {
     // auto-jump into the next remaining session.
     expect(useApp.getState().activeSessionId).toBe("");
     expect(useApp.getState().activeSessionId).not.toBe(second.id);
-    expect(useApp.getState().chat).toEqual([]);
+    expect(useApp.getState().agentItems).toEqual([]);
   });
 
   it("opening a new chat never auto-resumes a prior session (R2.1)", async () => {
@@ -390,18 +394,6 @@ describe("app store", () => {
     useApp.setState({
       liveMode: true,
       activeSessionId: prior.id,
-      chat: [
-        {
-          id: "stale-msg-1",
-          kind: "message",
-          message: {
-            id: "m-old",
-            role: "user",
-            content: "old prompt",
-            created_at: new Date().toISOString(),
-          },
-        },
-      ] as never,
       agentItems: [
         { id: "stale-item-1", type: "agent_message", text: "old answer", streaming: false },
       ] as never,
@@ -422,9 +414,7 @@ describe("app store", () => {
       plan: null,
       tool_calls: [],
     };
-    const createSession = vi
-      .fn<(req: unknown) => Promise<Session>>()
-      .mockResolvedValue(fresh);
+    const createSession = vi.fn<(req: unknown) => Promise<Session>>().mockResolvedValue(fresh);
     const fake = { createSession } as unknown as AgentClient;
     vi.spyOn(agentClient, "getAgentClient").mockResolvedValue(fake);
 
@@ -439,7 +429,6 @@ describe("app store", () => {
       expect(st.activeSessionId).not.toBe(s.id);
     }
     // Clean state reflects only the new (empty) session, not the prior one.
-    expect(st.chat).toEqual([]);
     expect(st.agentItems).toEqual([]);
     expect(st.plan).toBeNull();
     // The new session is prepended to the list; prior sessions are retained
@@ -468,9 +457,7 @@ describe("app store", () => {
 
     const sessions = useApp.getState().sessions;
     expect(sessions.length).toBeGreaterThan(1);
-    const listSessions = vi
-      .fn<() => Promise<Session[]>>()
-      .mockResolvedValue(sessions);
+    const listSessions = vi.fn<() => Promise<Session[]>>().mockResolvedValue(sessions);
     const fake = { listSessions } as unknown as AgentClient;
     vi.spyOn(agentClient, "getAgentClient").mockResolvedValue(fake);
 
@@ -480,7 +467,6 @@ describe("app store", () => {
     expect(st.sessions.length).toBe(sessions.length);
     expect(st.activeSessionId).toBe("");
     expect(st.activeSessionId).not.toBe(sessions[0].id);
-    expect(st.chat).toEqual([]);
     expect(st.agentItems).toEqual([]);
     expect(st.plan).toBeNull();
 
@@ -544,18 +530,16 @@ describe("app store", () => {
     await useApp.getState().loadToolGrants();
 
     expect(listToolGrants).toHaveBeenCalledTimes(1);
-    expect(useApp.getState().toolGrants).toEqual([
-      { tool: "search", granted: true, once: false },
-    ]);
+    expect(useApp.getState().toolGrants).toEqual([{ tool: "search", granted: true, once: false }]);
     vi.restoreAllMocks();
   });
 
   it("retryApproval is a no-op in mock mode", async () => {
     useApp.setState({ liveMode: false });
-    const before = useApp.getState().chat.length;
+    const before = useApp.getState().agentItems.length;
     const ok = await useApp.getState().retryApproval("c1");
     expect(ok).toBe(true);
-    expect(useApp.getState().chat.length).toBe(before);
+    expect(useApp.getState().agentItems.length).toBe(before);
   });
 
   it("renameEntry updates open tabs and active file (desktop path)", async () => {
@@ -611,18 +595,14 @@ describe("app store", () => {
       size: 0,
       modified_ms: null,
     });
-    vi.spyOn(bridge, "fsCreateFile").mockResolvedValue(
-      "/ws/.zoc/instructions.md",
-    );
+    vi.spyOn(bridge, "fsCreateFile").mockResolvedValue("/ws/.zoc/instructions.md");
     vi.spyOn(bridge, "fsReadText").mockResolvedValue("");
     useApp.setState({ workspaceRoot: "/ws", openFiles: [], activeFile: null });
 
     const result = await useApp.getState().openProjectInstructions();
 
     expect(result).toBe("/ws/.zoc/instructions.md");
-    expect(bridge.fsCreateFile).toHaveBeenCalledWith(
-      "/ws/.zoc/instructions.md",
-    );
+    expect(bridge.fsCreateFile).toHaveBeenCalledWith("/ws/.zoc/instructions.md");
     expect(useApp.getState().activeFile).toBe("/ws/.zoc/instructions.md");
     expect(useApp.getState().mainView).toBe("editor");
     vi.restoreAllMocks();
@@ -762,12 +742,16 @@ describe("app store", () => {
   });
 
   it("diagnostics: set, clear-by-source, and clear-all", () => {
-    useApp.getState().setDiagnostics("typescript", [
-      { source: "typescript", file: "a.ts", line: 1, column: 1, severity: "error", message: "x" },
-    ]);
-    useApp.getState().setDiagnostics("ruff", [
-      { source: "ruff", file: "a.py", line: 2, column: 1, severity: "warning", message: "y" },
-    ]);
+    useApp
+      .getState()
+      .setDiagnostics("typescript", [
+        { source: "typescript", file: "a.ts", line: 1, column: 1, severity: "error", message: "x" },
+      ]);
+    useApp
+      .getState()
+      .setDiagnostics("ruff", [
+        { source: "ruff", file: "a.py", line: 2, column: 1, severity: "warning", message: "y" },
+      ]);
     expect(Object.keys(useApp.getState().diagnostics)).toHaveLength(2);
     useApp.getState().clearDiagnostics("ruff");
     expect(useApp.getState().diagnostics.ruff).toBeUndefined();
@@ -784,7 +768,17 @@ describe("app store", () => {
       stderr: "",
       code: 1,
     });
-    useApp.setState({ diagnostics: {}, outputChannels: { Agent: [], Git: [], Tasks: [], MCP: [], Terminal: [], "Extension Host": [] } });
+    useApp.setState({
+      diagnostics: {},
+      outputChannels: {
+        Agent: [],
+        Git: [],
+        Tasks: [],
+        MCP: [],
+        Terminal: [],
+        "Extension Host": [],
+      },
+    });
 
     await useApp.getState().runDiagnostics("tsc");
 
@@ -795,7 +789,17 @@ describe("app store", () => {
   });
 
   it("appendOutput, appendLog and their clears work", () => {
-    useApp.setState({ logs: [], outputChannels: { Agent: [], Git: [], Tasks: [], MCP: [], Terminal: [], "Extension Host": [] } });
+    useApp.setState({
+      logs: [],
+      outputChannels: {
+        Agent: [],
+        Git: [],
+        Tasks: [],
+        MCP: [],
+        Terminal: [],
+        "Extension Host": [],
+      },
+    });
     useApp.getState().appendOutput("Git", "fetched");
     useApp.getState().appendLog("warning", "heads up");
     expect(useApp.getState().outputChannels.Git).toEqual(["fetched"]);
@@ -809,7 +813,8 @@ describe("app store", () => {
   it("discoverTasks reads manifests and merges tasks", async () => {
     vi.spyOn(bridge, "isTauri").mockReturnValue(true);
     vi.spyOn(bridge, "fsReadText").mockImplementation(async (path: string) => {
-      if (path.endsWith("package.json")) return JSON.stringify({ scripts: { build: "vite build", test: "vitest" } });
+      if (path.endsWith("package.json"))
+        return JSON.stringify({ scripts: { build: "vite build", test: "vitest" } });
       if (path.endsWith("Cargo.toml")) return "[package]\nname='x'";
       return null;
     });
@@ -832,11 +837,26 @@ describe("app store", () => {
     });
     useApp.setState({
       tasks: [
-        { id: "cargo:check", label: "cargo: check", source: "cargo", command: "cargo", args: ["check"], group: "none", problemMatcher: "cargo" },
+        {
+          id: "cargo:check",
+          label: "cargo: check",
+          source: "cargo",
+          command: "cargo",
+          args: ["check"],
+          group: "none",
+          problemMatcher: "cargo",
+        },
       ],
       taskRuns: {},
       diagnostics: {},
-      outputChannels: { Agent: [], Git: [], Tasks: [], MCP: [], Terminal: [], "Extension Host": [] },
+      outputChannels: {
+        Agent: [],
+        Git: [],
+        Tasks: [],
+        MCP: [],
+        Terminal: [],
+        "Extension Host": [],
+      },
     });
 
     await useApp.getState().runTask("cargo:check");
@@ -850,13 +870,30 @@ describe("app store", () => {
 
   it("runBuildTask picks the default build task", async () => {
     vi.spyOn(bridge, "isTauri").mockReturnValue(true);
-    const runTaskCommand = vi.spyOn(bridge, "runTaskCommand").mockResolvedValue({ stdout: "", stderr: "", code: 0 });
+    const runTaskCommand = vi
+      .spyOn(bridge, "runTaskCommand")
+      .mockResolvedValue({ stdout: "", stderr: "", code: 0 });
     useApp.setState({
       tasks: [
-        { id: "npm:build", label: "npm: build", source: "npm", command: "npm", args: ["run", "build"], group: "build", problemMatcher: null },
+        {
+          id: "npm:build",
+          label: "npm: build",
+          source: "npm",
+          command: "npm",
+          args: ["run", "build"],
+          group: "build",
+          problemMatcher: null,
+        },
       ],
       taskRuns: {},
-      outputChannels: { Agent: [], Git: [], Tasks: [], MCP: [], Terminal: [], "Extension Host": [] },
+      outputChannels: {
+        Agent: [],
+        Git: [],
+        Tasks: [],
+        MCP: [],
+        Terminal: [],
+        "Extension Host": [],
+      },
     });
 
     await useApp.getState().runBuildTask();
@@ -1046,7 +1083,15 @@ describe("app store", () => {
     useApp.setState({
       workspaceRoot: "/ws",
       tasks: [
-        { id: "npm:build", label: "npm: build", source: "npm", command: "npm", args: ["run", "build"], group: "build", problemMatcher: null },
+        {
+          id: "npm:build",
+          label: "npm: build",
+          source: "npm",
+          command: "npm",
+          args: ["run", "build"],
+          group: "build",
+          problemMatcher: null,
+        },
       ],
       taskRuns: {},
     });

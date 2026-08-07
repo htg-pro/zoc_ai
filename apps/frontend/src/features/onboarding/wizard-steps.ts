@@ -5,11 +5,7 @@
  * hardware-derived copy here — pure, no React — means the navigation contract is
  * testable and the component stays presentational.
  */
-import {
-  type LocalModel,
-  deriveNameFromPath,
-  makeModelId,
-} from "@/lib/local-models";
+import { type LocalModel, deriveNameFromPath, makeModelId } from "@/lib/local-models";
 
 export const WIZARD_STEPS = [
   "welcome",
@@ -253,9 +249,7 @@ export function describeHardware(info: HardwareInfo | null): string {
   if (!info || !info.detected) return "Couldn't detect your GPU or memory.";
   const parts: string[] = [];
   parts.push(
-    info.gpu_memory_gb
-      ? `GPU: ${info.gpu_memory_gb.toFixed(1)} GB VRAM`
-      : "GPU: none detected",
+    info.gpu_memory_gb ? `GPU: ${info.gpu_memory_gb.toFixed(1)} GB VRAM` : "GPU: none detected",
   );
   if (info.system_memory_gb) {
     parts.push(`RAM: ${info.system_memory_gb.toFixed(1)} GB`);

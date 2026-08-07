@@ -1,6 +1,8 @@
 /**
  * The Chat_Surface's token pairs and their contrast roles — R17.1, R17.2, R17.6.
  *
+ * Feature: zoc-agent-chat-rebuild, R17.1, R17.2, R17.6.
+ *
  * Not a third token system, and not a copy of one. `globals.css` holds the values; this
  * module holds the **pairings** — which foreground is drawn on which background, and in what
  * role — because that is the fact R17.6 constrains and CSS cannot state. A contrast

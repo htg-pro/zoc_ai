@@ -39,26 +39,26 @@ async def run_test():
             await page.wait_for_load_state("domcontentloaded", timeout=5000)
         except Exception:
             pass
-        
+
         # -> Type a test prompt into the composer labeled 'Message the agent…' and click the 'Send' button to submit the chat message.
         # Message the agent… text area
         elem = page.get_by_placeholder('Message the agent…', exact=True)
         await elem.wait_for(state="visible", timeout=10000)
         await elem.fill("Hello \u2014 please stream your response token-by-token and include the marker STREAM-OK at the end.")
-        
+
         # -> Type a test prompt into the composer labeled 'Message the agent…' and click the 'Send' button to submit the chat message.
         # Send button
         elem = page.get_by_role('button', name='Send', exact=True)
         await elem.click(timeout=10000)
-        
+
         # --> Assertions to verify final state
-        
+
         # --> Verify streamed output is visible in the conversation
         # Assert: Expected conversation message to include the marker 'STREAM-OK' indicating streamed output.
         await expect(page.locator("xpath=/html/body/div[1]/div/div/div/div[5]/div/div/div[3]/div/div/div/div[2]/div[1]").nth(0)).to_contain_text("STREAM-OK", timeout=15000), "Expected conversation message to include the marker 'STREAM-OK' indicating streamed output."
         # Assert: Verify the assistant response is displayed
         assert False, "Expected: Verify the assistant response is displayed (could not be verified on the page)"
-        
+
         # --> Test blocked by environment/access constraints during agent run
         # Reason: TEST BLOCKED Streaming could not be verified — the backend agent sidecar is unreachable, so real-time token streaming is not available. Observations: - The conversation shows a mock assistant reply: "Got it. (Mock response — agent sidecar not reachable.)" - The terminal shows: "agent sidecar offline, running in mock terminal" and "Failed to fetch", indicating the backend sidecar is unreachable.
         raise AssertionError("Test blocked during agent run: " + "TEST BLOCKED Streaming could not be verified \u2014 the backend agent sidecar is unreachable, so real-time token streaming is not available. Observations: - The conversation shows a mock assistant reply: \"Got it. (Mock response \u2014 agent sidecar not reachable.)\" - The terminal shows: \"agent sidecar offline, running in mock terminal\" and \"Failed to fetch\", indicating the backend sidecar is unreachable." + " — the exported script cannot reproduce a PASS in this environment.")
@@ -73,4 +73,3 @@ async def run_test():
             await pw.stop()
 
 asyncio.run(run_test())
-    

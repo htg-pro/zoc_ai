@@ -39,7 +39,7 @@ async def run_test():
             await page.wait_for_load_state("domcontentloaded", timeout=5000)
         except Exception:
             pass
-        
+
         # -> Type a slash command into the composer and send it.
         composer = page.get_by_test_id("composer-textarea")
         await composer.wait_for(state="visible", timeout=10000)

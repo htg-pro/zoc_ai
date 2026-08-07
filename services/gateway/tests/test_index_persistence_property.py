@@ -50,9 +50,7 @@ def test_workspace_hash_is_deterministic_for_absolute_path(segment: str) -> None
 
 @settings(max_examples=100, deadline=None)
 @given(dimension=st.integers(min_value=1, max_value=8), count=st.integers(0, 5))
-def test_every_persisted_artifact_is_confined(
-    dimension: int, count: int
-) -> None:
+def test_every_persisted_artifact_is_confined(dimension: int, count: int) -> None:
     """Feature: advanced-context-engine, Property 3: persisted-file confinement.
 
     **Validates: Requirements 2.4**
@@ -74,8 +72,7 @@ def test_every_persisted_artifact_is_confined(
             for index in range(count)
         )
         embeddings = tuple(
-            tuple(float(index + column) for column in range(dimension))
-            for index in range(count)
+            tuple(float(index + column) for column in range(dimension)) for index in range(count)
         )
         store.save(
             workspace,

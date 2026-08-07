@@ -1,5 +1,5 @@
 import type { WorkspaceIndexProgress } from "@zoc-studio/shared-types";
-import { resolveAgentPort } from "./agent-port";
+import { resolveWorkspaceServicesEndpoint } from "./workspace-services-endpoint";
 
 const INITIAL_RECONNECT_MS = 500;
 const MAX_RECONNECT_MS = 5_000;
@@ -22,7 +22,7 @@ export async function subscribeWorkspaceIndexProgress(
   onProgress: (progress: WorkspaceIndexProgress) => void,
   socketFactory: SocketFactory = (url) => new WebSocket(url) as unknown as IndexProgressSocket,
 ): Promise<() => void> {
-  const port = await resolveAgentPort();
+  const { port } = await resolveWorkspaceServicesEndpoint();
   const url = workspaceIndexProgressUrl(port);
   let socket: IndexProgressSocket | null = null;
   let reconnectTimer: ReturnType<typeof setTimeout> | null = null;

@@ -40,10 +40,7 @@ export function buildCursorWindow(
 }
 
 /** R8.4: an automatic trigger with both prefix and suffix empty makes no request. */
-export function hasNonEmptyContext(body: {
-  prefix: string;
-  suffix: string;
-}): boolean {
+export function hasNonEmptyContext(body: { prefix: string; suffix: string }): boolean {
   return body.prefix.length > 0 || body.suffix.length > 0;
 }
 
@@ -284,13 +281,9 @@ export function createInlineCompletionsProvider(
       const filePath = model.uri?.path ?? model.uri?.toString() ?? "";
       const window = buildCursorWindow(text, offset, language, filePath, maxPrefix, maxSuffix);
       const windowKey = JSON.stringify(window);
-      const automatic =
-        explicitKind === undefined ? true : context.triggerKind !== explicitKind;
+      const automatic = explicitKind === undefined ? true : context.triggerKind !== explicitKind;
 
-      if (
-        windowKey !== lastWindowKey ||
-        (!automatic && controller.currentText() === "")
-      ) {
+      if (windowKey !== lastWindowKey || (!automatic && controller.currentText() === "")) {
         lastWindowKey = windowKey;
         controller.request(window, { automatic });
       }

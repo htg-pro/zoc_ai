@@ -31,15 +31,39 @@ import { cn } from "@/lib/utils";
 
 const RUN_MODES: { value: RunMode; label: string; hint: string }[] = [
   { value: "ask", label: "Ask every time", hint: "Prompt before every privileged action." },
-  { value: "allowlist", label: "Allowlist", hint: "Auto-run allowlisted commands; prompt otherwise." },
-  { value: "sandboxed", label: "Sandboxed when possible", hint: "Auto-run sandboxable actions; prompt otherwise." },
-  { value: "all", label: "Run everything", hint: "Auto-run all (destructive actions still confirm)." },
+  {
+    value: "allowlist",
+    label: "Allowlist",
+    hint: "Auto-run allowlisted commands; prompt otherwise.",
+  },
+  {
+    value: "sandboxed",
+    label: "Sandboxed when possible",
+    hint: "Auto-run sandboxable actions; prompt otherwise.",
+  },
+  {
+    value: "all",
+    label: "Run everything",
+    hint: "Auto-run all (destructive actions still confirm).",
+  },
 ];
 
 const PROTECTIONS: { key: ProtectionKey; label: string; hint: string }[] = [
-  { key: "protectDeletions", label: "File deletion protection", hint: "Confirm before deleting files." },
-  { key: "protectDotfiles", label: "Dotfile protection", hint: "Confirm before editing .env and other dotfiles." },
-  { key: "protectExternal", label: "External file protection", hint: "Confirm before touching paths outside the workspace." },
+  {
+    key: "protectDeletions",
+    label: "File deletion protection",
+    hint: "Confirm before deleting files.",
+  },
+  {
+    key: "protectDotfiles",
+    label: "Dotfile protection",
+    hint: "Confirm before editing .env and other dotfiles.",
+  },
+  {
+    key: "protectExternal",
+    label: "External file protection",
+    hint: "Confirm before touching paths outside the workspace.",
+  },
 ];
 
 /**

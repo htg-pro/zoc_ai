@@ -1,6 +1,8 @@
 /**
  * Unit tests for the request validation gate — zoc-agent-chat-rebuild R7.5.
  *
+ * Feature: zoc-agent-chat-rebuild, R7.5.
+ *
  * Property 5 (2.6) sweeps arbitrary invalid bodies for a complete envelope.
  * These are the specific cases that sweep is unlikely to construct on its own,
  * and every one of them is a way the mapping could echo the request back:

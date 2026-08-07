@@ -63,7 +63,11 @@ describe("providers catalogue", () => {
 
   it("persists edits to a built-in provider's models and base URL", () => {
     const openai = getProvider("openai")!;
-    upsertProvider({ ...openai, baseUrl: "https://proxy.local/v1", models: parseModelList("gpt-x") });
+    upsertProvider({
+      ...openai,
+      baseUrl: "https://proxy.local/v1",
+      models: parseModelList("gpt-x"),
+    });
     const reloaded = getProvider("openai")!;
     expect(reloaded.baseUrl).toBe("https://proxy.local/v1");
     expect(reloaded.models.map((m) => m.id)).toEqual(["gpt-x"]);

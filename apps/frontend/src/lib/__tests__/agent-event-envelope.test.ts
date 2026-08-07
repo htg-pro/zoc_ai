@@ -9,12 +9,7 @@
 //
 // _Requirements: 1.2, 1.7_
 import { describe, expect, it } from "vitest";
-import type {
-  AgentEvent,
-  AgentEventBase,
-  DoneEvent,
-  MessageEvent,
-} from "@zoc-studio/shared-types";
+import type { AgentEvent, AgentEventBase, DoneEvent, MessageEvent } from "@zoc-studio/shared-types";
 
 const roundTrip = <T>(value: T): T => JSON.parse(JSON.stringify(value)) as T;
 

@@ -78,7 +78,12 @@ describe("parseCargo", () => {
     ].join("\n");
     const d = parseCargo(out);
     expect(d).toHaveLength(2);
-    expect(d[0]).toMatchObject({ source: "cargo", code: "E0382", severity: "error", file: "src/main.rs" });
+    expect(d[0]).toMatchObject({
+      source: "cargo",
+      code: "E0382",
+      severity: "error",
+      file: "src/main.rs",
+    });
     expect(d[1]).toMatchObject({ severity: "warning", code: undefined });
   });
 });
@@ -96,11 +101,9 @@ describe("helpers", () => {
 
   it("countBySeverity tallies errors and warnings", () => {
     const items = parseTsc(
-      [
-        "a.ts(1,1): error TS1: a",
-        "a.ts(2,1): warning TS2: b",
-        "a.ts(3,1): error TS3: c",
-      ].join("\n"),
+      ["a.ts(1,1): error TS1: a", "a.ts(2,1): warning TS2: b", "a.ts(3,1): error TS3: c"].join(
+        "\n",
+      ),
     );
     expect(countBySeverity(items)).toEqual({ errors: 2, warnings: 1 });
   });

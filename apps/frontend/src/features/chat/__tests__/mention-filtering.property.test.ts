@@ -75,27 +75,23 @@ const candidates = fc.uniqueArray(candidate, {
 describe("Feature: zoc-agent-chat-rebuild, Property 24: mention filtering is sound and ordered", () => {
   it("returns only candidates that match the query, best first, capped at fifty (R12.2)", () => {
     fc.assert(
-      fc.property(
-        candidates,
-        fc.stringMatching(/^[a-z]{0,6}$/),
-        (pool, query) => {
-          const results = buildMentionIndex(pool).search(query);
+      fc.property(candidates, fc.stringMatching(/^[a-z]{0,6}$/), (pool, query) => {
+        const results = buildMentionIndex(pool).search(query);
 
-          expect(results.length).toBeLessThanOrEqual(MENTION_RESULT_LIMIT);
-          for (const result of results) {
-            // Soundness: the membership rule, not Fuse's threshold.
-            expect(
-              matchesQuery(result.candidate, query),
-              `${result.candidate.label} does not match ${query}`,
-            ).toBe(true);
-          }
-          // Ordering: Fuse's score is a distance, so best-first is non-decreasing.
-          const scores = results.map((result) => result.score);
-          for (let index = 1; index < scores.length; index += 1) {
-            expect(scores[index]).toBeGreaterThanOrEqual(scores[index - 1] ?? 0);
-          }
-        },
-      ),
+        expect(results.length).toBeLessThanOrEqual(MENTION_RESULT_LIMIT);
+        for (const result of results) {
+          // Soundness: the membership rule, not Fuse's threshold.
+          expect(
+            matchesQuery(result.candidate, query),
+            `${result.candidate.label} does not match ${query}`,
+          ).toBe(true);
+        }
+        // Ordering: Fuse's score is a distance, so best-first is non-decreasing.
+        const scores = results.map((result) => result.score);
+        for (let index = 1; index < scores.length; index += 1) {
+          expect(scores[index]).toBeGreaterThanOrEqual(scores[index - 1] ?? 0);
+        }
+      }),
       RUNS,
     );
   });
@@ -193,15 +189,19 @@ describe("Feature: zoc-agent-chat-rebuild, Property 25: mention insertion round-
 
   it("opens only at input start or after whitespace (R12.1)", () => {
     fc.assert(
-      fc.property(fc.stringMatching(/^[a-z]{1,10}$/), fc.stringMatching(/^[a-z]{0,6}$/), (before, typed) => {
-        // `user@example` is not a mention, and the parser must not scan past the `@` to find an earlier
-        // one — which is the bug that opens the popover on the wrong token.
-        const glued = `${before}@${typed}`;
-        expect(detectMentionQuery(glued, glued.length)).toBeNull();
+      fc.property(
+        fc.stringMatching(/^[a-z]{1,10}$/),
+        fc.stringMatching(/^[a-z]{0,6}$/),
+        (before, typed) => {
+          // `user@example` is not a mention, and the parser must not scan past the `@` to find an earlier
+          // one — which is the bug that opens the popover on the wrong token.
+          const glued = `${before}@${typed}`;
+          expect(detectMentionQuery(glued, glued.length)).toBeNull();
 
-        const spaced = `${before} @${typed}`;
-        expect(detectMentionQuery(spaced, spaced.length)).not.toBeNull();
-      }),
+          const spaced = `${before} @${typed}`;
+          expect(detectMentionQuery(spaced, spaced.length)).not.toBeNull();
+        },
+      ),
       RUNS,
     );
   });
@@ -252,14 +252,18 @@ describe("Feature: zoc-agent-chat-rebuild, Property 26: mention keyboard navigat
 
   it("clamps a stale selection into a list that shrank under it", () => {
     fc.assert(
-      fc.property(fc.integer({ min: -5, max: 80 }), fc.integer({ min: 0, max: 40 }), (current, count) => {
-        const clamped = clampSelection(current, count);
-        if (count === 0) expect(clamped).toBe(-1);
-        else {
-          expect(clamped).toBeGreaterThanOrEqual(0);
-          expect(clamped).toBeLessThan(count);
-        }
-      }),
+      fc.property(
+        fc.integer({ min: -5, max: 80 }),
+        fc.integer({ min: 0, max: 40 }),
+        (current, count) => {
+          const clamped = clampSelection(current, count);
+          if (count === 0) expect(clamped).toBe(-1);
+          else {
+            expect(clamped).toBeGreaterThanOrEqual(0);
+            expect(clamped).toBeLessThan(count);
+          }
+        },
+      ),
       RUNS,
     );
   });

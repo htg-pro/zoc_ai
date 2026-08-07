@@ -94,9 +94,7 @@ def test_non_conforming_unknown_type_is_discarded_and_recorded_r6_4() -> None:
     sink = _RecordingSink()
     gate = EmitGate(sink=sink)
 
-    emitted = gate.emit(
-        {"type": "not-a-real-kind", "seq": 0, "runId": "r1", "ts": "t"}
-    )
+    emitted = gate.emit({"type": "not-a-real-kind", "seq": 0, "runId": "r1", "ts": "t"})
 
     assert emitted is False
     assert sink.events == []  # discarded: never forwarded (R6.4)
@@ -132,9 +130,7 @@ def test_stream_stays_open_after_violation_r6_4() -> None:
     assert gate.emit({"type": "garbage"}) is False
     assert gate.emit(_intent_payload(0)) is True
     assert gate.emit({"type": "edit-file", "seq": 1, "runId": "r1"}) is False
-    assert gate.emit(
-        DoneEvent(seq=2, run_id="r1", ts="t", ok=True).model_dump()
-    ) is True
+    assert gate.emit(DoneEvent(seq=2, run_id="r1", ts="t", ok=True).model_dump()) is True
 
     # Two conforming events made it through despite interleaved violations.
     assert [e["type"] for e in sink.events] == ["intent", "done"]
@@ -146,12 +142,8 @@ def test_emission_preserves_call_order_r6_5() -> None:
     gate = EmitGate(sink=sink)
 
     payloads = [_intent_payload(0)]
-    payloads.append(
-        ThinkingEvent(seq=1, run_id="r1", ts="t", text="a").model_dump()
-    )
-    payloads.append(
-        ThinkingEvent(seq=2, run_id="r1", ts="t", text="b").model_dump()
-    )
+    payloads.append(ThinkingEvent(seq=1, run_id="r1", ts="t", text="a").model_dump())
+    payloads.append(ThinkingEvent(seq=2, run_id="r1", ts="t", text="b").model_dump())
     payloads.append(DoneEvent(seq=3, run_id="r1", ts="t", ok=True).model_dump())
 
     for p in payloads:

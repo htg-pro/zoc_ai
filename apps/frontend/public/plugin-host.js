@@ -154,17 +154,14 @@
       set: (key, value) => callHost("storage", "set", [key, value]),
     }),
     ui: Object.freeze({
-      showMessage: (message, level = "info") =>
-        callHost("ui", "showMessage", [message, level]),
+      showMessage: (message, level = "info") => callHost("ui", "showMessage", [message, level]),
     }),
     commands: Object.freeze({
       register: (commandId, handler) => {
-        if (
-          typeof commandId !== "string" ||
-          commandId.trim() === "" ||
-          commandId.length > 256
-        ) {
-          throw new Error("Plugin command id must be a non-empty string of at most 256 characters.");
+        if (typeof commandId !== "string" || commandId.trim() === "" || commandId.length > 256) {
+          throw new Error(
+            "Plugin command id must be a non-empty string of at most 256 characters.",
+          );
         }
         if (typeof handler !== "function") {
           throw new Error(`Plugin command handler must be a function: ${commandId}`);

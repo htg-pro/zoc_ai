@@ -106,10 +106,7 @@ export function PluginMarketplace() {
   }, [refreshRegistry]);
 
   const filtered = useMemo(() => filterPlugins(registry, query), [registry, query]);
-  const installedIds = useMemo(
-    () => new Set(installed.map((p) => p.manifest.id)),
-    [installed],
-  );
+  const installedIds = useMemo(() => new Set(installed.map((p) => p.manifest.id)), [installed]);
 
   const install = useCallback(async (plugin: RegistryPlugin) => {
     setMessage(null);
@@ -219,7 +216,9 @@ export function PluginMarketplace() {
                   </CardHeader>
                   <CardContent className="space-y-2 text-xs">
                     <p className="line-clamp-2 text-muted-foreground">{p.description}</p>
-                    <p className="text-[10px] uppercase text-muted-foreground">by {p.author || "unknown"}</p>
+                    <p className="text-[10px] uppercase text-muted-foreground">
+                      by {p.author || "unknown"}
+                    </p>
                     <div className="flex flex-wrap gap-1">
                       {p.tags.map((t) => (
                         <Badge key={t} variant="secondary" className="text-[9px]">
@@ -231,7 +230,11 @@ export function PluginMarketplace() {
                       size="sm"
                       className="w-full"
                       disabled={busy !== null || installedIds.has(p.id) || !p.downloadUrl}
-                      title={!p.downloadUrl ? "No install artifact is published for this listing." : undefined}
+                      title={
+                        !p.downloadUrl
+                          ? "No install artifact is published for this listing."
+                          : undefined
+                      }
                       onClick={() => void install(p)}
                     >
                       <Puzzle className="mr-1.5 h-3.5 w-3.5" />
@@ -263,13 +266,19 @@ export function PluginMarketplace() {
             <p className="py-8 text-center text-sm text-muted-foreground">No plugins installed.</p>
           ) : (
             installed.map((p) => (
-              <Card key={p.manifest.id} data-installed-id={p.manifest.id} className={p.errored ? "border-[var(--zoc-error)]/40" : undefined}>
+              <Card
+                key={p.manifest.id}
+                data-installed-id={p.manifest.id}
+                className={p.errored ? "border-[var(--zoc-error)]/40" : undefined}
+              >
                 <CardHeader className="pb-2">
                   <CardTitle className="flex items-center justify-between text-sm">
                     <span className="flex items-center gap-2">
                       <Puzzle className="h-3.5 w-3.5 text-muted-foreground" />
                       {p.manifest.name}
-                      <span className="text-[10px] text-muted-foreground">v{p.manifest.version}</span>
+                      <span className="text-[10px] text-muted-foreground">
+                        v{p.manifest.version}
+                      </span>
                     </span>
                     <span className="flex items-center gap-1.5">
                       <Button

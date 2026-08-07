@@ -46,7 +46,13 @@ describe("CommandPalette", () => {
       paletteSeed: "",
       liveMode: false,
       openFiles: [
-        { path: "/src/Widget.tsx", name: "Widget.tsx", language: "typescript", content: "", dirty: false },
+        {
+          path: "/src/Widget.tsx",
+          name: "Widget.tsx",
+          language: "typescript",
+          content: "",
+          dirty: false,
+        },
       ],
     });
     render(<CommandPalette />);

@@ -1,6 +1,8 @@
 /**
  * The review surface's context — zoc-agent-chat-rebuild R8.1, R10.x, task 18.2.
  *
+ * Feature: zoc-agent-chat-rebuild, task 18.2 (R8.1).
+ *
  * A plan card needs five things the transcript's row model does not carry: the on-disk digests for the
  * staleness check, the receipt for a plan that has already been applied, and the apply, discard,
  * regenerate, and rollback handlers. They reach the card through a context rather than through row
@@ -39,6 +41,18 @@ export interface ReviewSurface {
   readonly onDisk?: ReadonlyMap<string, string>;
   /** The receipt for a plan that has been applied, or `null`/`undefined` while it is still a review. */
   readonly receiptOf?: (planId: string) => ApplyReceipt | null | undefined;
+  /**
+   * R1.4: the viewer decides nothing, so every decision control is **omitted**.
+   *
+   * Withholding the four handlers is not enough on its own. A hunk decision writes to the chat-local
+   * store rather than through a handler, so accept and reject would still render and still toggle; and
+   * apply renders `disabled` with a reason rather than absent, because for a host that state is
+   * informative — "two hunks are stale" is the answer to why the button will not go. For a viewer it is
+   * an invitation to press something that can never work, which is the thing R1.4 forbids. So read-only
+   * travels with the surface and the controls read it, the same way `locked` already suppresses a
+   * decided file's controls.
+   */
+  readonly readOnly?: boolean;
   onApply?: (selection: ApplySelection) => void;
   onDiscard?: (planId: string) => void;
   onRegenerate?: (planId: string, path: string) => void;

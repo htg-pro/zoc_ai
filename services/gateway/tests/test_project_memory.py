@@ -206,9 +206,7 @@ def test_parse_caps_at_five_and_drops_noise() -> None:
 
 
 def test_parse_deduplicates_identical_lines() -> None:
-    assert parse_extracted_facts("- Same fact here.\n- Same fact here.") == [
-        "Same fact here."
-    ]
+    assert parse_extracted_facts("- Same fact here.\n- Same fact here.") == ["Same fact here."]
 
 
 # ── prompt rendering ─────────────────────────────────────────────────────────
@@ -300,9 +298,7 @@ def test_post_run_then_suggest_returns_the_successful_approach(tmp_path: Path) -
 
 def test_failed_approaches_are_not_suggested(tmp_path: Path) -> None:
     hermes = _hermes(tmp_path)
-    hermes.post_run(
-        "Fixed nothing. The approach was to delete the whole module.", "fail"
-    )
+    hermes.post_run("Fixed nothing. The approach was to delete the whole module.", "fail")
     assert hermes.suggest_approach("fix the crash") is None
 
 

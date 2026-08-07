@@ -1,6 +1,8 @@
 /**
  * The chat panel — zoc-agent-chat-rebuild R1.4, R3.8, R8.7, R13.9, R14.8, R16.1, R16.5, R16.6, task 22.8.
  *
+ * Feature: zoc-agent-chat-rebuild, task 22.8 (R1.4, R3.8, R8.7, R13.9, R14.8, R16.1).
+ *
  * The composition, and the only place the Chat_Surface becomes one thing. Above it: `App.tsx`, which
  * supplies app-wide state. Below it: the header, the transcript, the dock, and the composer, each of
  * which is already assertable on its own. What lives here is what none of them can own.
@@ -46,20 +48,39 @@ import { secureStore, subscribeSecrets, type SecretStatus } from "@/lib/secure-s
 import { cn } from "@/lib/utils";
 import { ZocMark } from "./brand/ZocMark";
 import { Composer, type ComposerSubmission } from "./composer/Composer";
+import { attachmentFilePart } from "./composer/attachment-model";
 import type { MentionCandidate } from "./composer/mention-index";
 import type { PermissionMode } from "./composer/mode-consequence";
+import type { TranscriptionBackend } from "./composer/voice-input";
 import { DegradedSecretsStrip } from "./DegradedSecretsStrip";
 import { EmptyState } from "./EmptyState";
 import { ErrorRow } from "./ErrorRow";
 import { ChatHeader } from "./header/ChatHeader";
 import type { ModelChoice } from "./header/model-catalogue";
-import { censusOf, markStateOf, runSnapshotOf, type ChatRunStatus } from "./panel-state";
+import { gateReasonOf, isSubmittable } from "./header/model-catalogue";
+import {
+  censusOf,
+  conversationModeOf,
+  markStateOf,
+  runSnapshotOf,
+  type ChatRunStatus,
+} from "./panel-state";
 import { PermissionDock } from "./permission/PermissionDock";
 import { ReadOnlyBanner } from "./ReadOnlyBanner";
+import { RunStreamSelector } from "./RunStreamSelector";
+import { SessionUsageSummary } from "./SessionUsageSummary";
 import type { ReviewSurface } from "./review/review-surface";
 import { RuntimeUnavailableBanner } from "./RuntimeUnavailableBanner";
+import { AppliedRulesSummary, RulesEditor } from "./rules/RulesEditor";
+import {
+  loadRuleEnableMap,
+  persistRuleEnableMap,
+  type RuleEnableMap,
+} from "./rules/rules-editor-model";
 import { useChatSurface } from "./store";
 import { Transcript } from "./Transcript";
+import { defaultFocusedRunId, runStreamsOf } from "./run-streams";
+import { cumulativeUsageOf } from "./session-usage";
 import type { ActiveRun, SubmissionContext } from "./wire/zoc-transport";
 import { ZocChatTransport } from "./wire/zoc-transport";
 import type { ZocUIMessage } from "./wire/ui-message";
@@ -123,6 +144,7 @@ export interface ChatPanelProps {
   transport?: ChatTransport<ZocUIMessage>;
   /** Injected in tests; production asks Desktop_Core. */
   secretStatus?: SecretStatus | null;
+  transcriptionBackend?: TranscriptionBackend | null;
   className?: string;
 }
 
@@ -152,6 +174,7 @@ export function ChatPanel(props: ChatPanelProps) {
     viewerHost,
     transport: providedTransport,
     secretStatus: providedSecretStatus,
+    transcriptionBackend = null,
     className,
   } = props;
 
@@ -159,10 +182,27 @@ export function ChatPanel(props: ChatPanelProps) {
   const recordRenderedSeq = useChatSurface((state) => state.recordRenderedSeq);
   const forgetRun = useChatSurface((state) => state.forgetRun);
   const resetForSession = useChatSurface((state) => state.resetForSession);
+  const setConversationMode = useChatSurface((state) => state.setConversationMode);
   const pendingApprovalId = useChatSurface((state) => state.pendingApprovalId);
 
   const [runtimeFailure, setRuntimeFailure] = useState<string | null>(null);
   const [restarting, setRestarting] = useState(false);
+  const [rulesOpen, setRulesOpen] = useState(false);
+  const [ruleEnabled, setRuleEnabled] = useState<RuleEnableMap>(() =>
+    loadRuleEnableMap(workspaceRoot),
+  );
+
+  useEffect(() => {
+    setRuleEnabled(loadRuleEnableMap(workspaceRoot));
+  }, [workspaceRoot]);
+
+  const updateRuleEnabled = useCallback(
+    (next: Record<string, boolean>) => {
+      setRuleEnabled(next);
+      persistRuleEnableMap(workspaceRoot, next);
+    },
+    [workspaceRoot],
+  );
 
   // The host's report wins, because it is the earlier of the two: Desktop_Core knows the child exited
   // before the panel next asks for an endpoint.
@@ -224,26 +264,56 @@ export function ChatPanel(props: ChatPanelProps) {
     ...(initialMessages === undefined ? {} : { messages: [...initialMessages] }),
   });
 
+  const runStreams = useMemo(() => runStreamsOf(messages), [messages]);
+  const [focusedRunId, setFocusedRunId] = useState<string | null>(null);
+  const newestRunId = runStreams.at(-1)?.runId ?? null;
+  const previousNewestRunId = useRef<string | null>(null);
+  useEffect(() => {
+    const stillExists =
+      focusedRunId !== null && runStreams.some((stream) => stream.runId === focusedRunId);
+    const newRunArrived = newestRunId !== null && newestRunId !== previousNewestRunId.current;
+    previousNewestRunId.current = newestRunId;
+    if (!stillExists || newRunArrived) {
+      setFocusedRunId(defaultFocusedRunId(runStreams));
+    }
+  }, [runStreams, focusedRunId, newestRunId]);
+
+  const focusedStream =
+    runStreams.find((stream) => stream.runId === focusedRunId) ?? runStreams.at(-1) ?? null;
+  const focusedMessages = focusedStream?.messages ?? messages;
+
   // Everything scoped to one Session — the draft, the mentions, the hunk decisions, the focused
   // approval — is dropped on a switch. The store owns the list; this is the one caller that knows a
   // switch happened.
+  //
+  // The Conversation_Mode is the one thing that is *restored* rather than dropped (R32.16). It is set
+  // here rather than left to the store's initial value because the reset and the restore are one
+  // transition: a switch that cleared the mode and then set it would render the incoming Session in
+  // `agent` for a frame, and the mode is a claim about what the agent may do.
+  const restoredMode = useMemo(() => conversationModeOf(initialMessages ?? []), [initialMessages]);
+
   useEffect(() => {
     resetForSession();
-  }, [sessionId, resetForSession]);
+    setConversationMode(restoredMode);
+  }, [sessionId, resetForSession, setConversationMode, restoredMode]);
 
   // ── Derived state ───────────────────────────────────────────────────
 
   const run = useMemo(
     () =>
       runSnapshotOf({
-        messages,
-        status: status as ChatRunStatus,
+        messages: focusedMessages,
+        status:
+          focusedStream === null || focusedStream.runId === newestRunId
+            ? (status as ChatRunStatus)
+            : "ready",
         awaitingApproval: pendingApprovalId !== null,
       }),
-    [messages, status, pendingApprovalId],
+    [focusedMessages, focusedStream, newestRunId, status, pendingApprovalId],
   );
 
   const census = useMemo(() => censusOf(messages), [messages]);
+  const sessionUsage = useMemo(() => cumulativeUsageOf(messages), [messages]);
 
   // The pill's clock. Ticked here because the pill is a presentational component and a `setInterval`
   // inside it would run for every mounted pill in a story or a test.
@@ -299,18 +369,46 @@ export function ChatPanel(props: ChatPanelProps) {
           ref: mention.ref,
           ...(mention.label === undefined ? {} : { label: mention.label }),
         })),
+        ...((submission.attachments?.length ?? 0) === 0
+          ? {}
+          : {
+              attachments: submission.attachments?.map((attachment) => ({
+                kind: attachment.kind,
+                name: attachment.name,
+                mediaType: attachment.mediaType,
+                size: attachment.size,
+                estimatedTokens: attachment.estimatedTokens,
+                dataUrl: attachment.url,
+                ...(attachment.text === undefined ? {} : { text: attachment.text }),
+              })),
+            }),
+        ...(Object.keys(ruleEnabled).length === 0 ? {} : { rulesSelection: ruleEnabled }),
       };
       clearError();
-      void sendMessage({ text: submission.text });
+      void sendMessage({
+        text: submission.text,
+        files: (submission.attachments ?? []).map(attachmentFilePart),
+      });
     },
-    [permissionMode, clearError, sendMessage],
+    [permissionMode, ruleEnabled, clearError, sendMessage],
   );
 
   const [queue, setQueue] = useState<readonly ComposerSubmission[]>([]);
 
+  /**
+   * Why a Run cannot start with the selected model, or `null` (R13.2, R13.3).
+   *
+   * The gate is `hasKey` and nothing else — `model-catalogue.ts` says why — and it is checked here rather
+   * than only in the composer because the send control is not the only way in: Enter in the textarea calls
+   * the same submission handler, and the queue drains on its own once a Run settles. A keyless model has to
+   * stop all three, and a reason no code path can reach is not a gate.
+   */
+  const modelGateReason = selectedModel === null ? null : gateReasonOf(selectedModel);
+  const canSubmit = selectedModel !== null && isSubmittable(selectedModel);
+
   const handleSubmit = useCallback(
     (submission: ComposerSubmission) => {
-      if (selectedModel === null) return;
+      if (selectedModel === null || !isSubmittable(selectedModel)) return;
       if (run.active) {
         setQueue((current) => [...current, submission]);
         return;
@@ -321,12 +419,14 @@ export function ChatPanel(props: ChatPanelProps) {
   );
 
   useEffect(() => {
-    if (run.active || queue.length === 0 || selectedModel === null) return;
+    // Held rather than dropped: a submission queued before the model changed waits for the key, and the
+    // draft the user typed is still in the queue when one arrives.
+    if (run.active || queue.length === 0 || !canSubmit || selectedModel === null) return;
     const [next, ...rest] = queue;
     if (next === undefined) return;
     setQueue(rest);
     dispatch(next, selectedModel);
-  }, [run.active, queue, selectedModel, dispatch]);
+  }, [run.active, queue, canSubmit, selectedModel, dispatch]);
 
   // ── Out-of-band Run controls ────────────────────────────────────────
   //
@@ -337,7 +437,11 @@ export function ChatPanel(props: ChatPanelProps) {
     cancel?: (runId: string) => Promise<void>;
     decideApproval?: (
       runId: string,
-      request: { requestId: string; decision: "approve" | "reject"; scope?: "call" | "run" | "workspace" },
+      request: {
+        requestId: string;
+        decision: "approve" | "reject";
+        scope?: "call" | "run" | "workspace";
+      },
     ) => Promise<void>;
   };
 
@@ -347,7 +451,11 @@ export function ChatPanel(props: ChatPanelProps) {
   }, [run.runId, runControls]);
 
   const handleDecide = useCallback(
-    async (decision: { requestId: string; decision: "approve" | "reject"; scope: "call" | "run" | "workspace" }) => {
+    async (decision: {
+      requestId: string;
+      decision: "approve" | "reject";
+      scope: "call" | "run" | "workspace";
+    }) => {
       if (run.runId === null) return;
       await runControls.decideApproval?.(run.runId, decision);
     },
@@ -422,13 +530,44 @@ export function ChatPanel(props: ChatPanelProps) {
   );
 
   const model = selectedModel;
+
+  // ── The review surface a viewer gets (R1.4) ─────────────────────────
+  //
+  // The digests and the receipt survive — they are what the plan card *reads* — and the four handlers
+  // do not. `readOnly` travels with them because two of the card's controls are not handler-gated: a
+  // hunk decision writes to the chat-local store, and apply renders disabled-with-a-reason, which is
+  // informative for a host and an invitation to nothing for a viewer. Passed even when the host
+  // supplied no `review` at all, so a plan in a viewer's transcript is inert either way.
+  const reviewSurface = useMemo<ReviewSurface | undefined>(() => {
+    if (!readOnly) return review;
+    if (review === undefined) return { readOnly: true };
+    return {
+      readOnly: true,
+      ...(review.onDisk === undefined ? {} : { onDisk: review.onDisk }),
+      ...(review.receiptOf === undefined ? {} : { receiptOf: review.receiptOf }),
+    };
+  }, [review, readOnly]);
+
   const modelReference = useMemo(
     () =>
       model === null
         ? { provider: "", modelId: "", contextLimit: 0 }
-        : { provider: model.provider, modelId: model.modelId, contextLimit: model.contextLimit },
+        : {
+            provider: model.provider,
+            modelId: model.modelId,
+            contextLimit: model.contextLimit,
+            supportsImages: model.vision === true,
+          },
     [model],
   );
+
+  const appliedRules = useMemo(() => {
+    for (const message of focusedMessages) {
+      if (message.role !== "assistant" || message.metadata === undefined) continue;
+      if (message.metadata.rulesSources.length > 0) return message.metadata.rulesSources;
+    }
+    return [] as readonly string[];
+  }, [focusedMessages]);
 
   return (
     <ChatMotionProvider>
@@ -457,6 +596,7 @@ export function ChatPanel(props: ChatPanelProps) {
                 ...(onAddKey === undefined ? {} : { onAddKey }),
                 ...(onCompact === undefined ? {} : { onCompact }),
                 ...(onRestartRuntime === undefined ? {} : { onRestartRuntime: handleRestart }),
+                onOpenRules: () => setRulesOpen(true),
                 ...(run.active ? { onCancelRun: handleCancel } : {}),
               })}
         />
@@ -466,7 +606,9 @@ export function ChatPanel(props: ChatPanelProps) {
           up. All three sit above a transcript that keeps rendering — none of them is a reason to hide
           content that is already on disk (R3.8).
         */}
-        {readOnly ? <ReadOnlyBanner {...(viewerHost === undefined ? {} : { host: viewerHost })} /> : null}
+        {readOnly ? (
+          <ReadOnlyBanner {...(viewerHost === undefined ? {} : { host: viewerHost })} />
+        ) : null}
         <DegradedSecretsStrip status={secretStatus} />
         {runtimeReason === null ? null : (
           <RuntimeUnavailableBanner
@@ -475,6 +617,14 @@ export function ChatPanel(props: ChatPanelProps) {
             {...(readOnly || onRestartRuntime === undefined ? {} : { onRestart: handleRestart })}
           />
         )}
+
+        <RunStreamSelector
+          streams={runStreams}
+          focusedRunId={focusedStream?.runId ?? null}
+          onFocus={setFocusedRunId}
+        />
+        <SessionUsageSummary usage={sessionUsage} />
+        <AppliedRulesSummary sources={appliedRules} />
 
         {messages.length === 0 ? (
           <EmptyState
@@ -485,10 +635,14 @@ export function ChatPanel(props: ChatPanelProps) {
           />
         ) : (
           <Transcript
-            messages={messages}
-            streaming={status === "submitted" || status === "streaming"}
+            messages={focusedMessages}
+            streaming={run.active}
+            // The same value the pill draws, so the announcement and the visible state can never
+            // disagree about what the Run is doing (R21.2).
+            runState={run.state}
+            {...(error === undefined ? {} : { runFailureDetail: error.message })}
             {...(toolKindOf === undefined ? {} : { toolKindOf })}
-            {...(review === undefined ? {} : { review })}
+            {...(reviewSurface === undefined ? {} : { review: reviewSurface })}
             {...(readOnly ? {} : { onErrorContinue: handleContinue })}
           />
         )}
@@ -505,10 +659,11 @@ export function ChatPanel(props: ChatPanelProps) {
           </div>
         )}
 
-        {readOnly ? null : <PermissionDock messages={messages} onDecide={handleDecide} />}
+        {readOnly ? null : <PermissionDock messages={focusedMessages} onDecide={handleDecide} />}
 
         {readOnly ? null : (
           <Composer
+            key={sessionId}
             streaming={run.active}
             candidates={candidates}
             model={modelReference}
@@ -518,7 +673,25 @@ export function ChatPanel(props: ChatPanelProps) {
             onSubmit={handleSubmit}
             queued={queue.length}
             disabled={model === null}
+            sendBlockedReason={modelGateReason}
+            // Not a control the composer draws — the pair the global shortcuts act on (R20.3, R20.4,
+            // task 24.2). `onCancelRun` is passed unconditionally, unlike the header's: the header
+            // renders a Stop button and omitting the handler is how the button disappears, while here
+            // `runState` is what decides whether `mod+.` does anything.
+            onCancelRun={handleCancel}
+            runState={run.state}
+            transcriptionBackend={transcriptionBackend}
             {...(onCompact === undefined ? {} : { onCompact })}
+          />
+        )}
+        {readOnly ? null : (
+          <RulesEditor
+            open={rulesOpen}
+            onOpenChange={setRulesOpen}
+            sessionId={sessionId}
+            workspaceRoot={workspaceRoot}
+            enabled={ruleEnabled}
+            onEnabledChange={updateRuleEnabled}
           />
         )}
       </div>

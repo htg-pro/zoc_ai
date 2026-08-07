@@ -42,7 +42,9 @@ describe("local model persistence (Property 6)", () => {
             id: fc.string({ minLength: 1 }),
             name: fc.string({ minLength: 1 }),
             path: fc.string({ minLength: 1 }).map((s) => `/models/${s.replace(/\//g, "_")}.gguf`),
-            readiness_deadline_secs: fc.option(fc.integer({ min: 30, max: 600 }), { nil: undefined }),
+            readiness_deadline_secs: fc.option(fc.integer({ min: 30, max: 600 }), {
+              nil: undefined,
+            }),
           }),
           { maxLength: 12 },
         ),

@@ -7,11 +7,7 @@ import { groupSessions, localDayIndex } from "../session-query";
 const MS_PER_DAY = 86_400_000;
 
 /** Minimal valid Session with a given id and updated_at timestamp. */
-function makeSession(
-  id: string,
-  updatedAt: string,
-  status: SessionStatus = "active",
-): Session {
+function makeSession(id: string, updatedAt: string, status: SessionStatus = "active"): Session {
   return {
     id,
     title: id,
@@ -64,9 +60,7 @@ describe("localDayIndex — local-midnight half-open boundary (R3.3)", () => {
     "honors the injected offset %s: midnight is the day's first instant, one ms before is the prior day",
     (_label, offset) => {
       // Use a fixed reference day index so the test is deterministic.
-      const dayIndex = Math.floor(
-        Date.parse("2024-06-01T00:00:00.000Z") / MS_PER_DAY,
-      );
+      const dayIndex = Math.floor(Date.parse("2024-06-01T00:00:00.000Z") / MS_PER_DAY);
       const midnightMs = localMidnightMs(dayIndex, offset);
 
       const midnightIso = new Date(midnightMs).toISOString();
@@ -143,10 +137,7 @@ describe("groupSessions — NaN timestamps bucket into Earlier (R3.4)", () => {
 
     // Totality preserved: every session is placed exactly once.
     const total =
-      groups.pinned.length +
-      groups.today.length +
-      groups.yesterday.length +
-      groups.earlier.length;
+      groups.pinned.length + groups.today.length + groups.yesterday.length + groups.earlier.length;
     expect(total).toBe(sessions.length);
   });
 });

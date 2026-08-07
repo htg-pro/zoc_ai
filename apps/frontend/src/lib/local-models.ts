@@ -110,9 +110,7 @@ export const RECOMMENDED_LARGE_MODEL_DEADLINE_SECS = 300;
 /** The effective Readiness_Deadline for a model, in seconds. */
 export function readinessDeadlineSecs(model: Pick<LocalModel, "readiness_deadline_secs">): number {
   const override = model.readiness_deadline_secs;
-  return typeof override === "number" && override > 0
-    ? override
-    : DEFAULT_READINESS_DEADLINE_SECS;
+  return typeof override === "number" && override > 0 ? override : DEFAULT_READINESS_DEADLINE_SECS;
 }
 
 /** llama.cpp's "offload all layers" sentinel, applied when a LocalModel
@@ -176,10 +174,7 @@ function safeParse<T>(raw: string | null, fallback: T): T {
 
 function storage(): Storage | null {
   if (typeof localStorage === "undefined") return null;
-  if (
-    typeof localStorage.getItem !== "function" ||
-    typeof localStorage.setItem !== "function"
-  ) {
+  if (typeof localStorage.getItem !== "function" || typeof localStorage.setItem !== "function") {
     return null;
   }
   return localStorage;

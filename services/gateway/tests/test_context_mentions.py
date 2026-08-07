@@ -81,4 +81,3 @@ def test_search_workspace_files_skips_heavy_directories(tmp_path: Path) -> None:
     matches = search_workspace_files(tmp_path, "app")
 
     assert [path.relative_to(tmp_path).as_posix() for path in matches] == ["src/app.ts"]
-

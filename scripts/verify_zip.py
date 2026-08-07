@@ -11,6 +11,7 @@ Asserts:
 
 Exit non-zero on any violation.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -52,8 +53,11 @@ INSTALLER_EXTS = (".tar.gz", ".deb", ".rpm", ".msi", ".exe", ".dmg")
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("zip", type=Path)
-    ap.add_argument("--source-only", action="store_true",
-                    help="Don't require installer artifacts in dist/installers/.")
+    ap.add_argument(
+        "--source-only",
+        action="store_true",
+        help="Don't require installer artifacts in dist/installers/.",
+    )
     args = ap.parse_args()
 
     if not args.zip.exists():
@@ -72,8 +76,7 @@ def main() -> int:
         return 2
     top = next(iter(tops))
     if not re.fullmatch(r"zoc-studio-v\d+\.\d+\.\d+", top):
-        print(f"!! Top-level dir must match zoc-studio-v<semver>, got: {top!r}",
-              file=sys.stderr)
+        print(f"!! Top-level dir must match zoc-studio-v<semver>, got: {top!r}", file=sys.stderr)
         return 2
 
     errors: list[str] = []
@@ -90,14 +93,19 @@ def main() -> int:
             errors.append(f"missing required entry: {req}")
 
     installers = [
-        n for n in names
+        n
+        for n in names
         if n.startswith(f"{top}/dist/installers/")
-        and (n.endswith(INSTALLER_EXTS) or ("/dist/installers/" in n and n.rstrip("/").endswith(".app")))
+        and (
+            n.endswith(INSTALLER_EXTS)
+            or ("/dist/installers/" in n and n.rstrip("/").endswith(".app"))
+        )
     ]
     # also accept anything *inside* a .app bundle
     app_bundles = {
         n.split("/dist/installers/", 1)[1].split("/", 1)[0]
-        for n in names if "/dist/installers/" in n and ".app/" in n
+        for n in names
+        if "/dist/installers/" in n and ".app/" in n
     }
     has_installer = bool(installers) or any(b.endswith(".app") for b in app_bundles)
 

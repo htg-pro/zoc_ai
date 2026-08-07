@@ -49,7 +49,7 @@ import type {
   UpdateSettingsRequest,
 } from "@zoc-studio/shared-types";
 
-import { resolveAgentPort } from "./agent-port";
+import { resolveWorkspaceServicesEndpoint } from "./workspace-services-endpoint";
 
 let cached: AgentClient | null = null;
 let cachedPort: number | null = null;
@@ -304,7 +304,9 @@ async function* slashCommandStream(
   signal?: AbortSignal,
 ): AsyncIterable<AgentEvent> {
   if (!sessionId) {
-    throw new Error("Cannot open event stream: no active session. Create or select a session first.");
+    throw new Error(
+      "Cannot open event stream: no active session. Create or select a session first.",
+    );
   }
   const eventsUrl = `${v1}/sessions/${sessionId}/agent/events`;
   const res = await fetch(eventsUrl, {
@@ -460,18 +462,19 @@ function makeClient(port: number): AgentClient {
     listTools: () => jsonFetch<ToolDescriptor[]>(`${v1}/tools`),
     listProviders: () => jsonFetch<ProviderDescriptor[]>(`${v1}/providers`),
     discoverModels: async (baseUrl, apiKey) => {
-      const res = await jsonFetch<{ models: DiscoveredModel[] }>(`${v1}/providers/discover-models`, {
-        method: "POST",
-        body: JSON.stringify({ base_url: baseUrl, api_key: apiKey }),
-      });
+      const res = await jsonFetch<{ models: DiscoveredModel[] }>(
+        `${v1}/providers/discover-models`,
+        {
+          method: "POST",
+          body: JSON.stringify({ base_url: baseUrl, api_key: apiKey }),
+        },
+      );
       return res?.models ?? [];
     },
     hardware: () => jsonFetch<HardwareInfo>(`${v1}/hardware`),
     diary: async (runId) => {
       const query = runId ? `?runId=${encodeURIComponent(runId)}` : "";
-      return (
-        (await jsonFetch<Record<string, unknown>[]>(`${v1}/agent/diary${query}`)) ?? []
-      );
+      return (await jsonFetch<Record<string, unknown>[]>(`${v1}/agent/diary${query}`)) ?? [];
     },
     getSettings: () => jsonFetch<SettingsSnapshot>(`${v1}/settings`),
     updateSettings: (req) =>
@@ -479,8 +482,7 @@ function makeClient(port: number): AgentClient {
         method: "PATCH",
         body: JSON.stringify(req),
       }),
-    indexStatus: (sessionId) =>
-      jsonFetch<IndexStatus>(`${v1}/sessions/${sessionId}/index/status`),
+    indexStatus: (sessionId) => jsonFetch<IndexStatus>(`${v1}/sessions/${sessionId}/index/status`),
     indexQuery: (sessionId, q, k = 8) =>
       jsonFetch<IndexQueryResult[]>(`${v1}/sessions/${sessionId}/index/query`, {
         method: "POST",
@@ -528,8 +530,7 @@ function makeClient(port: number): AgentClient {
     terminalStream: (id, signal) =>
       sseJson<TerminalStreamEvent>(`${v1}/terminal/${id}/stream`, { signal }),
 
-    memoryStats: (sessionId) =>
-      jsonFetch<MemoryStats>(`${v1}/sessions/${sessionId}/memory/stats`),
+    memoryStats: (sessionId) => jsonFetch<MemoryStats>(`${v1}/sessions/${sessionId}/memory/stats`),
     compactMemory: (sessionId) =>
       jsonFetch<MemoryStats>(`${v1}/sessions/${sessionId}/memory/compact`, {
         method: "POST",
@@ -546,7 +547,7 @@ function makeClient(port: number): AgentClient {
 
 export async function getAgentClient(): Promise<AgentClient> {
   if (cached) return cached;
-  const port = await resolveAgentPort();
+  const { port } = await resolveWorkspaceServicesEndpoint();
   cachedPort = port;
   cached = makeClient(port);
   return cached;

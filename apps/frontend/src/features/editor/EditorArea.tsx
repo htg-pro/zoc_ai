@@ -81,7 +81,11 @@ export function EditorArea() {
                     const ok = await applyPatch(inlinePatch.id);
                     toast[ok ? "success" : "error"](
                       ok ? "Edit applied" : "Couldn't apply edit",
-                      ok ? undefined : { description: `${inlinePatch.file_path} — check workspace permissions.` },
+                      ok
+                        ? undefined
+                        : {
+                            description: `${inlinePatch.file_path} — check workspace permissions.`,
+                          },
                     );
                   }}
                 >

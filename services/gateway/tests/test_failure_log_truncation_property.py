@@ -37,9 +37,7 @@ _EXIT_CODE = st.integers(min_value=-(2**31), max_value=2**31 - 1)
 
 @settings(max_examples=200)
 @given(command=_COMMAND, exit_code=_EXIT_CODE, log=_LOG)
-def test_failure_capture_truncates_log_to_cap(
-    command: str, exit_code: int, log: str
-) -> None:
+def test_failure_capture_truncates_log_to_cap(command: str, exit_code: int, log: str) -> None:
     """Property 23: the captured failure log is truncated to the cap.
 
     Feature: zocai-ecosystem-rebuild, Property 23

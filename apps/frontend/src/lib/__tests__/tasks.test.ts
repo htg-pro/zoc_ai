@@ -60,7 +60,7 @@ describe("detectors", () => {
   });
 
   it("detects cargo build/test/check", () => {
-    const tasks = detectCargo("[package]\nname = \"x\"\n");
+    const tasks = detectCargo('[package]\nname = "x"\n');
     expect(tasks.map((t) => t.id)).toEqual(["cargo:build", "cargo:test", "cargo:check"]);
     expect(tasks[0].problemMatcher).toBe("cargo");
     expect(tasks[1].group).toBe("test");
@@ -91,10 +91,7 @@ describe("dedupe + defaults", () => {
 
   it("prefers a config build/test task as the default", () => {
     const tasks = [
-      ...parseTasksJson(
-        `{"tasks":[{"label":"ci-build","command":"x","group":"build"}]}`,
-        "vscode",
-      ),
+      ...parseTasksJson(`{"tasks":[{"label":"ci-build","command":"x","group":"build"}]}`, "vscode"),
       ...detectCargo("[package]"),
     ];
     expect(defaultBuildTask(tasks)?.id).toBe("vscode:ci-build");

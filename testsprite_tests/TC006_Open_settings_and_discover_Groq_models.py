@@ -39,24 +39,24 @@ async def run_test():
             await page.wait_for_load_state("domcontentloaded", timeout=5000)
         except Exception:
             pass
-        
+
         # -> Click the 'Settings' button to open the Settings panel (after the page reloads).
         await page.goto("http://localhost:1420/")
         try:
             await page.wait_for_load_state("domcontentloaded", timeout=5000)
         except Exception:
             pass
-        
+
         # -> Click the visible 'Reload' button to reload the frontend page.
         # Reload button
         elem = page.locator('[id="reload-button"]')
         await elem.click(timeout=10000)
-        
+
         # -> Click the 'Reload' button to attempt to load the frontend again.
         # Reload button
         elem = page.locator('[id="reload-button"]')
         await elem.click(timeout=10000)
-        
+
         # -> Open the model server health endpoint (GET /health) at http://127.0.0.1:8080 to check whether the backend model server is running.
         # Open URL in new tab
         page = await context.new_page()
@@ -65,17 +65,17 @@ async def run_test():
             await page.wait_for_load_state("domcontentloaded", timeout=5000)
         except Exception:
             pass
-        
+
         # -> Switch to the browser tab showing the model server health endpoint (http://127.0.0.1:8080/health) and verify the /health response is OK.
         # Switch to tab 3E79
         page = context.pages[-1]  # switch to most recently active tab
-        
+
         # --> Assertions to verify final state
         # Assert: Verify discovered models are displayed
         assert False, "Expected: Verify discovered models are displayed (could not be verified on the page)"
         # Assert: Verify the provider is shown as active
         assert False, "Expected: Verify the provider is shown as active (could not be verified on the page)"
-        
+
         # --> Test blocked by environment/access constraints during agent run
         # Reason: TEST BLOCKED The test could not be run because the frontend or required backend health endpoint is not reachable. Observations: - The frontend at http://127.0.0.1:1420 shows an "ERR_EMPTY_RESPONSE" page with only a "Reload" button (screenshot confirms the browser error). - The model server health endpoint at http://127.0.0.1:8080/health did not show an 'OK' status (search for "OK" returned no m...
         raise AssertionError("Test blocked during agent run: " + "TEST BLOCKED The test could not be run because the frontend or required backend health endpoint is not reachable. Observations: - The frontend at http://127.0.0.1:1420 shows an \"ERR_EMPTY_RESPONSE\" page with only a \"Reload\" button (screenshot confirms the browser error). - The model server health endpoint at http://127.0.0.1:8080/health did not show an 'OK' status (search for \"OK\" returned no m..." + " — the exported script cannot reproduce a PASS in this environment.")
@@ -90,4 +90,3 @@ async def run_test():
             await pw.stop()
 
 asyncio.run(run_test())
-    

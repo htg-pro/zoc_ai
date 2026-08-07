@@ -54,7 +54,9 @@ _ENDPOINTS = [
 @settings(max_examples=100)
 @given(
     endpoint=st.sampled_from(_ENDPOINTS),
-    token=st.one_of(st.none(), st.text(st.characters(min_codepoint=33, max_codepoint=126), max_size=8)),
+    token=st.one_of(
+        st.none(), st.text(st.characters(min_codepoint=33, max_codepoint=126), max_size=8)
+    ),
 )
 def test_rejected_admission_has_no_side_effect(
     endpoint: tuple[str, str, dict[str, object] | None], token: str | None
@@ -105,7 +107,9 @@ def test_reload_and_test_refuse_without_workspace() -> None:
 def test_test_endpoint_invalid_and_unsupported(tmp_path) -> None:
     with TestClient(create_app(workspace_root=tmp_path)) as client:
         invalid = client.post("/v1/mcp/test", json={"id": "x"})  # no command → invalid
-        unsupported = client.post("/v1/mcp/test", json={"id": "y", "url": "http://x", "type": "sse"})
+        unsupported = client.post(
+            "/v1/mcp/test", json={"id": "y", "url": "http://x", "type": "sse"}
+        )
     assert invalid.status_code == 200
     assert invalid.json()["outcome"] == "validation-failure"
     assert unsupported.json()["outcome"] == "unsupported"
@@ -142,9 +146,7 @@ def test_servers_route_exposes_complete_merged_user_and_workspace_config(tmp_pat
         encoding="utf-8",
     )
 
-    with TestClient(
-        create_app(workspace_root=tmp_path, mcp_user_config_path=user_path)
-    ) as client:
+    with TestClient(create_app(workspace_root=tmp_path, mcp_user_config_path=user_path)) as client:
         response = client.get("/v1/mcp/servers")
 
     assert response.status_code == 200

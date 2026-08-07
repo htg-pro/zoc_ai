@@ -16,7 +16,12 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { useApp } from "@/lib/store";
 import { getAgentClient } from "@/lib/agent-client";
-import { isTauri, type FileReplace, type SearchOptions, type SearchResults } from "@/lib/tauri-bridge";
+import {
+  isTauri,
+  type FileReplace,
+  type SearchOptions,
+  type SearchResults,
+} from "@/lib/tauri-bridge";
 import { basename } from "@/lib/paths";
 import { cn } from "@/lib/utils";
 
@@ -215,7 +220,9 @@ function TextSearch() {
             title="Toggle Replace"
             aria-label="Toggle replace"
           >
-            <ChevronRight className={cn("h-3.5 w-3.5 transition-transform", showReplace && "rotate-90")} />
+            <ChevronRight
+              className={cn("h-3.5 w-3.5 transition-transform", showReplace && "rotate-90")}
+            />
           </button>
           <div className="flex-1 space-y-1.5">
             <div className="relative">
@@ -226,13 +233,25 @@ function TextSearch() {
                 className="h-7 pr-[68px] text-xs"
               />
               <div className="absolute right-1 top-1/2 flex -translate-y-1/2 items-center gap-0.5">
-                <Toggle active={caseSensitive} label="Match Case" onClick={() => setCaseSensitive((v) => !v)}>
+                <Toggle
+                  active={caseSensitive}
+                  label="Match Case"
+                  onClick={() => setCaseSensitive((v) => !v)}
+                >
                   <CaseSensitive className="h-3.5 w-3.5" />
                 </Toggle>
-                <Toggle active={wholeWord} label="Match Whole Word" onClick={() => setWholeWord((v) => !v)}>
+                <Toggle
+                  active={wholeWord}
+                  label="Match Whole Word"
+                  onClick={() => setWholeWord((v) => !v)}
+                >
                   <WholeWord className="h-3.5 w-3.5" />
                 </Toggle>
-                <Toggle active={isRegex} label="Use Regular Expression" onClick={() => setIsRegex((v) => !v)}>
+                <Toggle
+                  active={isRegex}
+                  label="Use Regular Expression"
+                  onClick={() => setIsRegex((v) => !v)}
+                >
                   <Regex className="h-3.5 w-3.5" />
                 </Toggle>
               </div>
@@ -266,7 +285,9 @@ function TextSearch() {
           onClick={() => setShowOptions((v) => !v)}
           className="flex items-center gap-1 pl-5 text-[10px] uppercase tracking-wider text-muted-foreground hover:text-foreground"
         >
-          <ChevronDown className={cn("h-3 w-3 transition-transform", !showOptions && "-rotate-90")} />
+          <ChevronDown
+            className={cn("h-3 w-3 transition-transform", !showOptions && "-rotate-90")}
+          />
           Files to include / exclude
         </button>
         {showOptions && (
@@ -315,9 +336,15 @@ function TextSearch() {
                     className="flex min-w-0 flex-1 items-center gap-1 text-left"
                   >
                     <ChevronRight
-                      className={cn("h-3 w-3 shrink-0 transition-transform", !isCollapsed && "rotate-90")}
+                      className={cn(
+                        "h-3 w-3 shrink-0 transition-transform",
+                        !isCollapsed && "rotate-90",
+                      )}
                     />
-                    <span className="truncate font-mono text-[11px] text-foreground" title={fm.file}>
+                    <span
+                      className="truncate font-mono text-[11px] text-foreground"
+                      title={fm.file}
+                    >
                       {basename(fm.file)}
                     </span>
                     <Badge variant="muted" className="ml-auto shrink-0">
@@ -349,7 +376,9 @@ function TextSearch() {
                             <code className="block truncate font-mono text-destructive line-through">
                               {lp.before}
                             </code>
-                            <code className="block truncate font-mono text-success">{lp.after}</code>
+                            <code className="block truncate font-mono text-success">
+                              {lp.after}
+                            </code>
                           </div>
                         ))
                       : fm.matches.map((m, i) => (
@@ -481,7 +510,9 @@ function SemanticSearch() {
           className="h-7 text-xs"
         />
       </div>
-      <div className="px-2 pb-1 text-[10px] uppercase tracking-wider text-muted-foreground">{status}</div>
+      <div className="px-2 pb-1 text-[10px] uppercase tracking-wider text-muted-foreground">
+        {status}
+      </div>
       {embedder?.is_fallback && (
         <div className="mx-2 mb-1 rounded border border-amber-500/40 bg-amber-500/10 px-2 py-1.5 text-[10px] leading-snug text-amber-600 dark:text-amber-400">
           Semantic search is using the offline hash fallback — results are weaker. Configure a real
@@ -512,7 +543,9 @@ function SemanticSearch() {
                 <Badge variant="muted">{h.line}</Badge>
               </div>
               {h.symbol && (
-                <div className="mt-0.5 truncate font-mono text-[10px] text-primary/80">{h.symbol}</div>
+                <div className="mt-0.5 truncate font-mono text-[10px] text-primary/80">
+                  {h.symbol}
+                </div>
               )}
               <code className="mt-1 block truncate font-mono text-[11px] text-muted-foreground">
                 {h.snippet}

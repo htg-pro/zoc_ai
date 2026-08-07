@@ -2,6 +2,8 @@
  * Structured plan output — zoc-agent-chat-rebuild R5.3, R10.1, R10.10, R10.11,
  * R10.14.
  *
+ * Feature: zoc-agent-chat-rebuild, R5.3, R10.1, R10.10, R10.11, R10.14.
+ *
  * The plan is produced through a schema, not parsed out of prose. `Output.object()`
  * uses the schema for *both* generation and validation, so a provider that returns
  * a malformed object fails at the schema rather than three layers downstream where

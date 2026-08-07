@@ -1,6 +1,8 @@
 /**
  * The composer's text area — zoc-agent-chat-rebuild R8.7, R12.4, task 20.2.
  *
+ * Feature: zoc-agent-chat-rebuild, task 20.2 (R8.7, R12.4).
+ *
  * A textarea that grows from one row to eight and then scrolls internally, and the one place the
  * composer's keys are routed. Everything it knows about the mention popover arrives as props, because the
  * *state* of the popover is the composer's and the *events* land here — so the routing lives with the

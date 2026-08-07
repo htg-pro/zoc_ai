@@ -140,6 +140,6 @@ def test_every_entered_stage_emits_one_conforming_naming_event(
         # Event_Contract"): the emit gate's validation entrypoint accepts it.
         AgentEventModel.model_validate(event.model_dump(by_alias=True))
         # Names the entered stage (R3.3 "that names the entered stage").
-        assert _event_names_stage(event, stage), (
-            f"event {event!r} does not name entered stage {stage}"
-        )
+        assert _event_names_stage(
+            event, stage
+        ), f"event {event!r} does not name entered stage {stage}"

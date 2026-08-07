@@ -16,8 +16,10 @@ import {
   fetchMcpServers,
   reloadMcp,
   testMcpServer,
+  updateMcpTool,
   type McpRuntimeStatus,
   type McpServerStatus,
+  type McpToolStatus,
 } from "@/lib/mcp-client";
 
 const TRANSPORT_ICON: Record<McpTransport, typeof Plug> = {
@@ -255,12 +257,59 @@ export function McpSection() {
     }
   }, []);
 
+  const toggleTool = useCallback(async (tool: McpToolStatus, enabled: boolean) => {
+    try {
+      const next = await updateMcpTool(tool.name, { enabled });
+      setStatusById((current) => {
+        const status = current[next.serverId];
+        if (status === undefined) return current;
+        return {
+          ...current,
+          [next.serverId]: {
+            ...status,
+            tools: status.tools.map((candidate) =>
+              candidate.name === next.name ? next : candidate,
+            ),
+          },
+        };
+      });
+    } catch {
+      setMessage(`Could not update MCP tool ${tool.bareName}.`);
+    }
+  }, []);
+
+  const changeToolCapability = useCallback(
+    async (tool: McpToolStatus, capability: "read" | "execute") => {
+      try {
+        const next = await updateMcpTool(tool.name, { capability });
+        setStatusById((current) => {
+          const status = current[next.serverId];
+          if (status === undefined) return current;
+          return {
+            ...current,
+            [next.serverId]: {
+              ...status,
+              tools: status.tools.map((candidate) =>
+                candidate.name === next.name ? next : candidate,
+              ),
+            },
+          };
+        });
+      } catch {
+        setMessage(`Could not update MCP tool ${tool.bareName}.`);
+      }
+    },
+    [],
+  );
+
   const runTest = useCallback(async (draftToTest: DraftState): Promise<void> => {
     setTestResult("Testing…");
     try {
       const outcome = await testMcpServer(draftToRaw(draftToTest));
       if (outcome.outcome === "success") {
-        setTestResult(`OK — ${outcome.toolCount} tool(s): ${outcome.bareNames.join(", ") || "none"}`);
+        setTestResult(
+          `OK — ${outcome.toolCount} tool(s): ${outcome.bareNames.join(", ") || "none"}`,
+        );
       } else if (outcome.outcome === "unsupported") {
         setTestResult(`Unsupported transport (${outcome.transport}) for live test.`);
       } else {
@@ -330,7 +379,9 @@ export function McpSection() {
                 <select
                   className={inputClass}
                   value={draft.transport}
-                  onChange={(e) => setDraft({ ...draft, transport: e.target.value as McpTransport })}
+                  onChange={(e) =>
+                    setDraft({ ...draft, transport: e.target.value as McpTransport })
+                  }
                 >
                   <option value="stdio">stdio</option>
                   <option value="sse">sse</option>
@@ -478,6 +529,44 @@ export function McpSection() {
                   </code>
                   {status?.errorReason && (
                     <p className="text-[11px] text-[var(--zoc-error)]">{status.errorReason}</p>
+                  )}
+                  {status?.tools && status.tools.length > 0 && (
+                    <div className="mt-2 space-y-1.5 border-t border-border pt-2">
+                      <span className="text-[10px] uppercase text-muted-foreground">Tools</span>
+                      {status.tools.map((tool) => (
+                        <div
+                          key={tool.name}
+                          className="flex items-center gap-2 rounded border border-border/60 px-2 py-1"
+                        >
+                          <input
+                            type="checkbox"
+                            aria-label={`Enable ${tool.bareName}`}
+                            checked={tool.enabled}
+                            onChange={(event) => void toggleTool(tool, event.target.checked)}
+                          />
+                          <span
+                            className="min-w-0 flex-1 truncate font-mono text-[11px]"
+                            title={tool.name}
+                          >
+                            {tool.bareName}
+                          </span>
+                          <select
+                            aria-label={`Capability for ${tool.bareName}`}
+                            className="rounded border border-border bg-background px-1 py-0.5 text-[10px]"
+                            value={tool.capability}
+                            onChange={(event) =>
+                              void changeToolCapability(
+                                tool,
+                                event.target.value as "read" | "execute",
+                              )
+                            }
+                          >
+                            <option value="execute">execute</option>
+                            <option value="read">read</option>
+                          </select>
+                        </div>
+                      ))}
+                    </div>
                   )}
                   {s.autoApprove.length > 0 && (
                     <div className="flex flex-wrap items-center gap-1">

@@ -59,9 +59,21 @@ test("a url token yields a url annotation without trailing punctuation", () => {
 });
 
 test("test summaries parse passed/failed/skipped across pytest/jest/cargo", () => {
-  expect(parseTestSummary("5 passed, 2 failed, 1 skipped")).toEqual({ passed: 5, failed: 2, skipped: 1 });
-  expect(parseTestSummary("Tests: 1 failed, 5 passed, 6 total")).toEqual({ passed: 5, failed: 1, skipped: 0 });
-  expect(parseTestSummary("test result: ok. 3 passed; 0 failed; 1 ignored")).toEqual({ passed: 3, failed: 0, skipped: 1 });
+  expect(parseTestSummary("5 passed, 2 failed, 1 skipped")).toEqual({
+    passed: 5,
+    failed: 2,
+    skipped: 1,
+  });
+  expect(parseTestSummary("Tests: 1 failed, 5 passed, 6 total")).toEqual({
+    passed: 5,
+    failed: 1,
+    skipped: 0,
+  });
+  expect(parseTestSummary("test result: ok. 3 passed; 0 failed; 1 ignored")).toEqual({
+    passed: 3,
+    failed: 0,
+    skipped: 1,
+  });
   expect(parseTestSummary("just some text")).toBeNull();
 
   const anns = parseTerminalLine("5 passed, 2 failed");
@@ -70,7 +82,11 @@ test("test summaries parse passed/failed/skipped across pytest/jest/cargo", () =
 });
 
 test("stacktrace lines are single whole-line annotations", () => {
-  for (const line of ["  at fn (file.js:1:2)", 'File "x.py", line 3', "Traceback (most recent call last):"]) {
+  for (const line of [
+    "  at fn (file.js:1:2)",
+    'File "x.py", line 3',
+    "Traceback (most recent call last):",
+  ]) {
     const anns = parseTerminalLine(line);
     expect(anns).toHaveLength(1);
     expect(anns[0]).toMatchObject({ type: "stack", start: 0, end: line.length });
@@ -83,7 +99,10 @@ test("collapseCarriageReturns keeps the final overwritten segment", () => {
   expect(collapseCarriageReturns("no cr here")).toBe("no cr here");
   fc.assert(
     fc.property(
-      fc.array(fc.constantFrom("ab", "cd", "x1", "", "done", "12%"), { minLength: 1, maxLength: 5 }),
+      fc.array(fc.constantFrom("ab", "cd", "x1", "", "done", "12%"), {
+        minLength: 1,
+        maxLength: 5,
+      }),
       (parts) => {
         const joined = parts.join("\r");
         const expected = parts.length === 1 ? parts[0] : parts[parts.length - 1];

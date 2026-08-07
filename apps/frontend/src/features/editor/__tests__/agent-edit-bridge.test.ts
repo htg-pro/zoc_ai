@@ -33,9 +33,9 @@ describe("searchReplaceEditsFromUnifiedDiff", () => {
   });
 
   it("anchors pure insertions and preserves no-newline markers", () => {
-    expect(
-      searchReplaceEditsFromUnifiedDiff("@@ -2,0 +2,1 @@\n+inserted\n"),
-    ).toEqual([{ search: "", replace: "inserted\n", startLineNumber: 2 }]);
+    expect(searchReplaceEditsFromUnifiedDiff("@@ -2,0 +2,1 @@\n+inserted\n")).toEqual([
+      { search: "", replace: "inserted\n", startLineNumber: 2 },
+    ]);
 
     expect(
       searchReplaceEditsFromUnifiedDiff(

@@ -3,11 +3,12 @@
   "version": "0.0.2",
   "private": true,
   "type": "module",
-  "description": "Zoc AI Agent_Runtime \u2014 loopback Node process owning the AI SDK tool loop.",
+  "description": "Zoc AI Agent_Runtime — loopback Node process owning the AI SDK tool loop.",
   "main": "./src/main.ts",
   "exports": {
     ".": "./src/main.ts",
-    "./policy": "./src/permissions/capability-policy.ts"
+    "./policy": "./src/permissions/capability-policy.ts",
+    "./mcp/config": "./src/mcp/config.ts"
   },
   "scripts": {
     "lint": "eslint .",

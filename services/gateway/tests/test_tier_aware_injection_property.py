@@ -119,9 +119,7 @@ def test_local_slm_injects_only_active_target_fragments(
     # Every injected fragment references the active target, and exactly the
     # active-target fragments are injected (order/multiplicity preserved).
     expected = (
-        [f for f in fragments if f.path == active_target]
-        if active_target is not None
-        else []
+        [f for f in fragments if f.path == active_target] if active_target is not None else []
     )
     assert list(injected.fragments) == expected
     assert all(f.path == active_target for f in injected.fragments)

@@ -91,8 +91,7 @@ def test_apply_failure_retains_prior_changes_and_reports_failed(
     n = len(contents)
     # Otherwise-valid changes write distinct in-workspace files.
     valid_changes = [
-        PlannedChange(path=f"valid_{i}.txt", content=contents[i], diff=f"+{i}")
-        for i in range(n)
+        PlannedChange(path=f"valid_{i}.txt", content=contents[i], diff=f"+{i}") for i in range(n)
     ]
     # The failing change escapes the workspace -> ReadOnlyViolation on write.
     escape_path = f"../{escape_name}.txt"

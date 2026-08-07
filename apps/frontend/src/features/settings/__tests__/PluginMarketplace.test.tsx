@@ -5,8 +5,28 @@ import { PluginMarketplace } from "../PluginMarketplace";
 import { __resetPluginHostForTests, getPlugin, installPlugin } from "@/lib/plugins";
 
 const REGISTRY = [
-  { id: "zoc.hello", name: "Hello World", description: "hi", author: "Zoc", version: "1.0.0", tags: ["example"], downloadUrl: "https://plugins.test/hello.zip", stars: 1, verified: true },
-  { id: "zoc.word", name: "Word Count", description: "counts", author: "Zoc", version: "1.0.0", tags: ["productivity"], downloadUrl: "", stars: 2, verified: false },
+  {
+    id: "zoc.hello",
+    name: "Hello World",
+    description: "hi",
+    author: "Zoc",
+    version: "1.0.0",
+    tags: ["example"],
+    downloadUrl: "https://plugins.test/hello.zip",
+    stars: 1,
+    verified: true,
+  },
+  {
+    id: "zoc.word",
+    name: "Word Count",
+    description: "counts",
+    author: "Zoc",
+    version: "1.0.0",
+    tags: ["productivity"],
+    downloadUrl: "",
+    stars: 2,
+    verified: false,
+  },
 ];
 
 const originalFetch = globalThis.fetch;
@@ -41,13 +61,15 @@ test("renders the registry from the bundled fallback and filters live", async ()
 });
 
 test("Installed tab lists installed plugins and supports uninstall", async () => {
-  installPlugin({ id: "inst.one", name: "Installed One", version: "1.0.0", contributes: {} }, "zip");
+  installPlugin(
+    { id: "inst.one", name: "Installed One", version: "1.0.0", contributes: {} },
+    "zip",
+  );
   render(<PluginMarketplace />);
   fireEvent.click(screen.getByText(/Installed \(/));
   await waitFor(() => expect(screen.getByText("Installed One")).toBeTruthy());
   expect(screen.getByLabelText("Uninstall Installed One")).toBeTruthy();
 });
-
 
 test("downloads a binary zip and installs its validated entry code", async () => {
   const code = "zoc.commands.register('zoc.hello.say', () => undefined);";
@@ -83,7 +105,9 @@ test("downloads a binary zip and installs its validated entry code", async () =>
   const card = screen.getByText("Hello World").closest('[data-plugin-id="zoc.hello"]');
   fireEvent.click(within(card as HTMLElement).getByRole("button", { name: "Install" }));
 
-  await waitFor(() => expect(screen.getByText("Hello World installed and activated.")).toBeTruthy());
+  await waitFor(() =>
+    expect(screen.getByText("Hello World installed and activated.")).toBeTruthy(),
+  );
   expect(getPlugin("zoc.hello")).toMatchObject({
     source: "zip",
     code,

@@ -1,6 +1,8 @@
 /**
  * The catalogue and Session-title routes over real HTTP — R6.2, R13.1, R15.12, 9.7.
  *
+ * Feature: zoc-agent-chat-rebuild, task 9.7 (R6.2, R13.1, R15.12).
+ *
  * Two groups in one file because they share a harness and nothing else, and because
  * the thing worth asserting about both is negative: the catalogue routes answer with
  * no credential in the body, and the title route reaches no Workspace_Services

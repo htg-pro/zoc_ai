@@ -60,14 +60,24 @@ _MUTATING_OPERATIONS = ("write_file", "run_shell", "make_dir")
 # Edit/implementation imperative verbs (R2.4). A leading edit verb makes the
 # prompt an edit request per the Mode_Router intent classifier.
 _EDIT_VERBS = (
-    "implement", "create", "write", "edit", "modify", "change", "add",
-    "delete", "remove", "refactor", "rename", "fix", "build", "generate",
+    "implement",
+    "create",
+    "write",
+    "edit",
+    "modify",
+    "change",
+    "add",
+    "delete",
+    "remove",
+    "refactor",
+    "rename",
+    "fix",
+    "build",
+    "generate",
 )
 
 # Safe relative file names for materializing an arbitrary workspace tree.
-_safe_names = st.text(
-    alphabet="abcdefghijklmnopqrstuvwxyz0123456789_-", min_size=1, max_size=12
-)
+_safe_names = st.text(alphabet="abcdefghijklmnopqrstuvwxyz0123456789_-", min_size=1, max_size=12)
 
 
 @st.composite
@@ -156,9 +166,7 @@ def test_read_only_violation_becomes_error_and_workspace_untouched(
             # A mutating attempt reaching the read-only boundary (R2.3).
             raise ReadOnlyViolation(operation)
 
-        result = AskPath().execute(
-            _ask(question), generate=generate, workspace_root=root
-        )
+        result = AskPath().execute(_ask(question), generate=generate, workspace_root=root)
 
         # The violation is converted into an error naming the rejected op.
         assert isinstance(result, AskError)
@@ -207,9 +215,7 @@ def test_edit_request_switches_to_agent_without_mutation(
             generate_calls.append(prompt)
             return "should not be produced for an edit request"
 
-        result = AskPath().execute(
-            _ask(prompt), generate=generate, workspace_root=root
-        )
+        result = AskPath().execute(_ask(prompt), generate=generate, workspace_root=root)
 
         # R2.4: a switch-to-Agent message, no generation, no mutation.
         assert isinstance(result, SwitchToAgentMessage)
